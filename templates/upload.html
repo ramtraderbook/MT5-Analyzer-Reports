@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="upload-page">
+  <div class="upload-hero">
+    <h1 class="upload-title">EA Analyzer</h1>
+    <p class="upload-subtitle">Sube tu reporte de MT5 para analizar tus Expert Advisors</p>
+  </div>
+
+  {% if error %}
+  <div class="alert alert-error">
+    <span class="alert-icon">✕</span> {{ error }}
+  </div>
+  {% endif %}
+
+  <div class="upload-card">
+    <form id="upload-form" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+      <div class="upload-zone" id="drop-zone">
+        <div class="upload-zone-icon">⬆</div>
+        <div class="upload-zone-text">Arrastra tu archivo <strong>.xlsx</strong> aquí</div>
+        <div class="upload-zone-hint">Exportado desde MT5 → History → Save as Report</div>
+        <label class="upload-btn" for="file-input">
+          Seleccionar archivo
+        </label>
+        <input type="file" id="file-input" name="file" accept=".xlsx" class="file-input-hidden">
+        <div id="file-selected" class="file-selected-name hidden"></div>
+      </div>
+      <button type="submit" id="submit-btn" class="btn-primary btn-upload" disabled>
+        Analizar archivo
+      </button>
+    </form>
+
+    <div id="loading-overlay" class="loading-overlay hidden">
+      <div class="spinner"></div>
+      <div class="loading-text">Procesando archivo...</div>
+      <div class="loading-hint">Detectando estrategias y calculando métricas</div>
+    </div>
+  </div>
+
+  {% if last_file %}
+  <div class="last-file-hint">
+    Último archivo analizado: <strong>{{ last_file }}</strong>
+  </div>
+  {% endif %}
+
+  <div class="upload-features">
+    <div class="feature-item">
+      <span class="feature-icon">📊</span>
+      <span>Equity curves interactivas</span>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">📈</span>
+      <span>Métricas por EA: SQN, Ret/DD, PF</span>
+    </div>
+    <div class="feature-item">
+      <span class="feature-icon">📋</span>
+      <span>Export para EA Validator</span>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const submitBtn = document.getElementById('submit-btn');
+const fileSelected = document.getElementById('file-selected');
+const form = document.getElementById('upload-form');
+const loadingOverlay = document.getElementById('loading-overlay');
+
+function handleFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    alert('Por favor selecciona un archivo .xlsx exportado de MT5.');
+    return;
+  }
+  fileSelected.textContent = '📄 ' + file.name;
+  fileSelected.classList.remove('hidden');
+  submitBtn.disabled = false;
+  dropZone.classList.add('has-file');
+}
+
+fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    handleFile(file);
+  }
+});
+
+form.addEventListener('submit', () => {
+  loadingOverlay.classList.remove('hidden');
+  submitBtn.disabled = true;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- ── Page Header ── -->
+<header class="dash-header">
+  <div class="dash-header-accent"></div>
+  <div class="dash-header-content">
+    <div class="dash-header-eyebrow">Configuración</div>
+    <h1 class="dash-header-title">Estrategias detectadas</h1>
+    <div class="dash-meta-strip">
+      <span class="dash-meta-chip">
+        <span class="map-file-icon">&#x1F4C4;</span>
+        <span class="mono">{{ filename }}</span>
+      </span>
+      <span class="dash-meta-div">·</span>
+      <span class="dash-meta-chip">{{ ea_list|length }} estrategias</span>
+      {% if unknown_trades > 0 %}
+      <span class="dash-meta-div">·</span>
+      <span class="dash-meta-chip map-warn-chip">
+        <span class="map-warn-icon">&#x26A0;</span>
+        {{ unknown_trades }} trade(s) sin identificar
+      </span>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+<!-- ── Info strip ── -->
+<div class="map-info-strip">
+  <div class="map-info-item">
+    <span class="map-info-icon">&#x2713;</span>
+    Activa/desactiva EAs con el checkbox
+  </div>
+  <div class="map-info-sep"></div>
+  <div class="map-info-item">
+    <span class="map-info-icon">&#x1F3F7;</span>
+    Alias: nombre corto para mostrar en gráficos
+  </div>
+  <div class="map-info-sep"></div>
+  <div class="map-info-item">
+    <span class="map-info-icon">&#x1F4B0;</span>
+    Capital: base para calcular Max DD%
+  </div>
+  <div class="map-info-sep"></div>
+  <div class="map-info-item map-info-tip">
+    Magic Number en MT5 → Vista → Terminal → Historia
+  </div>
+</div>
+
+<!-- ── Form ── -->
+<form action="{{ url_for('mapping_save') }}" method="POST">
+
+  <div class="map-card">
+    <div class="map-card-header">
+      <div class="section-header" style="margin-bottom:0">
+        <h2 class="section-title">Mapeo de estrategias</h2>
+        <span class="section-pill">{{ ea_list|length }} EAs</span>
+      </div>
+      <!-- Select all checkbox -->
+      <label class="map-select-all-label">
+        <input type="checkbox" id="select-all" checked class="map-select-all-cb">
+        <span class="map-select-all-text">Todas activas</span>
+      </label>
+    </div>
+
+    <div class="mapping-table-wrapper">
+      <table class="mapping-table map-table-v2">
+        <thead>
+          <tr>
+            <th class="th-check" title="Seleccionar / Deseleccionar todas">&#10003;</th>
+            <th class="map-th-num">#</th>
+            <th>Estrategia (Comment)</th>
+            <th>Alias / Display</th>
+            <th>Instrumento</th>
+            <th class="map-th-num">Trades</th>
+            <th>Magic Number</th>
+            <th>Capital ($)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ea in ea_list %}
+          <tr class="map-row {% if ea.is_new %}map-row-new{% endif %} {% if not ea.active %}row-excluded{% endif %}"
+              style="--row-i: {{ loop.index0 }}">
+            <td class="td-check">
+              <input type="checkbox" name="include_{{ ea.name }}" class="ea-checkbox"
+                {% if ea.active %}checked{% endif %}>
+            </td>
+            <td class="td-num map-row-num">{{ loop.index }}</td>
+            <td class="td-name">
+              <div class="map-ea-name-wrap">
+                {% if ea.is_new %}
+                <span class="map-new-dot" title="Nueva estrategia detectada"></span>
+                {% endif %}
+                <span class="ea-comment">{{ ea.name }}</span>
+                {% if ea.is_new %}
+                <span class="badge-new">nuevo</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="td-alias">
+              <input
+                type="text"
+                name="alias_{{ ea.name }}"
+                value="{{ ea.alias }}"
+                placeholder="{{ ea.name[:20] }}"
+                class="magic-input alias-input map-input"
+              >
+            </td>
+            <td class="td-instrument map-instrument-cell">
+              <span class="map-instrument-badge">{{ ea.instrument }}</span>
+              <input type="hidden" name="instrument_{{ ea.name }}" value="{{ ea.instrument }}">
+            </td>
+            <td class="td-trades map-row-num">
+              <span class="map-trade-count">{{ ea.trade_count }}</span>
+            </td>
+            <td class="td-magic">
+              <input
+                type="number"
+                name="magic_{{ ea.name }}"
+                value="{{ ea.magic }}"
+                placeholder="ej: 22219"
+                class="magic-input map-input {% if ea.is_new %}magic-input-new{% endif %}"
+                min="0"
+              >
+            </td>
+            <td class="td-magic">
+              <input
+                type="number"
+                name="capital_{{ ea.name }}"
+                value="{{ ea.capital }}"
+                placeholder="5000"
+                class="magic-input capital-input map-input"
+                min="0"
+                step="100"
+              >
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Actions ── -->
+  <div class="map-actions">
+    <button type="submit" class="btn-primary map-btn-submit">
+      Guardar y ver Dashboard &nbsp;&#8594;
+    </button>
+    <a href="{{ url_for('dashboard') }}" class="btn-secondary map-btn-skip">
+      Saltar (usar nombres originales)
+    </a>
+    <div class="map-actions-hint">
+      Guardado en <code>config.json</code> · persiste entre sesiones
+    </div>
+  </div>
+
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('select-all').addEventListener('change', function () {
+  document.querySelectorAll('.ea-checkbox').forEach(function (cb) {
+    cb.checked = this.checked;
+    cb.closest('tr').classList.toggle('row-excluded', !this.checked);
+  }, this);
+});
+
+document.querySelectorAll('.ea-checkbox').forEach(function (cb) {
+  cb.addEventListener('change', function () {
+    this.closest('tr').classList.toggle('row-excluded', !this.checked);
+    var all     = document.querySelectorAll('.ea-checkbox');
+    var checked = document.querySelectorAll('.ea-checkbox:checked');
+    var selectAll = document.getElementById('select-all');
+    selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
+    selectAll.checked = checked.length === all.length;
+  });
+});
+</script>
+{% endblock %}

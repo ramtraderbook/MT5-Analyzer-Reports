@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% set title = "Exportar" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">Exportar para EA Validator</h1>
+  <p class="page-subtitle">
+    Copia estos valores en las columnas <strong>AC–AL</strong> de la hoja
+    <strong>Datos</strong> de tu archivo EA Validator Excel.
+  </p>
+</div>
+
+<div class="export-actions">
+  <button class="btn-primary" onclick="copyExportTable()">
+    Copiar tabla (para Excel)
+  </button>
+  <button class="btn-secondary" onclick="downloadCSV()">
+    Descargar CSV
+  </button>
+</div>
+
+<div class="table-wrapper">
+  <table class="data-table export-table" id="export-table">
+    <thead>
+      <tr>
+        <th>Magic</th>
+        <th>Nombre</th>
+        <th title="Columna AC">Trades<br><span class="col-ref">AC</span></th>
+        <th title="Columna AD">Semanas<br><span class="col-ref">AD</span></th>
+        <th title="Columna AE">WinRate%<br><span class="col-ref">AE</span></th>
+        <th title="Columna AF">PF<br><span class="col-ref">AF</span></th>
+        <th title="Columna AG">Payout<br><span class="col-ref">AG</span></th>
+        <th title="Columna AH">Expect$<br><span class="col-ref">AH</span></th>
+        <th title="Columna AI">MaxDD%<br><span class="col-ref">AI</span></th>
+        <th title="Columna AJ">DurProm(h)<br><span class="col-ref">AJ</span></th>
+        <th title="Columna AK">MaxConsecLoss<br><span class="col-ref">AK</span></th>
+        <th title="Columna AL">StagnDías<br><span class="col-ref">AL</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in export_rows %}
+      <tr>
+        <td class="mono">{{ row.magic }}</td>
+        <td>{{ row.name }}</td>
+        <td class="mono th-right">{{ row.trades }}</td>
+        <td class="mono th-right">{{ "%.1f"|format(row.weeks) }}</td>
+        <td class="mono th-right">{{ "%.2f"|format(row.win_rate) }}</td>
+        <td class="mono th-right">{% if row.profit_factor == '∞' %}∞{% else %}{{ "%.2f"|format(row.profit_factor|float) }}{% endif %}</td>
+        <td class="mono th-right">{% if row.payout == '∞' %}∞{% else %}{{ "%.2f"|format(row.payout|float) }}{% endif %}</td>
+        <td class="mono th-right {% if row.expectancy >= 0 %}cell-profit{% else %}cell-loss{% endif %}">{{ "%.2f"|format(row.expectancy) }}</td>
+        <td class="mono th-right">{{ "%.2f"|format(row.max_dd_pct) }}</td>
+        <td class="mono th-right">{{ "%.1f"|format(row.avg_duration) }}</td>
+        <td class="mono th-right">{{ row.max_consec_losses }}</td>
+        <td class="mono th-right">{{ row.stagnation_days }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="export-note">
+  <strong>Nota:</strong> Los valores de Profit Factor y Payout Ratio marcados con "∞"
+  indican ausencia de trades perdedores (no hay denominador válido). Ingrésalos manualmente
+  en el Excel si es necesario.
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyExportTable() {
+  const table = document.getElementById('export-table');
+  const rows = Array.from(table.querySelectorAll('tbody tr'));
+  const tsv = rows.map(row =>
+    Array.from(row.cells).map(cell => cell.textContent.trim()).join('\t')
+  ).join('\n');
+
+  navigator.clipboard.writeText(tsv).then(() => {
+    showToast('¡Copiado! Pega en tu Excel EA Validator.');
+  }).catch(() => {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = tsv;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('¡Copiado!');
+  });
+}
+
+function downloadCSV() {
+  const table = document.getElementById('export-table');
+  const rows = Array.from(table.querySelectorAll('tr'));
+  const csv = rows.map(row =>
+    Array.from(row.cells).map(cell => {
+      const txt = cell.textContent.trim().replace(/\n/g, ' ').replace(/"/g, '""');
+      return `"${txt}"`;
+    }).join(',')
+  ).join('\n');
+
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ea_validator_export.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('CSV descargado.');
+}
+</script>
+{% endblock %}
