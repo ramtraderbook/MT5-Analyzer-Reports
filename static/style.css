@@ -2031,3 +2031,523 @@ code {
     gap: 8px;
     margin-bottom: 4px;
 }
+
+/* ── EA Validator ──────────────────────────────────────────────────────────── */
+
+.val-legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0 16px 0;
+    flex-wrap: wrap;
+}
+
+.val-sep {
+    color: var(--text-muted);
+}
+
+.val-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+.val-continuar {
+    background: rgba(76, 175, 80, 0.18);
+    color: #4caf50;
+    border: 1px solid #4caf50;
+}
+.val-monitorear {
+    background: rgba(255, 193, 7, 0.18);
+    color: #ffc107;
+    border: 1px solid #ffc107;
+}
+.val-eliminar {
+    background: rgba(255, 82, 82, 0.18);
+    color: #ff5252;
+    border: 1px solid #ff5252;
+}
+
+.val-estado {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.val-ok-chip,
+.val-ok {
+    background: rgba(76, 175, 80, 0.15);
+    color: #66bb6a;
+}
+.val-alerta-chip,
+.val-alerta {
+    background: rgba(255, 193, 7, 0.15);
+    color: #ffc107;
+}
+.val-fuera-chip,
+.val-fuera {
+    background: rgba(255, 82, 82, 0.15);
+    color: #ff5252;
+}
+.val-nd-chip,
+.val-nd {
+    background: rgba(139, 148, 158, 0.15);
+    color: #8b949e;
+}
+
+.val-main-table th {
+    white-space: nowrap;
+}
+
+.val-th-group-edge {
+    border-left: 2px solid rgba(79, 195, 247, 0.2);
+}
+.val-th-group-risk {
+    border-left: 2px solid rgba(255, 82, 82, 0.2);
+}
+.val-th-group-char {
+    border-left: 2px solid rgba(255, 193, 7, 0.2);
+}
+.val-th-score {
+    border-left: 2px solid rgba(171, 71, 188, 0.3);
+    background: rgba(171, 71, 188, 0.04);
+}
+
+.val-score-ring {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    font-size: 0.82rem;
+    font-weight: 700;
+    font-family: "Roboto Mono", monospace;
+    border: 2px solid transparent;
+}
+.val-score-high {
+    border-color: #4caf50;
+    color: #4caf50;
+    background: rgba(76, 175, 80, 0.08);
+}
+.val-score-mid {
+    border-color: #ffc107;
+    color: #ffc107;
+    background: rgba(255, 193, 7, 0.08);
+}
+.val-score-low {
+    border-color: #ff5252;
+    color: #ff5252;
+    background: rgba(255, 82, 82, 0.08);
+}
+
+.val-score-cell {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.val-desv-flag {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border: 1px solid rgba(255, 193, 7, 0.4);
+}
+
+.val-no-bt {
+    color: var(--text-muted);
+    font-style: italic;
+}
+.val-add-bt-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.78rem;
+}
+.val-add-bt-link:hover {
+    text-decoration: underline;
+}
+
+.val-edit-link {
+    color: var(--text-primary);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.val-edit-link:hover {
+    color: var(--accent);
+}
+.val-edit-icon {
+    font-size: 0.68rem;
+    opacity: 0.5;
+}
+.val-edit-link:hover .val-edit-icon {
+    opacity: 1;
+}
+
+.val-ea-name {
+    font-weight: 500;
+    font-size: 0.82rem;
+}
+.val-ea-sub {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.val-row-pending {
+    opacity: 0.75;
+}
+.val-row-active {
+    opacity: 1;
+}
+
+.val-signif {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+.val-signif-alta {
+    background: rgba(76, 175, 80, 0.15);
+    color: #66bb6a;
+}
+.val-signif-media {
+    background: rgba(79, 195, 247, 0.15);
+    color: #4fc3f7;
+}
+.val-signif-baja {
+    background: rgba(255, 193, 7, 0.12);
+    color: #ffc107;
+}
+.val-signif-muy_baja {
+    background: rgba(255, 82, 82, 0.12);
+    color: #ff5252;
+}
+
+.val-accion-cell {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    max-width: 220px;
+    white-space: normal;
+    line-height: 1.4;
+}
+
+.val-nd {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+/* Info cards grid */
+.val-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    margin: 24px 0;
+}
+.val-info-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+.val-info-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+.val-info-body {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+/* ── Validator Form ── */
+.val-form-section {
+    margin-bottom: 20px;
+}
+
+.val-form-grid {
+    display: grid;
+    gap: 12px;
+    padding: 16px 0;
+}
+.val-form-grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+.val-form-grid-4 {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 1200px) {
+    .val-form-grid-4 {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+@media (max-width: 900px) {
+    .val-form-grid-3,
+    .val-form-grid-4 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.val-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.val-form-label {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.val-hint {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+}
+
+.val-input {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 5px;
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    font-family: "Roboto Mono", monospace;
+    transition: border-color 0.15s;
+    width: 100%;
+    box-sizing: border-box;
+}
+.val-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.val-source-tag {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 8px;
+    font-style: italic;
+    text-transform: none;
+}
+
+.val-live-preview {
+    border-left: 3px solid var(--accent);
+}
+
+.val-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    padding: 12px 0;
+}
+.val-preview-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.val-preview-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.val-preview-val {
+    font-size: 0.88rem;
+    font-weight: 600;
+    font-family: "Roboto Mono", monospace;
+    color: var(--text-primary);
+}
+.val-preview-note {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 4px;
+}
+
+.val-form-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 20px 0 40px 0;
+}
+
+.btn-danger {
+    background: rgba(255, 82, 82, 0.1);
+    border: 1px solid rgba(255, 82, 82, 0.4);
+    color: #ff5252;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+}
+.btn-danger:hover {
+    background: rgba(255, 82, 82, 0.2);
+    border-color: #ff5252;
+}
+
+/* ── Validator: Columna de Acciones ─────────────────────────────────────── */
+
+.val-th-actions {
+    white-space: nowrap;
+    min-width: 110px;
+    background: var(--bg-card);
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    border-right: 1px solid var(--border);
+}
+
+.val-td-actions {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg-main);
+    border-right: 1px solid var(--border);
+    padding: 6px 8px !important;
+}
+
+/* Asegura que al hacer hover la fila, el fondo sticky sea el mismo */
+.val-row:hover .val-td-actions {
+    background: var(--bg-hover);
+}
+
+.val-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    justify-content: center;
+}
+
+.val-btn-edit {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-decoration: none;
+    background: rgba(79, 195, 247, 0.1);
+    border: 1px solid rgba(79, 195, 247, 0.35);
+    color: #4fc3f7;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.val-btn-edit:hover {
+    background: rgba(79, 195, 247, 0.22);
+    border-color: #4fc3f7;
+    color: #fff;
+}
+
+.val-btn-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    background: rgba(255, 82, 82, 0.08);
+    border: 1px solid rgba(255, 82, 82, 0.3);
+    color: #ff5252;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    padding: 0;
+    line-height: 1;
+}
+.val-btn-delete:hover {
+    background: rgba(255, 82, 82, 0.2);
+    border-color: #ff5252;
+}
+.val-btn-delete:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── Validator: Magic display y mensajes ────────────────────────────────── */
+
+.val-ea-magic {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+    letter-spacing: 0.04em;
+}
+
+.val-no-bt-msg {
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 10px 16px !important;
+}
+
+.val-no-bt-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.val-no-bt-text strong {
+    color: #4fc3f7;
+}
+
+/* ── Validator: Storage strip ───────────────────────────────────────────── */
+
+.val-storage-strip {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    margin: 0 0 16px 0;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.72rem;
+}
+
+.val-storage-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+}
+
+.val-storage-icon {
+    font-size: 0.85rem;
+}
+
+.val-storage-item code {
+    background: rgba(79, 195, 247, 0.1);
+    border: 1px solid rgba(79, 195, 247, 0.25);
+    color: #4fc3f7;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-family: "Roboto Mono", monospace;
+}
+
+.val-storage-note {
+    color: var(--text-muted);
+}
+
+.val-storage-sep {
+    color: var(--border);
+    font-size: 1rem;
+}

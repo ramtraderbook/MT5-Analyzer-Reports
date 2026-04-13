@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Background circle -->
+  <rect width="32" height="32" rx="7" fill="#0d1117"/>
+
+  <!-- Candlestick 1 (izquierda, verde) -->
+  <line x1="8" y1="5" x2="8" y2="9" stroke="#4CAF50" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="5.5" y="9" width="5" height="8" rx="1" fill="#4CAF50"/>
+  <line x1="8" y1="17" x2="8" y2="22" stroke="#4CAF50" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Candlestick 2 (centro, rojo) -->
+  <line x1="16" y1="8" x2="16" y2="11" stroke="#FF5252" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="13.5" y="11" width="5" height="10" rx="1" fill="#FF5252"/>
+  <line x1="16" y1="21" x2="16" y2="25" stroke="#FF5252" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Candlestick 3 (derecha, verde) -->
+  <line x1="24" y1="6" x2="24" y2="10" stroke="#4CAF50" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="21.5" y="10" width="5" height="7" rx="1" fill="#4CAF50"/>
+  <line x1="24" y1="17" x2="24" y2="21" stroke="#4CAF50" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Línea base -->
+  <line x1="4" y1="27.5" x2="28" y2="27.5" stroke="#4FC3F7" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+</svg>

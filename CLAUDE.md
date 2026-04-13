@@ -109,6 +109,67 @@ test_data/ReportHistory-4000084439.xlsx
 
 ---
 
+## Módulo EA Validator v1.1 (COMPLETADO)
+
+### Archivos nuevos
+
+| Archivo | Rol |
+|---|---|
+| `validator.py` | Motor de scoring: lógica completa portada del Excel EA_Validator_Final_v2.xlsx |
+| `validator_store.json` | Persiste datos de backtest por magic number `{ "12345": { "bt": {...}, "mc_retest": {...}, ... } }` |
+| `templates/validator.html` | Dashboard principal: tabla Live vs BT con scores, verdicts, chips de estado |
+| `templates/validator_input.html` | Formulario de entrada de datos BT por EA (5 secciones) |
+
+### Rutas nuevas en ea_analyzer.py
+
+| Ruta | Método | Descripción |
+|---|---|---|
+| `/validator` | GET | Dashboard principal del validator |
+| `/validator/edit/<magic>` | GET/POST | Form para ingresar/editar datos BT de un EA |
+| `/validator/delete/<magic>` | POST | Elimina datos BT de un EA del store |
+
+### Sistema de Scoring (portado del Excel)
+
+**4 categorías ponderadas (suman 100):**
+- **RIESGO** 35% → DD% Escalado (50%) + Max Consec Losses (30%) + Stagnation (20%)
+- **EDGE** 30% → Win Rate (25%) + Profit Factor (30%) + Payout Ratio (20%) + Edge Erosion (25%)
+- **CARÁCTER** 15% → Frecuencia Trades (55%) + Avg Bars/Trade (45%)
+- **DESV. ESTRUCTURAL** 20% → Score basado en conteo de métricas deterioradas simultáneamente
+
+**Umbrales de veredicto:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45
+
+**Fórmulas clave:**
+- `DD_límite = Peor_DD_1Mes × sqrt(semanas_live / 4.33)` — escala tolerancia con el tiempo
+- `Edge_Erosion% = (Expect_live − Expect_SPP_mediana) / Expect_SPP_mediana × 100`
+- `Avg_Bars_live = avg_duration_hours / timeframe_hours` (calculado automáticamente)
+- Desviación estructural si 3+ métricas deterioradas a la vez (WR, Payout, PF, Edge Erosion, Frecuencia)
+
+**Umbrales dinámicos por cantidad de trades:** < 30 (Muy baja) / 30-49 (Baja) / 50-99 (Media) / 100+ (Alta)
+
+### Flujo de datos del Validator
+
+```
+config.json (magic numbers) → validator_edit form → validator_store.json (BT data)
+    + MT5 trades ya cargados → calculate_ea_metrics() (live data)
+    → validator.py::calculate_validator_score() → validator.html (scoring + veredicto)
+```
+
+### Datos Live auto-calculados desde MT5
+
+Los siguientes campos se extraen automáticamente de `calculate_ea_metrics()` sin entrada manual:
+`total_trades`, `weeks_operating`, `win_rate`, `profit_factor`, `payout_ratio`,
+`expectancy`, `max_dd_pct`, `max_consec_losses`, `stagnation_days`,
+`avg_bars_live` (= avg_duration_hours ÷ timeframe_hours desde BT config)
+
+### Datos de Backtest que el usuario ingresa (una sola vez)
+
+- **BT Original (SQX Overview):** WR%, PF, Payout, Expectancy, Avg Bars, Max DD%, Max Consec Losses, Total Trades, Meses, Peor DD 1M, Peor DD 3M, Stagnation días
+- **Monte Carlo Retest 95%:** Max DD%, PF, WR%, Expectancy, Stability
+- **Monte Carlo Trades 95%:** Max DD%, PF, WR%, Expectancy
+- **System Param Permutation (medianas):** Expectancy, DD%, Stagnation
+
+---
+
 ## Plan de Mejoras v1.1 (EN PROGRESO)
 
 ### 1. **Tabla Resumen por Estrategia → Agregar columna "Dias/Semanas Operativo"**

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MT5 Analyzer Reports{% if title %} · {{ title }}{% endif %}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -78,6 +79,11 @@
        class="nav-link{% if active_page == 'export' %} active{% endif %}">
       <span class="sb-nav-icon">&#8595;</span>
       <span>Exportar</span>
+    </a>
+    <a href="{{ url_for('validator') }}"
+       class="nav-link{% if active_page == 'validator' %} active{% endif %}">
+      <span class="sb-nav-icon">&#9878;</span>
+      <span>Validator</span>
     </a>
     <a href="{{ url_for('index') }}" class="nav-link sb-upload-link">
       <span class="sb-nav-icon">&#8593;</span>
