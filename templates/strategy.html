@@ -1,326 +1,457 @@
-{% extends "base.html" %}
-{% set title = m.label %}
-{% block content %}
+{% extends "base.html" %} {% set title = m.label %} {% block content %}
 
 <!-- ── Page Header ── -->
 <header class="dash-header">
-  <div class="dash-header-accent"></div>
-  <div class="dash-header-content">
-    <a href="{{ url_for('dashboard') }}" class="strat-back-link">
-      <span class="strat-back-arrow">&#8592;</span> Dashboard
-    </a>
-    <h1 class="dash-header-title strat-title">{{ m.label }}</h1>
-    <div class="dash-meta-strip">
-      <span class="dash-meta-chip strat-instrument-chip">
-        <span class="strat-instrument-icon">&#x25C6;</span>
-        {{ m.instrument }}
-      </span>
-      <span class="dash-meta-div">·</span>
-      <span class="dash-meta-chip mono">{{ m.total_trades }} trades cerrados</span>
-      <span class="dash-meta-div">·</span>
-      <span class="dash-meta-chip mono">{{ "%.1f"|format(m.weeks_operating) }} semanas</span>
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <a href="{{ url_for('dashboard') }}" class="strat-back-link">
+            <span class="strat-back-arrow">&#8592;</span> Dashboard
+        </a>
+        <h1 class="dash-header-title strat-title">{{ m.label }}</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip strat-instrument-chip">
+                <span class="strat-instrument-icon">&#x25C6;</span>
+                {{ m.instrument }}
+            </span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono"
+                >{{ m.total_trades }} trades cerrados</span
+            >
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono"
+                >{{ "%.1f"|format(m.weeks_operating) }} semanas</span
+            >
+        </div>
     </div>
-  </div>
 </header>
 
 <!-- ── KPI Cards ── -->
 <div class="kpi-grid">
-
-  <div class="kpi-card kpi-card--{{ 'profit' if m.net_profit >= 0 else 'loss' }}" style="--i:0">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Net Profit</div>
-    <div class="kpi-value {% if m.net_profit >= 0 %}profit{% else %}loss{% endif %}">
-      {% if m.net_profit >= 0 %}+{% endif %}${{ "%.2f"|format(m.net_profit) }}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if m.net_profit >= 0 else 'loss' }}"
+        style="--i: 0"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Net Profit</div>
+        <div
+            class="kpi-value {% if m.net_profit >= 0 %}profit{% else %}loss{% endif %}"
+        >
+            {% if m.net_profit >= 0 %}+{% endif %}${{
+            "%.2f"|format(m.net_profit) }}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--{{ 'profit' if m.win_rate >= 50 else ('loss' if m.win_rate < 35 else 'neutral') }}" style="--i:1">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Win Rate</div>
-    <div class="kpi-value {% if m.win_rate >= 50 %}profit{% elif m.win_rate < 35 %}loss{% endif %}">
-      {{ "%.1f"|format(m.win_rate) }}%
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if m.win_rate >= 50 else ('loss' if m.win_rate < 35 else 'neutral') }}"
+        style="--i: 1"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Win Rate</div>
+        <div
+            class="kpi-value {% if m.win_rate >= 50 %}profit{% elif m.win_rate < 35 %}loss{% endif %}"
+        >
+            {{ "%.1f"|format(m.win_rate) }}%
+        </div>
+        <div class="kpi-progress-bar">
+            <div
+                class="kpi-progress-fill"
+                style="width: {{ m.win_rate }}%"
+            ></div>
+        </div>
+        <div class="kpi-sub">
+            {{ m.winning_trades }}W &nbsp;·&nbsp; {{ m.losing_trades }}L
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-progress-bar">
-      <div class="kpi-progress-fill" style="width: {{ m.win_rate }}%"></div>
+
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 else ('loss' if m.profit_factor != '∞' and m.profit_factor|float < 1.0 else 'neutral') }}"
+        style="--i: 2"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Profit Factor</div>
+        <div
+            class="kpi-value {% if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 %}profit{% elif m.profit_factor != '∞' and m.profit_factor|float < 1.0 %}loss{% endif %}"
+        >
+            {{ m.profit_factor }}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-sub">{{ m.winning_trades }}W &nbsp;·&nbsp; {{ m.losing_trades }}L</div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 else ('loss' if m.profit_factor != '∞' and m.profit_factor|float < 1.0 else 'neutral') }}" style="--i:2">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Profit Factor</div>
-    <div class="kpi-value {% if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 %}profit{% elif m.profit_factor != '∞' and m.profit_factor|float < 1.0 %}loss{% endif %}">
-      {{ m.profit_factor }}
+    <div class="kpi-card kpi-card--neutral" style="--i: 3">
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Payout Ratio</div>
+        <div class="kpi-value">
+            {% if m.payout_ratio != '∞' %}{{ "%.2f"|format(m.payout_ratio|float)
+            }}{% else %}∞{% endif %}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--neutral" style="--i:3">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Payout Ratio</div>
-    <div class="kpi-value">
-      {% if m.payout_ratio != '∞' %}{{ "%.2f"|format(m.payout_ratio|float) }}{% else %}∞{% endif %}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if m.expectancy >= 0 else 'loss' }}"
+        style="--i: 4"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Avg Trade</div>
+        <div
+            class="kpi-value {% if m.expectancy >= 0 %}profit{% else %}loss{% endif %}"
+        >
+            {% if m.expectancy >= 0 %}+{% endif %}${{
+            "%.2f"|format(m.expectancy) }}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--{{ 'profit' if m.expectancy >= 0 else 'loss' }}" style="--i:4">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Avg Trade</div>
-    <div class="kpi-value {% if m.expectancy >= 0 %}profit{% else %}loss{% endif %}">
-      {% if m.expectancy >= 0 %}+{% endif %}${{ "%.2f"|format(m.expectancy) }}
+    <div class="kpi-card kpi-card--loss" style="--i: 5">
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Max Drawdown</div>
+        <div class="kpi-value loss">{{ "%.2f"|format(m.max_dd_pct) }}%</div>
+        <div class="kpi-sub">${{ "%.2f"|format(m.max_dd_dollar) }}</div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--loss" style="--i:5">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Max Drawdown</div>
-    <div class="kpi-value loss">{{ "%.2f"|format(m.max_dd_pct) }}%</div>
-    <div class="kpi-sub">${{ "%.2f"|format(m.max_dd_dollar) }}</div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
-
-  <div class="kpi-card kpi-card--{{ 'profit' if m.ret_dd is not none and m.ret_dd >= 0 else ('loss' if m.ret_dd is not none else 'neutral') }}" style="--i:6">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Ret / DD</div>
-    <div class="kpi-value {% if m.ret_dd is not none and m.ret_dd >= 0 %}profit{% elif m.ret_dd is not none %}loss{% endif %}">
-      {% if m.ret_dd is not none %}{{ "%.2f"|format(m.ret_dd) }}{% else %}N/A{% endif %}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if m.ret_dd is not none and m.ret_dd >= 0 else ('loss' if m.ret_dd is not none else 'neutral') }}"
+        style="--i: 6"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Ret / DD</div>
+        <div
+            class="kpi-value {% if m.ret_dd is not none and m.ret_dd >= 0 %}profit{% elif m.ret_dd is not none %}loss{% endif %}"
+        >
+            {% if m.ret_dd is not none %}{{ "%.2f"|format(m.ret_dd) }}{% else
+            %}N/A{% endif %}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= 2.0 else ('loss' if m.sqn is not none and m.sqn < 1.6 else 'neutral') }}" style="--i:7">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">SQN Score</div>
-    <div class="kpi-value {% if m.sqn is not none and m.sqn >= 2.0 %}profit{% elif m.sqn is not none and m.sqn < 1.6 %}loss{% endif %}">
-      {% if m.sqn is not none %}{{ "%.2f"|format(m.sqn) }}{% else %}N/A{% endif %}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= 2.0 else ('loss' if m.sqn is not none and m.sqn < 1.6 else 'neutral') }}"
+        style="--i: 7"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">SQN Score</div>
+        <div
+            class="kpi-value {% if m.sqn is not none and m.sqn >= 2.0 %}profit{% elif m.sqn is not none and m.sqn < 1.6 %}loss{% endif %}"
+        >
+            {% if m.sqn is not none %}{{ "%.2f"|format(m.sqn) }}{% else %}N/A{%
+            endif %}
+        </div>
+        {% if m.sqn is not none %}
+        <div class="kpi-sub">{{ m.sqn_label }} {{ m.sqn_note }}</div>
+        {% endif %}
+        <div class="kpi-card-shimmer"></div>
     </div>
-    {% if m.sqn is not none %}
-    <div class="kpi-sub">{{ m.sqn_label }} {{ m.sqn_note }}</div>
-    {% endif %}
-    <div class="kpi-card-shimmer"></div>
-  </div>
-
 </div>
 
 <!-- ── Stats Band ── -->
 <div class="stats-band">
-  <div class="stat-item">
-    <span class="stat-label">Avg Win</span>
-    <span class="stat-val profit">+${{ "%.2f"|format(m.avg_win) }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Avg Loss</span>
-    <span class="stat-val loss">${{ "%.2f"|format(m.avg_loss) }}</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Best Trade</span>
-    <span class="stat-val profit">+${{ "%.2f"|format(m.best_trade) }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Worst Trade</span>
-    <span class="stat-val loss">${{ "%.2f"|format(m.worst_trade) }}</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Consec W</span>
-    <span class="stat-val profit">{{ m.max_consec_wins }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Consec L</span>
-    <span class="stat-val loss">{{ m.max_consec_losses }}</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Avg Duración</span>
-    <span class="stat-val">{{ "%.1f"|format(m.avg_duration_hours) }}h</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Stagnación</span>
-    <span class="stat-val">{{ m.stagnation_days }}d</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Long</span>
-    <span class="stat-val">{{ m.long_trades }}<span class="sband-sub"> ({{ m.long_wins }}W)</span></span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Short</span>
-    <span class="stat-val">{{ m.short_trades }}<span class="sband-sub"> ({{ m.short_wins }}W)</span></span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Expectancy</span>
-    <span class="stat-val {% if m.expectancy >= 0 %}profit{% else %}loss{% endif %}">
-      {% if m.expectancy >= 0 %}+{% endif %}${{ "%.2f"|format(m.expectancy) }}
-    </span>
-  </div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Win</span>
+        <span class="stat-val profit">+${{ "%.2f"|format(m.avg_win) }}</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Loss</span>
+        <span class="stat-val loss">${{ "%.2f"|format(m.avg_loss) }}</span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Best Trade</span>
+        <span class="stat-val profit">+${{ "%.2f"|format(m.best_trade) }}</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Worst Trade</span>
+        <span class="stat-val loss">${{ "%.2f"|format(m.worst_trade) }}</span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Consec W</span>
+        <span class="stat-val profit">{{ m.max_consec_wins }}</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Consec L</span>
+        <span class="stat-val loss">{{ m.max_consec_losses }}</span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Duración</span>
+        <span class="stat-val">{{ "%.1f"|format(m.avg_duration_hours) }}h</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Stagnación</span>
+        <span class="stat-val">{{ m.stagnation_days }}d</span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Long</span>
+        <span class="stat-val"
+            >{{ m.long_trades }}<span class="sband-sub">
+                ({{ m.long_wins }}W)</span
+            ></span
+        >
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Short</span>
+        <span class="stat-val"
+            >{{ m.short_trades }}<span class="sband-sub">
+                ({{ m.short_wins }}W)</span
+            ></span
+        >
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Expectancy</span>
+        <span
+            class="stat-val {% if m.expectancy >= 0 %}profit{% else %}loss{% endif %}"
+        >
+            {% if m.expectancy >= 0 %}+{% endif %}${{
+            "%.2f"|format(m.expectancy) }}
+        </span>
+    </div>
 </div>
 
 <!-- ── Equity Chart ── -->
-<div class="chart-section dash-reveal" style="--ri:0">
-  <div class="chart-header">
-    <div class="chart-title-group">
-      <span class="chart-icon">&#x1F4C8;</span>
-      <h2 class="chart-title">Curva de Equity</h2>
+<div class="chart-section dash-reveal" style="--ri: 0">
+    <div class="chart-header-row">
+        <div class="chart-title-group">
+            <span class="chart-icon">&#x1F4C8;</span>
+            <h2 class="chart-title">Curva de Equity</h2>
+        </div>
+        <div id="ea-equity-time-selector"></div>
     </div>
-  </div>
-  <div id="ea-equity-chart" class="chart-container" style="height:450px"></div>
+    <div
+        id="ea-equity-chart"
+        class="chart-container"
+        style="height: 450px"
+    ></div>
 </div>
 
 <!-- ── Drawdown Chart ── -->
-<div class="chart-section dash-reveal" style="--ri:1">
-  <div class="chart-header">
-    <div class="chart-title-group">
-      <span class="chart-icon">&#x1F4C9;</span>
-      <h2 class="chart-title">Drawdown</h2>
+<div class="chart-section dash-reveal" style="--ri: 1">
+    <div class="chart-header-row">
+        <div class="chart-title-group">
+            <span class="chart-icon">&#x1F4C9;</span>
+            <h2 class="chart-title">Drawdown</h2>
+        </div>
+        <div id="ea-dd-time-selector"></div>
     </div>
-  </div>
-  <div id="ea-dd-chart" class="chart-container" style="height:280px"></div>
+    <div id="ea-dd-chart" class="chart-container" style="height: 280px"></div>
 </div>
 
 <!-- ── P&L Histogram + Streak ── -->
 <div class="charts-row">
-  <div class="chart-section chart-half dash-reveal" style="--ri:2">
-    <div id="pnl-histogram" class="chart-container" style="height:300px"></div>
-  </div>
-  <div class="chart-section chart-half dash-reveal" style="--ri:3">
-    <div id="streak-chart" class="chart-container" style="height:300px"></div>
-  </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 2">
+        <div
+            id="pnl-histogram"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 3">
+        <div
+            id="streak-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
 </div>
 
 <!-- ── Analytics 2x2 ── -->
 <div class="charts-row">
-  <div class="chart-section chart-half dash-reveal" style="--ri:4">
-    <div id="weekday-chart" class="chart-container" style="height:300px"></div>
-  </div>
-  <div class="chart-section chart-half dash-reveal" style="--ri:5">
-    <div id="hour-chart" class="chart-container" style="height:300px"></div>
-  </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 4">
+        <div
+            id="weekday-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 5">
+        <div
+            id="hour-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
 </div>
 <div class="charts-row">
-  <div class="chart-section chart-half dash-reveal" style="--ri:6">
-    <div id="longshort-chart" class="chart-container" style="height:300px"></div>
-  </div>
-  <div class="chart-section chart-half dash-reveal" style="--ri:7">
-    <div id="duration-scatter-chart" class="chart-container" style="height:300px"></div>
-  </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 6">
+        <div
+            id="longshort-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 7">
+        <div
+            id="duration-scatter-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
 </div>
 
 <!-- ── Monthly Performance ── -->
-<div class="section dash-reveal" style="--ri:8">
-  <div class="section-header">
-    <h2 class="section-title">Monthly Performance</h2>
-    <span class="section-pill section-pill--accent">{{ m.instrument }} ($)</span>
-  </div>
-  <div class="table-wrapper">
-    <table class="data-table monthly-perf-table">
-      <thead>
-        <tr>
-          <th class="mp-year">Year</th>
-          <th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th>
-          <th>May</th><th>Jun</th><th>Jul</th><th>Aug</th>
-          <th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th>
-          <th class="mp-ytd">YTD</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in monthly_perf %}
-        <tr>
-          <td class="mono mp-year"><strong>{{ row.year }}</strong></td>
-          {% for val in row.months %}
-          <td class="mono {% if val is none %}mp-empty{% elif val < 0 %}cell-loss{% endif %}">
-            {% if val is none %}—{% elif val < 0 %}-{{ "%.2f"|format(val|abs) }}{% else %}{{ "%.2f"|format(val) }}{% endif %}
-          </td>
-          {% endfor %}
-          <td class="mono mp-ytd {% if row.ytd < 0 %}cell-loss{% else %}cell-profit{% endif %}">
-            <strong>{% if row.ytd >= 0 %}{{ "%.2f"|format(row.ytd) }}{% else %}-{{ "%.2f"|format(row.ytd|abs) }}{% endif %}</strong>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="section dash-reveal" style="--ri: 8">
+    <div class="section-header">
+        <h2 class="section-title">Monthly Performance</h2>
+        <span class="section-pill section-pill--accent"
+            >{{ m.instrument }} ($)</span
+        >
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table monthly-perf-table">
+            <thead>
+                <tr>
+                    <th class="mp-year">Year</th>
+                    <th>Jan</th>
+                    <th>Feb</th>
+                    <th>Mar</th>
+                    <th>Apr</th>
+                    <th>May</th>
+                    <th>Jun</th>
+                    <th>Jul</th>
+                    <th>Aug</th>
+                    <th>Sep</th>
+                    <th>Oct</th>
+                    <th>Nov</th>
+                    <th>Dec</th>
+                    <th class="mp-ytd">YTD</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in monthly_perf %}
+                <tr>
+                    <td class="mono mp-year">
+                        <strong>{{ row.year }}</strong>
+                    </td>
+                    {% for val in row.months %}
+                    <td
+                        class="mono {% if val is none %}mp-empty{% elif val < 0 %}cell-loss{% endif %}"
+                    >
+                        {% if val is none %}—{% elif val < 0 %}-{{
+                        "%.2f"|format(val|abs) }}{% else %}{{ "%.2f"|format(val)
+                        }}{% endif %}
+                    </td>
+                    {% endfor %}
+                    <td
+                        class="mono mp-ytd {% if row.ytd < 0 %}cell-loss{% else %}cell-profit{% endif %}"
+                    >
+                        <strong
+                            >{% if row.ytd >= 0 %}{{ "%.2f"|format(row.ytd) }}{%
+                            else %}-{{ "%.2f"|format(row.ytd|abs) }}{% endif
+                            %}</strong
+                        >
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- ── Trade History ── -->
-<div class="section dash-reveal" style="--ri:9">
-  <div class="section-header">
-    <h2 class="section-title">Historial de Trades</h2>
-    <span class="section-pill">{{ trades|length }} trades</span>
-  </div>
-  <div class="table-wrapper">
-    <table class="data-table" id="trades-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th data-sort="open">Apertura</th>
-          <th data-sort="close">Cierre</th>
-          <th>Tipo</th>
-          <th class="th-right">Vol</th>
-          <th class="th-right">Precio In</th>
-          <th class="th-right">Precio Out</th>
-          <th class="th-right">SL</th>
-          <th class="th-right">TP</th>
-          <th class="th-right">Comisión</th>
-          <th class="th-right">Swap</th>
-          <th class="th-right">P&L Neto</th>
-          <th class="th-right">Duración</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for t in trades %}
-        <tr class="{% if t.is_win %}row-win{% else %}row-loss{% endif %}">
-          <td class="mono">{{ t.num }}</td>
-          <td class="mono">{{ t.open_time }}</td>
-          <td class="mono">{{ t.close_time }}</td>
-          <td class="{% if t.direction == 'BUY' %}cell-profit{% else %}cell-loss{% endif %}">{{ t.direction }}</td>
-          <td class="mono th-right">{{ "%.2f"|format(t.volume) }}</td>
-          <td class="mono th-right">{{ t.open_price }}</td>
-          <td class="mono th-right">{{ t.close_price }}</td>
-          <td class="mono th-right">{% if t.sl %}{{ t.sl }}{% else %}—{% endif %}</td>
-          <td class="mono th-right">{% if t.tp %}{{ t.tp }}{% else %}—{% endif %}</td>
-          <td class="mono th-right cell-loss">{{ "%.2f"|format(t.commission) }}</td>
-          <td class="mono th-right {% if t.swap >= 0 %}cell-profit{% else %}cell-loss{% endif %}">{{ "%.2f"|format(t.swap) }}</td>
-          <td class="mono th-right {% if t.net_pnl >= 0 %}cell-profit{% else %}cell-loss{% endif %}">
-            {% if t.net_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(t.net_pnl) }}
-          </td>
-          <td class="mono th-right">{{ "%.1f"|format(t.duration_hours) }}h</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="section dash-reveal" style="--ri: 9">
+    <div class="section-header">
+        <h2 class="section-title">Historial de Trades</h2>
+        <span class="section-pill">{{ trades|length }} trades</span>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table" id="trades-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th data-sort="open">Apertura</th>
+                    <th data-sort="close">Cierre</th>
+                    <th>Tipo</th>
+                    <th class="th-right">Vol</th>
+                    <th class="th-right">Precio In</th>
+                    <th class="th-right">Precio Out</th>
+                    <th class="th-right">SL</th>
+                    <th class="th-right">TP</th>
+                    <th class="th-right">Comisión</th>
+                    <th class="th-right">Swap</th>
+                    <th class="th-right">P&L Neto</th>
+                    <th class="th-right">Duración</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in trades %}
+                <tr
+                    class="{% if t.is_win %}row-win{% else %}row-loss{% endif %}"
+                >
+                    <td class="mono">{{ t.num }}</td>
+                    <td class="mono">{{ t.open_time }}</td>
+                    <td class="mono">{{ t.close_time }}</td>
+                    <td
+                        class="{% if t.direction == 'BUY' %}cell-profit{% else %}cell-loss{% endif %}"
+                    >
+                        {{ t.direction }}
+                    </td>
+                    <td class="mono th-right">{{ "%.2f"|format(t.volume) }}</td>
+                    <td class="mono th-right">{{ t.open_price }}</td>
+                    <td class="mono th-right">{{ t.close_price }}</td>
+                    <td class="mono th-right">
+                        {% if t.sl %}{{ t.sl }}{% else %}—{% endif %}
+                    </td>
+                    <td class="mono th-right">
+                        {% if t.tp %}{{ t.tp }}{% else %}—{% endif %}
+                    </td>
+                    <td class="mono th-right cell-loss">
+                        {{ "%.2f"|format(t.commission) }}
+                    </td>
+                    <td
+                        class="mono th-right {% if t.swap >= 0 %}cell-profit{% else %}cell-loss{% endif %}"
+                    >
+                        {{ "%.2f"|format(t.swap) }}
+                    </td>
+                    <td
+                        class="mono th-right {% if t.net_pnl >= 0 %}cell-profit{% else %}cell-loss{% endif %}"
+                    >
+                        {% if t.net_pnl >= 0 %}+{% endif %}${{
+                        "%.2f"|format(t.net_pnl) }}
+                    </td>
+                    <td class="mono th-right">
+                        {{ "%.1f"|format(t.duration_hours) }}h
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
-const EA_NAME = {{ ea_name | tojson }};
+    const EA_NAME = {{ ea_name | tojson }};
 
-document.addEventListener('DOMContentLoaded', function () {
-  renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME);
-  loadEAPnLData(EA_NAME);
-  makeSortable('trades-table');
+    document.addEventListener('DOMContentLoaded', function () {
+      renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME);
 
-  /* Scroll-reveal */
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (e.isIntersecting) {
-        e.target.classList.add('dash-visible');
-        io.unobserve(e.target);
-      }
+      renderTimeRangeSelector('ea-equity-time-selector', function(days) {
+        renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME, days);
+      });
+      renderTimeRangeSelector('ea-dd-time-selector', function(days) {
+        renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME, days);
+      });
+
+      loadEAPnLData(EA_NAME);
+      makeSortable('trades-table');
+
+      /* Scroll-reveal */
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            e.target.classList.add('dash-visible');
+            io.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.06 });
+
+      document.querySelectorAll('.dash-reveal').forEach(function (el) {
+        io.observe(el);
+      });
     });
-  }, { threshold: 0.06 });
-
-  document.querySelectorAll('.dash-reveal').forEach(function (el) {
-    io.observe(el);
-  });
-});
 </script>
 {% endblock %}

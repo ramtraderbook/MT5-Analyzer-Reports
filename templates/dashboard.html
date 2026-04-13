@@ -1,396 +1,610 @@
-{% extends "base.html" %}
-{% set title = "Dashboard" %}
-{% block content %}
+{% extends "base.html" %} {% set title = "Dashboard" %} {% block content %}
 
 <!-- ── Page Header ── -->
 <header class="dash-header">
-  <div class="dash-header-accent"></div>
-  <div class="dash-header-content">
-    <div class="dash-header-eyebrow">Portfolio Overview</div>
-    <h1 class="dash-header-title">Dashboard</h1>
-    <div class="dash-meta-strip">
-      <span class="dash-meta-chip">
-        <span class="dash-meta-dot" style="background:var(--accent)"></span>
-        {{ account.name }}
-      </span>
-      <span class="dash-meta-div">·</span>
-      <span class="dash-meta-chip mono">{{ period_start }} → {{ period_end }}</span>
-      <span class="dash-meta-div">·</span>
-      <span class="dash-meta-chip">{{ total_eas }} EAs activos</span>
-      <span class="dash-meta-div">·</span>
-      <span class="dash-meta-chip mono">{{ portfolio.total_trades }} trades</span>
-      {% if open_count > 0 %}
-      <span class="dash-meta-div">·</span>
-      <span class="dash-meta-chip dash-chip-open">
-        <span class="dash-pulse"></span>
-        {{ open_count }} abiertos
-      </span>
-      {% endif %}
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <div class="dash-header-eyebrow">Portfolio Overview</div>
+        <h1 class="dash-header-title">Dashboard</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip">
+                <span
+                    class="dash-meta-dot"
+                    style="background: var(--accent)"
+                ></span>
+                {{ account.name }}
+            </span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono"
+                >{{ period_start }} → {{ period_end }}</span
+            >
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip">{{ total_eas }} EAs activos</span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono"
+                >{{ portfolio.total_trades }} trades</span
+            >
+            {% if open_count > 0 %}
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip dash-chip-open">
+                <span class="dash-pulse"></span>
+                {{ open_count }} abiertos
+            </span>
+            {% endif %}
+        </div>
     </div>
-  </div>
 </header>
 
 <!-- ── KPI Cards ── -->
 <div class="kpi-grid">
-
-  <div class="kpi-card kpi-card--{{ 'profit' if portfolio.net_profit >= 0 else 'loss' }}" style="--i:0">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Net Profit</div>
-    <div class="kpi-value {% if portfolio.net_profit >= 0 %}profit{% else %}loss{% endif %}">
-      {% if portfolio.net_profit >= 0 %}+{% endif %}${{ "%.2f"|format(portfolio.net_profit) }}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.net_profit >= 0 else 'loss' }}"
+        style="--i: 0"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Net Profit</div>
+        <div
+            class="kpi-value {% if portfolio.net_profit >= 0 %}profit{% else %}loss{% endif %}"
+        >
+            {% if portfolio.net_profit >= 0 %}+{% endif %}${{
+            "%.2f"|format(portfolio.net_profit) }}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--neutral" style="--i:1">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Total Trades</div>
-    <div class="kpi-value">{{ portfolio.total_trades }}</div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
-
-  <div class="kpi-card kpi-card--{{ 'profit' if portfolio.win_rate >= 50 else ('loss' if portfolio.win_rate < 35 else 'neutral') }}" style="--i:2">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Win Rate</div>
-    <div class="kpi-value {% if portfolio.win_rate >= 50 %}profit{% elif portfolio.win_rate < 35 %}loss{% endif %}">
-      {{ "%.1f"|format(portfolio.win_rate) }}%
+    <div class="kpi-card kpi-card--neutral" style="--i: 1">
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Total Trades</div>
+        <div class="kpi-value">{{ portfolio.total_trades }}</div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-progress-bar">
-      <div class="kpi-progress-fill" style="width: {{ portfolio.win_rate }}%"></div>
+
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.win_rate >= 50 else ('loss' if portfolio.win_rate < 35 else 'neutral') }}"
+        style="--i: 2"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Win Rate</div>
+        <div
+            class="kpi-value {% if portfolio.win_rate >= 50 %}profit{% elif portfolio.win_rate < 35 %}loss{% endif %}"
+        >
+            {{ "%.1f"|format(portfolio.win_rate) }}%
+        </div>
+        <div class="kpi-progress-bar">
+            <div
+                class="kpi-progress-fill"
+                style="width: {{ portfolio.win_rate }}%"
+            ></div>
+        </div>
+        <div class="kpi-sub">
+            {{ portfolio.winning_trades }}W &nbsp;·&nbsp; {{
+            portfolio.losing_trades }}L
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-sub">{{ portfolio.winning_trades }}W &nbsp;·&nbsp; {{ portfolio.losing_trades }}L</div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--{{ 'profit' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= 1.5 else ('loss' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float < 1.0 else 'neutral') }}" style="--i:3">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Profit Factor</div>
-    <div class="kpi-value {% if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= 1.5 %}profit{% elif portfolio.profit_factor != '∞' and portfolio.profit_factor|float < 1.0 %}loss{% endif %}">
-      {{ portfolio.profit_factor }}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= 1.5 else ('loss' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float < 1.0 else 'neutral') }}"
+        style="--i: 3"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Profit Factor</div>
+        <div
+            class="kpi-value {% if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= 1.5 %}profit{% elif portfolio.profit_factor != '∞' and portfolio.profit_factor|float < 1.0 %}loss{% endif %}"
+        >
+            {{ portfolio.profit_factor }}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--loss" style="--i:4">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Max Drawdown</div>
-    <div class="kpi-value loss">{{ "%.2f"|format(portfolio.max_dd_pct) }}%</div>
-    <div class="kpi-sub">${{ "%.2f"|format(portfolio.max_dd_dollar) }}</div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
-
-  <div class="kpi-card kpi-card--{{ 'profit' if portfolio.ret_dd is not none and portfolio.ret_dd >= 0 else ('loss' if portfolio.ret_dd is not none else 'neutral') }}" style="--i:5">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Ret / DD Max</div>
-    <div class="kpi-value {% if portfolio.ret_dd is not none and portfolio.ret_dd >= 0 %}profit{% elif portfolio.ret_dd is not none %}loss{% endif %}">
-      {% if portfolio.ret_dd is not none %}{{ "%.2f"|format(portfolio.ret_dd) }}{% else %}N/A{% endif %}
+    <div class="kpi-card kpi-card--loss" style="--i: 4">
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Max Drawdown</div>
+        <div class="kpi-value loss">
+            {{ "%.2f"|format(portfolio.max_dd_pct) }}%
+        </div>
+        <div class="kpi-sub">${{ "%.2f"|format(portfolio.max_dd_dollar) }}</div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--{{ 'profit' if portfolio.sqn is not none and portfolio.sqn >= 2.0 else ('loss' if portfolio.sqn is not none and portfolio.sqn < 1.6 else 'neutral') }}" style="--i:6">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">SQN Score</div>
-    <div class="kpi-value {% if portfolio.sqn is not none and portfolio.sqn >= 2.0 %}profit{% elif portfolio.sqn is not none and portfolio.sqn < 1.6 %}loss{% endif %}">
-      {% if portfolio.sqn is not none %}{{ "%.2f"|format(portfolio.sqn) }}{% else %}N/A{% endif %}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.ret_dd is not none and portfolio.ret_dd >= 0 else ('loss' if portfolio.ret_dd is not none else 'neutral') }}"
+        style="--i: 5"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Ret / DD Max</div>
+        <div
+            class="kpi-value {% if portfolio.ret_dd is not none and portfolio.ret_dd >= 0 %}profit{% elif portfolio.ret_dd is not none %}loss{% endif %}"
+        >
+            {% if portfolio.ret_dd is not none %}{{
+            "%.2f"|format(portfolio.ret_dd) }}{% else %}N/A{% endif %}
+        </div>
+        <div class="kpi-card-shimmer"></div>
     </div>
-    {% if portfolio.sqn is not none %}
-    <div class="kpi-sub">{{ portfolio.sqn_label }} {{ portfolio.sqn_note }}</div>
-    {% endif %}
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
-  <div class="kpi-card kpi-card--neutral" style="--i:7">
-    <div class="kpi-card-top-bar"></div>
-    <div class="kpi-label">Recovery Factor</div>
-    <div class="kpi-value">
-      {% if portfolio.recovery_factor is not none %}{{ "%.2f"|format(portfolio.recovery_factor) }}{% else %}N/A{% endif %}
+    <div
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.sqn is not none and portfolio.sqn >= 2.0 else ('loss' if portfolio.sqn is not none and portfolio.sqn < 1.6 else 'neutral') }}"
+        style="--i: 6"
+    >
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">SQN Score</div>
+        <div
+            class="kpi-value {% if portfolio.sqn is not none and portfolio.sqn >= 2.0 %}profit{% elif portfolio.sqn is not none and portfolio.sqn < 1.6 %}loss{% endif %}"
+        >
+            {% if portfolio.sqn is not none %}{{ "%.2f"|format(portfolio.sqn)
+            }}{% else %}N/A{% endif %}
+        </div>
+        {% if portfolio.sqn is not none %}
+        <div class="kpi-sub">
+            {{ portfolio.sqn_label }} {{ portfolio.sqn_note }}
+        </div>
+        {% endif %}
+        <div class="kpi-card-shimmer"></div>
     </div>
-    <div class="kpi-card-shimmer"></div>
-  </div>
 
+    <div class="kpi-card kpi-card--neutral" style="--i: 7">
+        <div class="kpi-card-top-bar"></div>
+        <div class="kpi-label">Recovery Factor</div>
+        <div class="kpi-value">
+            {% if portfolio.recovery_factor is not none %}{{
+            "%.2f"|format(portfolio.recovery_factor) }}{% else %}N/A{% endif %}
+        </div>
+        <div class="kpi-card-shimmer"></div>
+    </div>
 </div>
 
 <!-- ── Stats Band ── -->
 <div class="stats-band">
-  <div class="stat-item">
-    <span class="stat-label">Avg Trade</span>
-    <span class="stat-val {% if portfolio.expectancy >= 0 %}profit{% else %}loss{% endif %}">
-      {% if portfolio.expectancy >= 0 %}+{% endif %}${{ "%.2f"|format(portfolio.expectancy) }}
-    </span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Avg Win</span>
-    <span class="stat-val profit">+${{ "%.2f"|format(portfolio.avg_win) }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Avg Loss</span>
-    <span class="stat-val loss">${{ "%.2f"|format(portfolio.avg_loss) }}</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Best Trade</span>
-    <span class="stat-val profit">+${{ "%.2f"|format(portfolio.best_trade) }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Worst Trade</span>
-    <span class="stat-val loss">${{ "%.2f"|format(portfolio.worst_trade) }}</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Consec W</span>
-    <span class="stat-val profit">{{ portfolio.max_consec_wins }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Consec L</span>
-    <span class="stat-val loss">{{ portfolio.max_consec_losses }}</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Avg Duración</span>
-    <span class="stat-val">{{ "%.1f"|format(portfolio.avg_duration_hours) }}h</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Stagnación</span>
-    <span class="stat-val">{{ portfolio.stagnation_days }}d</span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Long</span>
-    <span class="stat-val">{{ portfolio.long_trades }}<span class="sband-sub"> ({{ portfolio.long_wins }}W)</span></span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Short</span>
-    <span class="stat-val">{{ portfolio.short_trades }}<span class="sband-sub"> ({{ portfolio.short_wins }}W)</span></span>
-  </div>
-  <div class="sband-sep"></div>
-  <div class="stat-item">
-    <span class="stat-label">Gross Profit</span>
-    <span class="stat-val profit">+${{ "%.2f"|format(portfolio.gross_profit) }}</span>
-  </div>
-  <div class="stat-item">
-    <span class="stat-label">Gross Loss</span>
-    <span class="stat-val loss">${{ "%.2f"|format(portfolio.gross_loss) }}</span>
-  </div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Trade</span>
+        <span
+            class="stat-val {% if portfolio.expectancy >= 0 %}profit{% else %}loss{% endif %}"
+        >
+            {% if portfolio.expectancy >= 0 %}+{% endif %}${{
+            "%.2f"|format(portfolio.expectancy) }}
+        </span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Win</span>
+        <span class="stat-val profit"
+            >+${{ "%.2f"|format(portfolio.avg_win) }}</span
+        >
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Loss</span>
+        <span class="stat-val loss"
+            >${{ "%.2f"|format(portfolio.avg_loss) }}</span
+        >
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Best Trade</span>
+        <span class="stat-val profit"
+            >+${{ "%.2f"|format(portfolio.best_trade) }}</span
+        >
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Worst Trade</span>
+        <span class="stat-val loss"
+            >${{ "%.2f"|format(portfolio.worst_trade) }}</span
+        >
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Consec W</span>
+        <span class="stat-val profit">{{ portfolio.max_consec_wins }}</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Consec L</span>
+        <span class="stat-val loss">{{ portfolio.max_consec_losses }}</span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Avg Duración</span>
+        <span class="stat-val"
+            >{{ "%.1f"|format(portfolio.avg_duration_hours) }}h</span
+        >
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Stagnación</span>
+        <span class="stat-val">{{ portfolio.stagnation_days }}d</span>
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Long</span>
+        <span class="stat-val"
+            >{{ portfolio.long_trades }}<span class="sband-sub">
+                ({{ portfolio.long_wins }}W)</span
+            ></span
+        >
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Short</span>
+        <span class="stat-val"
+            >{{ portfolio.short_trades }}<span class="sband-sub">
+                ({{ portfolio.short_wins }}W)</span
+            ></span
+        >
+    </div>
+    <div class="sband-sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Gross Profit</span>
+        <span class="stat-val profit"
+            >+${{ "%.2f"|format(portfolio.gross_profit) }}</span
+        >
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">Gross Loss</span>
+        <span class="stat-val loss"
+            >${{ "%.2f"|format(portfolio.gross_loss) }}</span
+        >
+    </div>
 </div>
 
 <!-- ── Equity Curves Chart ── -->
-<div class="chart-section dash-reveal" style="--ri:0">
-  <div class="chart-header">
-    <div class="chart-title-group">
-      <span class="chart-icon">&#x1F4C8;</span>
-      <h2 class="chart-title">Curvas de Equity</h2>
+<div class="chart-section dash-reveal" style="--ri: 0">
+    <div class="chart-header-row">
+        <div class="chart-title-group">
+            <span class="chart-icon">&#x1F4C8;</span>
+            <h2 class="chart-title">Curvas de Equity</h2>
+        </div>
+        <div id="equity-time-selector"></div>
     </div>
-    <span class="chart-hint">Click leyenda &nbsp;·&nbsp; Drag zoom &nbsp;·&nbsp; Doble click reset</span>
-  </div>
-  <div id="equity-chart" class="chart-container" style="height:500px"></div>
+    <div id="equity-chart" class="chart-container" style="height: 500px"></div>
 </div>
 
 <!-- ── Drawdown Chart ── -->
-<div class="chart-section dash-reveal" style="--ri:1">
-  <div class="chart-header">
-    <div class="chart-title-group">
-      <span class="chart-icon">&#x1F4C9;</span>
-      <h2 class="chart-title">Drawdown</h2>
+<div class="chart-section dash-reveal" style="--ri: 1">
+    <div class="chart-header-row">
+        <div class="chart-title-group">
+            <span class="chart-icon">&#x1F4C9;</span>
+            <h2 class="chart-title">Drawdown</h2>
+        </div>
+        <div id="dd-time-selector"></div>
     </div>
-  </div>
-  <div id="dd-chart" class="chart-container" style="height:320px"></div>
+    <div id="dd-chart" class="chart-container" style="height: 320px"></div>
 </div>
 
 <!-- ── EA Summary Table ── -->
-<div class="section dash-reveal" style="--ri:2">
-  <div class="section-header">
-    <h2 class="section-title">Resumen por Estrategia</h2>
-    <span class="section-pill">{{ ea_rows|length }} EAs</span>
-  </div>
-  <div class="table-wrapper">
-    <table class="data-table" id="ea-summary-table">
-      <thead>
-        <tr>
-          <th data-sort="magic"       class="th-center">Magic</th>
-          <th data-sort="name"        class="th-center">Nombre</th>
-          <th data-sort="instrument"  class="th-center">Instrumento</th>
-          <th data-sort="trades"      class="th-center">#Trades</th>
-          <th data-sort="profit_factor" class="th-center">PF</th>
-          <th data-sort="ret_dd"      class="th-center">RR/DD</th>
-          <th data-sort="max_dd"      class="th-center">MaxDD%</th>
-          <th data-sort="stagnation"  class="th-center">Estancamiento</th>
-          <th data-sort="expectancy"  class="th-center">Avg Trade$</th>
-          <th data-sort="consec_loss" class="th-center">Max Loss</th>
-          <th data-sort="sqn"         class="th-center">SQN Score</th>
-          <th data-sort="sharpe"      class="th-center">Sharpe Ratio</th>
-          <th data-sort="payout"      class="th-center">Payout</th>
-          <th data-sort="win_rate"    class="th-center">WinRate%</th>
-          <th data-sort="net_profit"  class="th-center">Net Profit$</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for ea in ea_rows %}
-        <tr>
-          <td class="mono th-center">{{ ea.magic }}</td>
-          <td class="th-center">
-            <a href="{{ ea.url }}" class="ea-table-link" style="border-left:3px solid {{ ea.color }}">
-              {{ ea.name }}
-            </a>
-          </td>
-          <td class="th-center">{{ ea.instrument }}</td>
-          <td class="mono th-center">{{ ea.total_trades }}</td>
-          <td class="mono th-center {% if ea.profit_factor != '∞' and ea.profit_factor|float >= 1.5 %}cell-profit{% elif ea.profit_factor != '∞' and ea.profit_factor|float < 1.0 %}cell-loss{% endif %}">
-            {{ ea.profit_factor }}
-          </td>
-          <td class="mono th-center {% if ea.ret_dd is not none and ea.ret_dd >= 0 %}cell-profit{% elif ea.ret_dd is not none %}cell-loss{% endif %}">
-            {% if ea.ret_dd is not none %}{{ "%.2f"|format(ea.ret_dd) }}{% else %}N/A{% endif %}
-          </td>
-          <td class="mono th-center cell-loss">{{ "%.2f"|format(ea.max_dd_pct) }}%</td>
-          <td class="mono th-center {% if ea.stagnation_days > 30 %}cell-loss{% elif ea.stagnation_days == 0 %}cell-profit{% endif %}">
-            {{ ea.stagnation_days }}d
-          </td>
-          <td class="mono th-center {% if ea.expectancy >= 0 %}cell-profit{% else %}cell-loss{% endif %}">
-            ${{ "%.2f"|format(ea.expectancy) }}
-          </td>
-          <td class="mono th-center cell-loss">{{ ea.max_consec_losses }}</td>
-          <td class="mono th-center {% if ea.sqn is not none and ea.sqn >= 2.0 %}cell-profit{% elif ea.sqn is not none and ea.sqn < 1.6 %}cell-loss{% endif %}">
-            {% if ea.sqn is not none %}{{ "%.2f"|format(ea.sqn) }}{% else %}N/A{% endif %}
-          </td>
-          <td class="mono th-center {% if ea.sharpe_ratio is not none and ea.sharpe_ratio >= 0.5 %}cell-profit{% elif ea.sharpe_ratio is not none and ea.sharpe_ratio < 0 %}cell-loss{% endif %}">
-            {% if ea.sharpe_ratio is not none %}{{ "%.2f"|format(ea.sharpe_ratio) }}{% else %}N/A{% endif %}
-          </td>
-          <td class="mono th-center">
-            {% if ea.payout_ratio != '∞' %}{{ "%.2f"|format(ea.payout_ratio|float) }}{% else %}∞{% endif %}
-          </td>
-          <td class="mono th-center {% if ea.win_rate >= 50 %}cell-profit{% elif ea.win_rate < 35 %}cell-loss{% endif %}">
-            {{ "%.1f"|format(ea.win_rate) }}%
-          </td>
-          <td class="mono th-center {% if ea.net_profit >= 0 %}cell-profit{% else %}cell-loss{% endif %}">
-            {% if ea.net_profit >= 0 %}+{% endif %}${{ "%.2f"|format(ea.net_profit) }}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-      <tfoot>
-        <tr class="table-portfolio-row">
-          <td></td>
-          <td class="th-center"><strong>PORTFOLIO</strong></td>
-          <td class="th-center">—</td>
-          <td class="mono th-center"><strong>{{ portfolio.total_trades }}</strong></td>
-          <td class="mono th-center"><strong>{{ portfolio.profit_factor }}</strong></td>
-          <td class="mono th-center"><strong>{% if portfolio.ret_dd is not none %}{{ "%.2f"|format(portfolio.ret_dd) }}{% else %}N/A{% endif %}</strong></td>
-          <td class="mono th-center"><strong>{{ "%.2f"|format(portfolio.max_dd_pct) }}%</strong></td>
-          <td class="mono th-center"><strong>{{ portfolio.stagnation_days }}d</strong></td>
-          <td class="mono th-center"><strong>${{ "%.2f"|format(portfolio.expectancy) }}</strong></td>
-          <td class="mono th-center"><strong>{{ portfolio.max_consec_losses }}</strong></td>
-          <td class="mono th-center"><strong>{% if portfolio.sqn is not none %}{{ "%.2f"|format(portfolio.sqn) }}{% else %}N/A{% endif %}</strong></td>
-          <td class="mono th-center"><strong>{% if portfolio.sharpe_ratio is not none %}{{ "%.2f"|format(portfolio.sharpe_ratio) }}{% else %}N/A{% endif %}</strong></td>
-          <td class="mono th-center"><strong>{{ "%.2f"|format(portfolio.payout_ratio|float) if portfolio.payout_ratio != '∞' else '∞' }}</strong></td>
-          <td class="mono th-center"><strong>{{ "%.1f"|format(portfolio.win_rate) }}%</strong></td>
-          <td class="mono th-center {% if portfolio.net_profit >= 0 %}cell-profit{% else %}cell-loss{% endif %}">
-            <strong>{% if portfolio.net_profit >= 0 %}+{% endif %}${{ "%.2f"|format(portfolio.net_profit) }}</strong>
-          </td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
+<div class="section dash-reveal" style="--ri: 2">
+    <div class="section-header">
+        <h2 class="section-title">Resumen por Estrategia</h2>
+        <span class="section-pill">{{ ea_rows|length }} EAs</span>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table" id="ea-summary-table">
+            <thead>
+                <tr>
+                    <th data-sort="magic" class="th-center">Magic</th>
+                    <th data-sort="name" class="th-center">Nombre</th>
+                    <th data-sort="instrument" class="th-center">
+                        Instrumento
+                    </th>
+                    <th data-sort="weeks" class="th-center">Operativo</th>
+                    <th data-sort="trades" class="th-center">#Trades</th>
+                    <th data-sort="profit_factor" class="th-center">PF</th>
+                    <th data-sort="ret_dd" class="th-center">RR/DD</th>
+                    <th data-sort="max_dd" class="th-center">MaxDD%</th>
+                    <th data-sort="stagnation" class="th-center">
+                        Estancamiento
+                    </th>
+                    <th data-sort="expectancy" class="th-center">Avg Trade$</th>
+                    <th data-sort="consec_loss" class="th-center">Max Loss</th>
+                    <th data-sort="sqn" class="th-center">SQN Score</th>
+                    <th data-sort="sharpe" class="th-center">Sharpe Ratio</th>
+                    <th data-sort="payout" class="th-center">Payout</th>
+                    <th data-sort="win_rate" class="th-center">WinRate%</th>
+                    <th data-sort="net_profit" class="th-center">
+                        Net Profit$
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ea in ea_rows %}
+                <tr>
+                    <td class="mono th-center">{{ ea.magic }}</td>
+                    <td class="th-center">
+                        <a
+                            href="{{ ea.url }}"
+                            class="ea-table-link"
+                            style="border-left:3px solid {{ ea.color }}"
+                        >
+                            {{ ea.name }}
+                        </a>
+                    </td>
+                    <td class="th-center">{{ ea.instrument }}</td>
+                    <td class="mono th-center">
+                        {{ "%.1f"|format(ea.weeks_operating) }} sem
+                    </td>
+                    <td class="mono th-center">{{ ea.total_trades }}</td>
+                    <td
+                        class="mono th-center {% if ea.profit_factor != '∞' and ea.profit_factor|float >= 1.5 %}cell-profit{% elif ea.profit_factor != '∞' and ea.profit_factor|float < 1.0 %}cell-loss{% endif %}"
+                    >
+                        {{ ea.profit_factor }}
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.ret_dd is not none and ea.ret_dd >= 0 %}cell-profit{% elif ea.ret_dd is not none %}cell-loss{% endif %}"
+                    >
+                        {% if ea.ret_dd is not none %}{{
+                        "%.2f"|format(ea.ret_dd) }}{% else %}N/A{% endif %}
+                    </td>
+                    <td class="mono th-center cell-loss">
+                        {{ "%.2f"|format(ea.max_dd_pct) }}%
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.stagnation_days > 30 %}cell-loss{% elif ea.stagnation_days == 0 %}cell-profit{% endif %}"
+                    >
+                        {{ ea.stagnation_days }}d
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.expectancy >= 0 %}cell-profit{% else %}cell-loss{% endif %}"
+                    >
+                        ${{ "%.2f"|format(ea.expectancy) }}
+                    </td>
+                    <td class="mono th-center cell-loss">
+                        {{ ea.max_consec_losses }}
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.sqn is not none and ea.sqn >= 2.0 %}cell-profit{% elif ea.sqn is not none and ea.sqn < 1.6 %}cell-loss{% endif %}"
+                    >
+                        {% if ea.sqn is not none %}{{ "%.2f"|format(ea.sqn) }}{%
+                        else %}N/A{% endif %}
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.sharpe_ratio is not none and ea.sharpe_ratio >= 0.5 %}cell-profit{% elif ea.sharpe_ratio is not none and ea.sharpe_ratio < 0 %}cell-loss{% endif %}"
+                    >
+                        {% if ea.sharpe_ratio is not none %}{{
+                        "%.2f"|format(ea.sharpe_ratio) }}{% else %}N/A{% endif
+                        %}
+                    </td>
+                    <td class="mono th-center">
+                        {% if ea.payout_ratio != '∞' %}{{
+                        "%.2f"|format(ea.payout_ratio|float) }}{% else %}∞{%
+                        endif %}
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.win_rate >= 50 %}cell-profit{% elif ea.win_rate < 35 %}cell-loss{% endif %}"
+                    >
+                        {{ "%.1f"|format(ea.win_rate) }}%
+                    </td>
+                    <td
+                        class="mono th-center {% if ea.net_profit >= 0 %}cell-profit{% else %}cell-loss{% endif %}"
+                    >
+                        {% if ea.net_profit >= 0 %}+{% endif %}${{
+                        "%.2f"|format(ea.net_profit) }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="table-portfolio-row">
+                    <td></td>
+                    <td class="th-center"><strong>PORTFOLIO</strong></td>
+                    <td class="th-center">—</td>
+                    <td class="th-center">—</td>
+                    <td class="mono th-center">
+                        <strong>{{ portfolio.total_trades }}</strong>
+                    </td>
+                    <td class="mono th-center">
+                        <strong>{{ portfolio.profit_factor }}</strong>
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >{% if portfolio.ret_dd is not none %}{{
+                            "%.2f"|format(portfolio.ret_dd) }}{% else %}N/A{%
+                            endif %}</strong
+                        >
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >{{ "%.2f"|format(portfolio.max_dd_pct) }}%</strong
+                        >
+                    </td>
+                    <td class="mono th-center">
+                        <strong>{{ portfolio.stagnation_days }}d</strong>
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >${{ "%.2f"|format(portfolio.expectancy) }}</strong
+                        >
+                    </td>
+                    <td class="mono th-center">
+                        <strong>{{ portfolio.max_consec_losses }}</strong>
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >{% if portfolio.sqn is not none %}{{
+                            "%.2f"|format(portfolio.sqn) }}{% else %}N/A{% endif
+                            %}</strong
+                        >
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >{% if portfolio.sharpe_ratio is not none %}{{
+                            "%.2f"|format(portfolio.sharpe_ratio) }}{% else
+                            %}N/A{% endif %}</strong
+                        >
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >{{ "%.2f"|format(portfolio.payout_ratio|float) if
+                            portfolio.payout_ratio != '∞' else '∞' }}</strong
+                        >
+                    </td>
+                    <td class="mono th-center">
+                        <strong
+                            >{{ "%.1f"|format(portfolio.win_rate) }}%</strong
+                        >
+                    </td>
+                    <td
+                        class="mono th-center {% if portfolio.net_profit >= 0 %}cell-profit{% else %}cell-loss{% endif %}"
+                    >
+                        <strong
+                            >{% if portfolio.net_profit >= 0 %}+{% endif %}${{
+                            "%.2f"|format(portfolio.net_profit) }}</strong
+                        >
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
 </div>
 
 <!-- ── Contribution Chart ── -->
-<div class="chart-section dash-reveal" style="--ri:3">
-  <div class="chart-header">
-    <div class="chart-title-group">
-      <span class="chart-icon">&#x1F3C6;</span>
-      <h2 class="chart-title">Contribución al Resultado</h2>
+<div class="chart-section dash-reveal" style="--ri: 3">
+    <div class="chart-header">
+        <div class="chart-title-group">
+            <span class="chart-icon">&#x1F3C6;</span>
+            <h2 class="chart-title">Contribución al Resultado</h2>
+        </div>
     </div>
-  </div>
-  <div id="contribution-chart" class="chart-container" style="height:360px"></div>
+    <div
+        id="contribution-chart"
+        class="chart-container"
+        style="height: 360px"
+    ></div>
 </div>
 
 <!-- ── Monthly Performance ── -->
-<div class="section dash-reveal" style="--ri:4">
-  <div class="section-header">
-    <h2 class="section-title">Monthly Performance</h2>
-    <span class="section-pill section-pill--accent">Portfolio ($)</span>
-  </div>
-  <div class="table-wrapper">
-    <table class="data-table monthly-perf-table">
-      <thead>
-        <tr>
-          <th class="mp-year">Year</th>
-          <th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th>
-          <th>May</th><th>Jun</th><th>Jul</th><th>Aug</th>
-          <th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th>
-          <th class="mp-ytd">YTD</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in portfolio_monthly_perf %}
-        <tr>
-          <td class="mono mp-year"><strong>{{ row.year }}</strong></td>
-          {% for val in row.months %}
-          <td class="mono {% if val is none %}mp-empty{% elif val < 0 %}cell-loss{% endif %}">
-            {% if val is none %}—{% elif val < 0 %}-{{ "%.2f"|format(val|abs) }}{% else %}{{ "%.2f"|format(val) }}{% endif %}
-          </td>
-          {% endfor %}
-          <td class="mono mp-ytd {% if row.ytd < 0 %}cell-loss{% else %}cell-profit{% endif %}">
-            <strong>{% if row.ytd >= 0 %}{{ "%.2f"|format(row.ytd) }}{% else %}-{{ "%.2f"|format(row.ytd|abs) }}{% endif %}</strong>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="section dash-reveal" style="--ri: 4">
+    <div class="section-header">
+        <h2 class="section-title">Monthly Performance</h2>
+        <span class="section-pill section-pill--accent">Portfolio ($)</span>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table monthly-perf-table">
+            <thead>
+                <tr>
+                    <th class="mp-year">Year</th>
+                    <th>Jan</th>
+                    <th>Feb</th>
+                    <th>Mar</th>
+                    <th>Apr</th>
+                    <th>May</th>
+                    <th>Jun</th>
+                    <th>Jul</th>
+                    <th>Aug</th>
+                    <th>Sep</th>
+                    <th>Oct</th>
+                    <th>Nov</th>
+                    <th>Dec</th>
+                    <th class="mp-ytd">YTD</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in portfolio_monthly_perf %}
+                <tr>
+                    <td class="mono mp-year">
+                        <strong>{{ row.year }}</strong>
+                    </td>
+                    {% for val in row.months %}
+                    <td
+                        class="mono {% if val is none %}mp-empty{% elif val < 0 %}cell-loss{% endif %}"
+                    >
+                        {% if val is none %}—{% elif val < 0 %}-{{
+                        "%.2f"|format(val|abs) }}{% else %}{{ "%.2f"|format(val)
+                        }}{% endif %}
+                    </td>
+                    {% endfor %}
+                    <td
+                        class="mono mp-ytd {% if row.ytd < 0 %}cell-loss{% else %}cell-profit{% endif %}"
+                    >
+                        <strong
+                            >{% if row.ytd >= 0 %}{{ "%.2f"|format(row.ytd) }}{%
+                            else %}-{{ "%.2f"|format(row.ytd|abs) }}{% endif
+                            %}</strong
+                        >
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- ── Portfolio Analytics Charts ── -->
 <div class="charts-row">
-  <div class="chart-section chart-half dash-reveal" style="--ri:5">
-    <div id="port-pnl-histogram" class="chart-container" style="height:300px"></div>
-  </div>
-  <div class="chart-section chart-half dash-reveal" style="--ri:6">
-    <div id="port-streak-chart" class="chart-container" style="height:300px"></div>
-  </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 5">
+        <div
+            id="port-pnl-histogram"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 6">
+        <div
+            id="port-streak-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
 </div>
 <div class="charts-row">
-  <div class="chart-section chart-half dash-reveal" style="--ri:7">
-    <div id="port-weekday-chart" class="chart-container" style="height:300px"></div>
-  </div>
-  <div class="chart-section chart-half dash-reveal" style="--ri:8">
-    <div id="port-hour-chart" class="chart-container" style="height:300px"></div>
-  </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 7">
+        <div
+            id="port-weekday-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 8">
+        <div
+            id="port-hour-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
 </div>
 <div class="charts-row">
-  <div class="chart-section chart-half dash-reveal" style="--ri:9">
-    <div id="port-longshort-chart" class="chart-container" style="height:300px"></div>
-  </div>
-  <div class="chart-section chart-half dash-reveal" style="--ri:10">
-    <div id="port-duration-scatter-chart" class="chart-container" style="height:300px"></div>
-  </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 9">
+        <div
+            id="port-longshort-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
+    <div class="chart-section chart-half dash-reveal" style="--ri: 10">
+        <div
+            id="port-duration-scatter-chart"
+            class="chart-container"
+            style="height: 300px"
+        ></div>
+    </div>
 </div>
 
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
-document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener("DOMContentLoaded", function () {
+        renderEquityCurves("equity-chart");
+        renderDrawdownCurves("dd-chart");
+        renderContribution("contribution-chart");
+        makeSortable("ea-summary-table");
+        loadPortfolioAnalytics();
 
-  renderEquityCurves('equity-chart');
-  renderDrawdownCurves('dd-chart');
-  renderContribution('contribution-chart');
-  makeSortable('ea-summary-table');
-  loadPortfolioAnalytics();
+        renderTimeRangeSelector("equity-time-selector", function (days) {
+            renderEquityCurves("equity-chart", days);
+        });
+        renderTimeRangeSelector("dd-time-selector", function (days) {
+            renderDrawdownCurves("dd-chart", days);
+        });
 
-  /* Scroll-reveal via IntersectionObserver */
-  const io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (e.isIntersecting) {
-        e.target.classList.add('dash-visible');
-        io.unobserve(e.target);
-      }
+        /* Scroll-reveal via IntersectionObserver */
+        const io = new IntersectionObserver(
+            function (entries) {
+                entries.forEach(function (e) {
+                    if (e.isIntersecting) {
+                        e.target.classList.add("dash-visible");
+                        io.unobserve(e.target);
+                    }
+                });
+            },
+            { threshold: 0.06 },
+        );
+
+        document.querySelectorAll(".dash-reveal").forEach(function (el) {
+            io.observe(el);
+        });
     });
-  }, { threshold: 0.06 });
-
-  document.querySelectorAll('.dash-reveal').forEach(function (el) {
-    io.observe(el);
-  });
-});
 </script>
 {% endblock %}
