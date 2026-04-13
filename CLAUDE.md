@@ -102,7 +102,71 @@ test_data/ReportHistory-4000084439.xlsx
 - Config.json persistente entre sesiones
 - Max DD% corregido: usa capital del config ($5,000 default), no $100,000
 
-**Pendiente / posibles mejoras:**
+**Pendiente / posibles mejoras v1.0:**
 - Validación cruzada con sección RESULTS del xlsx
 - Soporte multi-archivo (comparar períodos)
 - Tests unitarios para parser.py y metrics.py
+
+---
+
+## Plan de Mejoras v1.1 (EN PROGRESO)
+
+### 1. **Tabla Resumen por Estrategia → Agregar columna "Dias/Semanas Operativo"**
+   - **Qué:** Mostrar cuántos días/semanas lleva operativo cada EA
+   - **Archivo:** `metrics.py` + `templates/dashboard.html`
+   - **Implementación:**
+     - Función ya existe: `_weeks_operating()` en `metrics.py` [L202-218]
+     - Agregar campo `weeks_operating` a los dicts de `ea_rows` en `dashboard()` route
+     - En template, agregar columna con formato: "XX.X sem" o "XX.X días"
+     - Usar `close_time` del primer y último trade de cada EA
+
+### 2. **Reducir padding en tabla Resumen → Horizontal scroll eliminado**
+   - **Qué:** Ajustar padding/margins para que todas las columnas entren sin scroll
+   - **Archivo:** `static/style.css`
+   - **Implementación:**
+     - `.data-table th, td`: reducir padding de ~12px a ~6px (H) × ~4px (V)
+     - `.mono`: reducir font-size si es necesario
+     - Ajustar `.table-wrapper` con `overflow-x: auto` pero optimizar anchos
+     - Considerar responsivo: hide algunas columnas en pantallas < 1400px
+
+### 3. **Selector de rango temporal en gráficas Equity + Drawdown**
+   - **Qué:** Botones/tabs para cambiar ventana: 7d, 14d, 30d, 90d, 180d, 1a, ALL
+   - **Archivos:** `ea_analyzer.py`, `templates/dashboard.html` + `strategy.html`, `static/charts.js`
+   
+   **Implementación detallada:**
+   
+   a) **Backend (ea_analyzer.py):**
+      - Modificar `/api/equity_curves` y `/api/drawdown_curves` para aceptar parámetro `days` (query param)
+      - Filtrar trades: `trade["close_time"] >= (datetime.now() - timedelta(days=days))`
+      - Default: `days=None` (mostrar ALL)
+      
+   b) **Frontend (charts.js):**
+      - Crear función `renderTimeRangeSelector(containerId, onChangeCallback)` que dibuje botones
+      - Botones: 7d | 14d | 30d | 90d | 180d | 1Y | ALL
+      - Al clickear → llamar API con nuevo param `?days=X` → refrescar gráfico
+      
+   c) **HTML (dashboard.html + strategy.html):**
+      - Agregar `<div id="equity-time-selector"></div>` antes de `#equity-chart`
+      - Agregar `<div id="drawdown-time-selector"></div>` antes de `#dd-chart`
+      - Script: inicializar selectores + vincular a gráficos
+      
+   d) **Gráficos:**
+      - Mantener misma estructura de datos, solo filtrando trade list
+      - Recalcular equity curve en cada cambio de rango
+
+### 4. **Optimizaciones secundarias**
+   - Pasar `weeks_operating` al frontend para mostrar en tabla
+   - Asegurar que equity curve empiece en 0 (ya está)
+   - Cache de rangos temporales para no recalcular innecesariamente
+
+---
+
+## Estado Actual de Archivos Clave
+
+| Archivo | Línea | Cambio necesario |
+|---|---|---|
+| `metrics.py` | L221-349 | Pasar `weeks_operating` en `calculate_ea_metrics()` |
+| `templates/dashboard.html` | L200-295 | Agregar columna "Operativo" + divs para selectores |
+| `static/style.css` | L381-451 | Reducir padding table + agregar estilos selectores |
+| `static/charts.js` | (TODO) | Funciones de time-range selector y refetch |
+| `ea_analyzer.py` | L542-630 | Agregar param `days` a `/api/equity_curves` + `/api/drawdown_curves` |

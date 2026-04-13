@@ -6,19 +6,34 @@ Usage: python ea_analyzer.py
 Opens http://localhost:5000 in the default browser.
 """
 
-import os
-import json
-import uuid
 import glob
-import time
+import json
+import os
 import threading
+import time
+import uuid
 import webbrowser
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import quote, unquote
 
 from flask import (
-    Flask, render_template, request, redirect,
-    url_for, session, jsonify, send_file
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
+
+from validator import (
+    _safe_float,
+    calculate_validator_score,
+    get_all_validator_results,
+    load_validator_store,
+    save_validator_store,
+    timeframe_to_hours,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -54,6 +69,7 @@ os.makedirs(os.path.join(APP_DIR, "test_data"), exist_ok=True)
 # Config helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
@@ -73,9 +89,11 @@ def save_config(config):
 # Cache helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _serialize_parsed_data(data):
     """Convert datetime objects to ISO strings for JSON serialization."""
     import copy
+
     d = copy.deepcopy(data)
     for trade in d.get("closed_trades", []):
         for k in ("open_time", "close_time"):
@@ -128,6 +146,7 @@ def cleanup_old_caches():
 # Display helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def get_display_label(ea_name, config):
     mapping = config.get("mappings", {}).get(ea_name, {})
     magic = mapping.get("magic")
@@ -142,12 +161,14 @@ def build_sidebar_eas(parsed_data, config, active_ea=None):
         # Skip inactive EAs
         if not mappings.get(ea_name, {}).get("active", True):
             continue
-        sidebar_eas.append({
-            "name": ea_name,
-            "label": get_display_label(ea_name, config),
-            "url": url_for("strategy", name=quote(ea_name, safe="")),
-            "active": (ea_name == active_ea),
-        })
+        sidebar_eas.append(
+            {
+                "name": ea_name,
+                "label": get_display_label(ea_name, config),
+                "url": url_for("strategy", name=quote(ea_name, safe="")),
+                "active": (ea_name == active_ea),
+            }
+        )
     return sidebar_eas
 
 
@@ -161,12 +182,13 @@ def get_parsed_data():
 # Routes: Upload
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.route("/")
 def index():
     config = load_config()
-    return render_template("upload.html",
-                           last_file=config.get("last_file"),
-                           show_sidebar=False)
+    return render_template(
+        "upload.html", last_file=config.get("last_file"), show_sidebar=False
+    )
 
 
 @app.route("/upload", methods=["POST"])
@@ -175,10 +197,16 @@ def upload():
 
     file = request.files.get("file")
     if not file or not file.filename:
-        return render_template("upload.html", error="Por favor selecciona un archivo.", show_sidebar=False)
+        return render_template(
+            "upload.html", error="Por favor selecciona un archivo.", show_sidebar=False
+        )
 
     if not file.filename.lower().endswith(".xlsx"):
-        return render_template("upload.html", error="El archivo debe ser .xlsx exportado de MT5.", show_sidebar=False)
+        return render_template(
+            "upload.html",
+            error="El archivo debe ser .xlsx exportado de MT5.",
+            show_sidebar=False,
+        )
 
     # Save uploaded file
     safe_name = os.path.basename(file.filename)
@@ -188,13 +216,16 @@ def upload():
     # Parse
     try:
         from parser import parse_mt5_report
+
         parsed_data = parse_mt5_report(filepath)
     except ValueError as e:
         return render_template("upload.html", error=str(e), show_sidebar=False)
     except Exception as e:
-        return render_template("upload.html",
-                               error=f"Error inesperado al parsear el archivo: {e}",
-                               show_sidebar=False)
+        return render_template(
+            "upload.html",
+            error=f"Error inesperado al parsear el archivo: {e}",
+            show_sidebar=False,
+        )
 
     # Cache parsed data
     cache_key = save_cache(parsed_data)
@@ -214,6 +245,7 @@ def upload():
 # Routes: Magic Number Mapping
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.route("/mapping")
 def mapping():
     parsed_data = get_parsed_data()
@@ -230,25 +262,33 @@ def mapping():
 
         # Detect instrument from trades
         symbols = list(set(t["symbol"] for t in ea_trades if t.get("symbol")))
-        instrument = symbols[0] if len(symbols) == 1 else (", ".join(sorted(symbols)) if symbols else "")
+        instrument = (
+            symbols[0]
+            if len(symbols) == 1
+            else (", ".join(sorted(symbols)) if symbols else "")
+        )
 
-        ea_list.append({
-            "name": ea_name,
-            "alias": existing.get("alias", ""),
-            "instrument": existing.get("instrument", instrument),
-            "trade_count": len(ea_trades),
-            "magic": existing.get("magic", ""),
-            "capital": existing.get("capital", 5000),
-            "active": existing.get("active", True),
-            "is_new": ea_name not in config.get("mappings", {}),
-        })
+        ea_list.append(
+            {
+                "name": ea_name,
+                "alias": existing.get("alias", ""),
+                "instrument": existing.get("instrument", instrument),
+                "trade_count": len(ea_trades),
+                "magic": existing.get("magic", ""),
+                "capital": existing.get("capital", 5000),
+                "active": existing.get("active", True),
+                "is_new": ea_name not in config.get("mappings", {}),
+            }
+        )
 
-    return render_template("mapping.html",
-                           ea_list=ea_list,
-                           account=parsed_data.get("account", {}),
-                           filename=session.get("filename", ""),
-                           unknown_trades=parsed_data.get("unknown_trades", 0),
-                           show_sidebar=False)
+    return render_template(
+        "mapping.html",
+        ea_list=ea_list,
+        account=parsed_data.get("account", {}),
+        filename=session.get("filename", ""),
+        unknown_trades=parsed_data.get("unknown_trades", 0),
+        show_sidebar=False,
+    )
 
 
 @app.route("/mapping/save", methods=["POST"])
@@ -305,6 +345,7 @@ def mapping_save():
 # Routes: Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.route("/dashboard")
 def dashboard():
     parsed_data = get_parsed_data()
@@ -313,6 +354,7 @@ def dashboard():
 
     config = load_config()
     from metrics import calculate_all_metrics
+
     all_metrics = calculate_all_metrics(parsed_data, config)
 
     portfolio = all_metrics["portfolio"]
@@ -324,27 +366,30 @@ def dashboard():
     # Build EA summary rows for the table
     ea_rows = []
     for ea_name, m in by_ea.items():
-        ea_rows.append({
-            "name": ea_name,
-            "label": m["label"],
-            "magic": m["magic"] or "",
-            "instrument": m["instrument"],
-            "total_trades": m["total_trades"],
-            "win_rate": m["win_rate"],
-            "profit_factor": m["profit_factor"],
-            "payout_ratio": m["payout_ratio"],
-            "expectancy": m["expectancy"],
-            "max_dd_pct": m["max_dd_pct"],
-            "ret_dd": m["ret_dd"],
-            "sqn": m["sqn"],
-            "sqn_note": m["sqn_note"],
-            "sharpe_ratio": m["sharpe_ratio"],
-            "stagnation_days": m["stagnation_days"],
-            "max_consec_losses": m["max_consec_losses"],
-            "net_profit": m["net_profit"],
-            "url": url_for("strategy", name=quote(ea_name, safe="")),
-            "color": ea_colors.get(ea_name, "#4FC3F7"),
-        })
+        ea_rows.append(
+            {
+                "name": ea_name,
+                "label": m["label"],
+                "magic": m["magic"] or "",
+                "instrument": m["instrument"],
+                "weeks_operating": m.get("weeks_operating", 0.0),
+                "total_trades": m["total_trades"],
+                "win_rate": m["win_rate"],
+                "profit_factor": m["profit_factor"],
+                "payout_ratio": m["payout_ratio"],
+                "expectancy": m["expectancy"],
+                "max_dd_pct": m["max_dd_pct"],
+                "ret_dd": m["ret_dd"],
+                "sqn": m["sqn"],
+                "sqn_note": m["sqn_note"],
+                "sharpe_ratio": m["sharpe_ratio"],
+                "stagnation_days": m["stagnation_days"],
+                "max_consec_losses": m["max_consec_losses"],
+                "net_profit": m["net_profit"],
+                "url": url_for("strategy", name=quote(ea_name, safe="")),
+                "color": ea_colors.get(ea_name, "#4FC3F7"),
+            }
+        )
 
     # Period
     trades = parsed_data.get("closed_trades", [])
@@ -354,6 +399,7 @@ def dashboard():
         times = [t["close_time"] for t in trades if t.get("close_time")]
         if times:
             times_sorted = sorted(times)
+
             def fmt_dt(dt_str):
                 if isinstance(dt_str, str):
                     try:
@@ -361,11 +407,13 @@ def dashboard():
                     except Exception:
                         return dt_str
                 return str(dt_str)
+
             period_start = fmt_dt(times_sorted[0])
             period_end = fmt_dt(times_sorted[-1])
 
     # Portfolio monthly performance table
     from collections import defaultdict
+
     port_trades = portfolio.get("trades", [])
     port_monthly_data = defaultdict(lambda: defaultdict(float))
     port_monthly_has = defaultdict(set)
@@ -385,28 +433,33 @@ def dashboard():
                 months_vals.append(round(port_monthly_data[year][mo], 2))
             else:
                 months_vals.append(None)
-        ytd = round(sum(port_monthly_data[year][mo] for mo in port_monthly_has[year]), 2)
+        ytd = round(
+            sum(port_monthly_data[year][mo] for mo in port_monthly_has[year]), 2
+        )
         portfolio_monthly_perf.append({"year": year, "months": months_vals, "ytd": ytd})
 
-    return render_template("dashboard.html",
-                           portfolio=portfolio,
-                           ea_rows=ea_rows,
-                           ea_colors=ea_colors,
-                           sidebar_eas=sidebar_eas,
-                           account=parsed_data.get("account", {}),
-                           period_start=period_start,
-                           period_end=period_end,
-                           total_eas=len(by_ea),
-                           open_count=parsed_data.get("total_open", 0),
-                           unknown_count=parsed_data.get("unknown_trades", 0),
-                           portfolio_monthly_perf=portfolio_monthly_perf,
-                           show_sidebar=True,
-                           active_page="dashboard")
+    return render_template(
+        "dashboard.html",
+        portfolio=portfolio,
+        ea_rows=ea_rows,
+        ea_colors=ea_colors,
+        sidebar_eas=sidebar_eas,
+        account=parsed_data.get("account", {}),
+        period_start=period_start,
+        period_end=period_end,
+        total_eas=len(by_ea),
+        open_count=parsed_data.get("total_open", 0),
+        unknown_count=parsed_data.get("unknown_trades", 0),
+        portfolio_monthly_perf=portfolio_monthly_perf,
+        show_sidebar=True,
+        active_page="dashboard",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes: Strategy Detail
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @app.route("/strategy/<path:name>")
 def strategy(name):
@@ -416,12 +469,15 @@ def strategy(name):
         return redirect(url_for("index"))
 
     config = load_config()
-    ea_trades = [t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name]
+    ea_trades = [
+        t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
+    ]
 
     if not ea_trades:
         return redirect(url_for("dashboard"))
 
     from metrics import calculate_ea_metrics
+
     m = calculate_ea_metrics(ea_name, ea_trades, config)
 
     sidebar_eas = build_sidebar_eas(parsed_data, config, active_ea=ea_name)
@@ -439,25 +495,28 @@ def strategy(name):
 
     display_trades = []
     for i, t in enumerate(m["trades"], 1):
-        display_trades.append({
-            "num": i,
-            "open_time": fmt_dt(t.get("open_time")),
-            "close_time": fmt_dt(t.get("close_time")),
-            "direction": t.get("direction", "").upper(),
-            "volume": t.get("volume", 0),
-            "open_price": t.get("open_price", 0),
-            "close_price": t.get("close_price", 0),
-            "sl": t.get("sl"),
-            "tp": t.get("tp"),
-            "commission": t.get("commission", 0),
-            "swap": t.get("swap", 0),
-            "net_pnl": t.get("net_pnl", 0),
-            "duration_hours": t.get("duration_hours", 0),
-            "is_win": t.get("net_pnl", 0) > 0,
-        })
+        display_trades.append(
+            {
+                "num": i,
+                "open_time": fmt_dt(t.get("open_time")),
+                "close_time": fmt_dt(t.get("close_time")),
+                "direction": t.get("direction", "").upper(),
+                "volume": t.get("volume", 0),
+                "open_price": t.get("open_price", 0),
+                "close_price": t.get("close_price", 0),
+                "sl": t.get("sl"),
+                "tp": t.get("tp"),
+                "commission": t.get("commission", 0),
+                "swap": t.get("swap", 0),
+                "net_pnl": t.get("net_pnl", 0),
+                "duration_hours": t.get("duration_hours", 0),
+                "is_win": t.get("net_pnl", 0) > 0,
+            }
+        )
 
     # Build monthly performance table
     from collections import defaultdict
+
     monthly_data = defaultdict(lambda: defaultdict(float))
     monthly_has_data = defaultdict(set)
     for t in m["trades"]:
@@ -479,20 +538,23 @@ def strategy(name):
         ytd = round(sum(monthly_data[year][mo] for mo in monthly_has_data[year]), 2)
         monthly_perf.append({"year": year, "months": months_vals, "ytd": ytd})
 
-    return render_template("strategy.html",
-                           m=m,
-                           trades=display_trades,
-                           ea_name=ea_name,
-                           monthly_perf=monthly_perf,
-                           sidebar_eas=sidebar_eas,
-                           account=parsed_data.get("account", {}),
-                           show_sidebar=True,
-                           active_ea=ea_name)
+    return render_template(
+        "strategy.html",
+        m=m,
+        trades=display_trades,
+        ea_name=ea_name,
+        monthly_perf=monthly_perf,
+        sidebar_eas=sidebar_eas,
+        account=parsed_data.get("account", {}),
+        show_sidebar=True,
+        active_ea=ea_name,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes: Export
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @app.route("/export")
 def export():
@@ -502,6 +564,7 @@ def export():
 
     config = load_config()
     from metrics import calculate_all_metrics
+
     all_metrics = calculate_all_metrics(parsed_data, config)
 
     by_ea = all_metrics["by_ea"]
@@ -510,33 +573,42 @@ def export():
     export_rows = []
     for ea_name, m in by_ea.items():
         mapping = config.get("mappings", {}).get(ea_name, {})
-        export_rows.append({
-            "magic": mapping.get("magic", ""),
-            "name": ea_name,
-            "label": m["label"],
-            "trades": m["total_trades"],
-            "weeks": round(m["weeks_operating"], 1),
-            "win_rate": round(m["win_rate"], 2),
-            "profit_factor": m["profit_factor"] if isinstance(m["profit_factor"], str) else round(float(m["profit_factor"]), 2),
-            "payout": m["payout_ratio"] if isinstance(m["payout_ratio"], str) else round(float(m["payout_ratio"]), 2),
-            "expectancy": round(m["expectancy"], 2),
-            "max_dd_pct": round(m["max_dd_pct"], 2),
-            "avg_duration": round(m["avg_duration_hours"], 1),
-            "max_consec_losses": m["max_consec_losses"],
-            "stagnation_days": m["stagnation_days"],
-        })
+        export_rows.append(
+            {
+                "magic": mapping.get("magic", ""),
+                "name": ea_name,
+                "label": m["label"],
+                "trades": m["total_trades"],
+                "weeks": round(m["weeks_operating"], 1),
+                "win_rate": round(m["win_rate"], 2),
+                "profit_factor": m["profit_factor"]
+                if isinstance(m["profit_factor"], str)
+                else round(float(m["profit_factor"]), 2),
+                "payout": m["payout_ratio"]
+                if isinstance(m["payout_ratio"], str)
+                else round(float(m["payout_ratio"]), 2),
+                "expectancy": round(m["expectancy"], 2),
+                "max_dd_pct": round(m["max_dd_pct"], 2),
+                "avg_duration": round(m["avg_duration_hours"], 1),
+                "max_consec_losses": m["max_consec_losses"],
+                "stagnation_days": m["stagnation_days"],
+            }
+        )
 
-    return render_template("export.html",
-                           export_rows=export_rows,
-                           sidebar_eas=sidebar_eas,
-                           account=parsed_data.get("account", {}),
-                           show_sidebar=True,
-                           active_page="export")
+    return render_template(
+        "export.html",
+        export_rows=export_rows,
+        sidebar_eas=sidebar_eas,
+        account=parsed_data.get("account", {}),
+        show_sidebar=True,
+        active_page="export",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # API: Chart data endpoints
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @app.route("/api/equity_curves")
 def api_equity_curves():
@@ -544,9 +616,16 @@ def api_equity_curves():
     if not parsed_data:
         return jsonify({"error": "No hay datos cargados"}), 400
 
+    days_param = request.args.get("days", type=int)
+
     config = load_config()
-    from metrics import calculate_all_metrics, EA_COLORS
+    from metrics import EA_COLORS, calculate_all_metrics
+
     all_metrics = calculate_all_metrics(parsed_data, config)
+
+    cutoff_str = None
+    if days_param is not None:
+        cutoff_str = (datetime.now() - timedelta(days=days_param)).isoformat()
 
     traces = []
 
@@ -554,15 +633,19 @@ def api_equity_curves():
     portfolio = all_metrics["portfolio"]
     port_curve = portfolio["equity_curve"]
     if port_curve:
-        traces.append({
-            "name": "PORTFOLIO",
-            "x": [p["date"] for p in port_curve],
-            "y": [p["equity"] for p in port_curve],
-            "color": "#FFFFFF",
-            "width": 3,
-            "visible": True,
-            "is_portfolio": True,
-        })
+        if cutoff_str:
+            port_curve = [p for p in port_curve if p["date"] >= cutoff_str]
+        traces.append(
+            {
+                "name": "PORTFOLIO",
+                "x": [p["date"] for p in port_curve],
+                "y": [p["equity"] for p in port_curve],
+                "color": "#FFFFFF",
+                "width": 3,
+                "visible": True,
+                "is_portfolio": True,
+            }
+        )
 
     # EA traces (colored, thin, hidden by default)
     ea_colors = all_metrics["ea_colors"]
@@ -571,15 +654,19 @@ def api_equity_curves():
         curve = m["equity_curve"]
         if not curve:
             continue
-        traces.append({
-            "name": label,
-            "x": [p["date"] for p in curve],
-            "y": [p["equity"] for p in curve],
-            "color": ea_colors.get(ea_name, "#4FC3F7"),
-            "width": 1.5,
-            "visible": "legendonly",
-            "is_portfolio": False,
-        })
+        if cutoff_str:
+            curve = [p for p in curve if p["date"] >= cutoff_str]
+        traces.append(
+            {
+                "name": label,
+                "x": [p["date"] for p in curve],
+                "y": [p["equity"] for p in curve],
+                "color": ea_colors.get(ea_name, "#4FC3F7"),
+                "width": 1.5,
+                "visible": "legendonly",
+                "is_portfolio": False,
+            }
+        )
 
     return jsonify({"traces": traces})
 
@@ -590,9 +677,16 @@ def api_drawdown_curves():
     if not parsed_data:
         return jsonify({"error": "No hay datos cargados"}), 400
 
+    days_param = request.args.get("days", type=int)
+
     config = load_config()
     from metrics import calculate_all_metrics
+
     all_metrics = calculate_all_metrics(parsed_data, config)
+
+    cutoff_str = None
+    if days_param is not None:
+        cutoff_str = (datetime.now() - timedelta(days=days_param)).isoformat()
 
     traces = []
 
@@ -600,15 +694,19 @@ def api_drawdown_curves():
     portfolio = all_metrics["portfolio"]
     dd_curve = portfolio["drawdown_curve"]
     if dd_curve:
-        traces.append({
-            "name": "PORTFOLIO",
-            "x": [p["date"] for p in dd_curve],
-            "y": [p["dd_pct"] for p in dd_curve],
-            "color": "#FFFFFF",
-            "width": 2,
-            "visible": True,
-            "is_portfolio": True,
-        })
+        if cutoff_str:
+            dd_curve = [p for p in dd_curve if p["date"] >= cutoff_str]
+        traces.append(
+            {
+                "name": "PORTFOLIO",
+                "x": [p["date"] for p in dd_curve],
+                "y": [p["dd_pct"] for p in dd_curve],
+                "color": "#FFFFFF",
+                "width": 2,
+                "visible": True,
+                "is_portfolio": True,
+            }
+        )
 
     # EA DD traces
     ea_colors = all_metrics["ea_colors"]
@@ -617,15 +715,19 @@ def api_drawdown_curves():
         curve = m["drawdown_curve"]
         if not curve:
             continue
-        traces.append({
-            "name": label,
-            "x": [p["date"] for p in curve],
-            "y": [p["dd_pct"] for p in curve],
-            "color": ea_colors.get(ea_name, "#4FC3F7"),
-            "width": 1,
-            "visible": "legendonly",
-            "is_portfolio": False,
-        })
+        if cutoff_str:
+            curve = [p for p in curve if p["date"] >= cutoff_str]
+        traces.append(
+            {
+                "name": label,
+                "x": [p["date"] for p in curve],
+                "y": [p["dd_pct"] for p in curve],
+                "color": ea_colors.get(ea_name, "#4FC3F7"),
+                "width": 1,
+                "visible": "legendonly",
+                "is_portfolio": False,
+            }
+        )
 
     return jsonify({"traces": traces})
 
@@ -638,6 +740,7 @@ def api_contribution():
 
     config = load_config()
     from metrics import calculate_all_metrics
+
     all_metrics = calculate_all_metrics(parsed_data, config)
 
     items = []
@@ -648,11 +751,13 @@ def api_contribution():
     # Sort by value descending
     items.sort(key=lambda x: x["value"], reverse=True)
 
-    return jsonify({
-        "labels": [i["label"] for i in items],
-        "values": [i["value"] for i in items],
-        "colors": ["#4CAF50" if i["value"] >= 0 else "#FF5252" for i in items],
-    })
+    return jsonify(
+        {
+            "labels": [i["label"] for i in items],
+            "values": [i["value"] for i in items],
+            "colors": ["#4CAF50" if i["value"] >= 0 else "#FF5252" for i in items],
+        }
+    )
 
 
 @app.route("/api/ea_equity/<path:name>")
@@ -662,18 +767,33 @@ def api_ea_equity(name):
     if not parsed_data:
         return jsonify({"error": "No hay datos cargados"}), 400
 
+    days_param = request.args.get("days", type=int)
+
     config = load_config()
-    ea_trades = [t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name]
+    ea_trades = [
+        t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
+    ]
 
     from metrics import calculate_ea_metrics
+
     m = calculate_ea_metrics(ea_name, ea_trades, config)
 
-    return jsonify({
-        "equity": m["equity_curve"],
-        "drawdown": m["drawdown_curve"],
-        "label": m["label"],
-        "color": "#4FC3F7",
-    })
+    equity_curve = m["equity_curve"]
+    drawdown_curve = m["drawdown_curve"]
+
+    if days_param is not None:
+        cutoff_str = (datetime.now() - timedelta(days=days_param)).isoformat()
+        equity_curve = [p for p in equity_curve if p["date"] >= cutoff_str]
+        drawdown_curve = [p for p in drawdown_curve if p["date"] >= cutoff_str]
+
+    return jsonify(
+        {
+            "equity": equity_curve,
+            "drawdown": drawdown_curve,
+            "label": m["label"],
+            "color": "#4FC3F7",
+        }
+    )
 
 
 @app.route("/api/ea_pnl_data/<path:name>")
@@ -684,19 +804,24 @@ def api_ea_pnl_data(name):
         return jsonify({"error": "No hay datos cargados"}), 400
 
     config = load_config()
-    ea_trades = [t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name]
+    ea_trades = [
+        t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
+    ]
 
     from metrics import calculate_ea_metrics
+
     m = calculate_ea_metrics(ea_name, ea_trades, config)
 
     pnl_list = [t["net_pnl"] for t in m["trades"]]
     streak_data = []
     for i, t in enumerate(m["trades"]):
-        streak_data.append({
-            "index": i + 1,
-            "pnl": t["net_pnl"],
-            "color": "#4CAF50" if t["net_pnl"] > 0 else "#FF5252"
-        })
+        streak_data.append(
+            {
+                "index": i + 1,
+                "pnl": t["net_pnl"],
+                "color": "#4CAF50" if t["net_pnl"] > 0 else "#FF5252",
+            }
+        )
 
     # P/L by weekday (0=Mon..6=Sun via Python .weekday())
     weekday_pnl = [0.0] * 7
@@ -719,15 +844,15 @@ def api_ea_pnl_data(name):
     hour_pnl = [round(v, 2) for v in hour_pnl]
 
     # Long vs Short breakdown
-    long_list  = [t for t in m["trades"] if t.get("direction") == "buy"]
+    long_list = [t for t in m["trades"] if t.get("direction") == "buy"]
     short_list = [t for t in m["trades"] if t.get("direction") == "sell"]
     long_short = {
-        "long_count":  len(long_list),
+        "long_count": len(long_list),
         "short_count": len(short_list),
-        "long_pnl":    round(sum(t["net_pnl"] for t in long_list), 2),
-        "short_pnl":   round(sum(t["net_pnl"] for t in short_list), 2),
-        "long_wins":   sum(1 for t in long_list if t["net_pnl"] > 0),
-        "short_wins":  sum(1 for t in short_list if t["net_pnl"] > 0),
+        "long_pnl": round(sum(t["net_pnl"] for t in long_list), 2),
+        "short_pnl": round(sum(t["net_pnl"] for t in short_list), 2),
+        "long_wins": sum(1 for t in long_list if t["net_pnl"] > 0),
+        "short_wins": sum(1 for t in short_list if t["net_pnl"] > 0),
     }
 
     # Duration vs P&L scatter (each trade as a point)
@@ -735,19 +860,21 @@ def api_ea_pnl_data(name):
         {
             "x": round(float(t.get("duration_hours") or 0), 2),
             "y": round(t["net_pnl"], 2),
-            "win": t["net_pnl"] > 0
+            "win": t["net_pnl"] > 0,
         }
         for t in m["trades"]
     ]
 
-    return jsonify({
-        "pnl_list": pnl_list,
-        "streak_data": streak_data,
-        "weekday_pnl": weekday_pnl,
-        "hour_pnl": hour_pnl,
-        "long_short": long_short,
-        "duration_scatter": duration_scatter,
-    })
+    return jsonify(
+        {
+            "pnl_list": pnl_list,
+            "streak_data": streak_data,
+            "weekday_pnl": weekday_pnl,
+            "hour_pnl": hour_pnl,
+            "long_short": long_short,
+            "duration_scatter": duration_scatter,
+        }
+    )
 
 
 @app.route("/api/portfolio_analytics")
@@ -758,12 +885,15 @@ def api_portfolio_analytics():
 
     config = load_config()
     from metrics import calculate_all_metrics
+
     all_metrics = calculate_all_metrics(parsed_data, config)
     portfolio = all_metrics["portfolio"]
     port_trades = portfolio.get("trades", [])
 
     pnl_list = [t["net_pnl"] for t in port_trades]
-    streak_data = [{"index": i + 1, "pnl": t["net_pnl"]} for i, t in enumerate(port_trades)]
+    streak_data = [
+        {"index": i + 1, "pnl": t["net_pnl"]} for i, t in enumerate(port_trades)
+    ]
 
     weekday_pnl = [0.0] * 7
     hour_pnl = [0.0] * 24
@@ -775,37 +905,44 @@ def api_portfolio_analytics():
             weekday_pnl[ct.weekday()] += t["net_pnl"]
             hour_pnl[ct.hour] += t["net_pnl"]
     weekday_pnl = [round(v, 2) for v in weekday_pnl]
-    hour_pnl    = [round(v, 2) for v in hour_pnl]
+    hour_pnl = [round(v, 2) for v in hour_pnl]
 
-    long_list  = [t for t in port_trades if t.get("direction") == "buy"]
+    long_list = [t for t in port_trades if t.get("direction") == "buy"]
     short_list = [t for t in port_trades if t.get("direction") == "sell"]
     long_short = {
-        "long_count":  len(long_list),
+        "long_count": len(long_list),
         "short_count": len(short_list),
-        "long_pnl":    round(sum(t["net_pnl"] for t in long_list), 2),
-        "short_pnl":   round(sum(t["net_pnl"] for t in short_list), 2),
-        "long_wins":   sum(1 for t in long_list if t["net_pnl"] > 0),
-        "short_wins":  sum(1 for t in short_list if t["net_pnl"] > 0),
+        "long_pnl": round(sum(t["net_pnl"] for t in long_list), 2),
+        "short_pnl": round(sum(t["net_pnl"] for t in short_list), 2),
+        "long_wins": sum(1 for t in long_list if t["net_pnl"] > 0),
+        "short_wins": sum(1 for t in short_list if t["net_pnl"] > 0),
     }
 
     duration_scatter = [
-        {"x": round(float(t.get("duration_hours") or 0), 2), "y": round(t["net_pnl"], 2), "win": t["net_pnl"] > 0}
+        {
+            "x": round(float(t.get("duration_hours") or 0), 2),
+            "y": round(t["net_pnl"], 2),
+            "win": t["net_pnl"] > 0,
+        }
         for t in port_trades
     ]
 
-    return jsonify({
-        "pnl_list": pnl_list,
-        "streak_data": streak_data,
-        "weekday_pnl": weekday_pnl,
-        "hour_pnl": hour_pnl,
-        "long_short": long_short,
-        "duration_scatter": duration_scatter,
-    })
+    return jsonify(
+        {
+            "pnl_list": pnl_list,
+            "streak_data": streak_data,
+            "weekday_pnl": weekday_pnl,
+            "hour_pnl": hour_pnl,
+            "long_short": long_short,
+            "duration_scatter": duration_scatter,
+        }
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def open_browser():
     time.sleep(1.2)
