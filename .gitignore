@@ -1,3 +1,16 @@
+# Config & secrets (local only)
+config.json
+.secret_key
+validator_store.json
+
+# Flask session cache
+cache_*.json
+
+# Data files
+*.xlsx
+test_data/
+uploads/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -5,20 +18,3 @@ __pycache__/
 .venv/
 venv/
 env/
-
-# Flask session cache
-cache_*.json
-.secret_key
-
-# Data files
-*.xlsx
-test_data/
-validator_store.json
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
