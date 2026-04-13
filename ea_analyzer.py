@@ -940,20 +940,175 @@ def api_portfolio_analytics():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Routes: Validator (Live vs Backtest comparison)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.route("/validator")
+def validator():
+    parsed_data = get_parsed_data()
+    if not parsed_data:
+        return redirect(url_for("index"))
+
+    config = load_config()
+    store = load_validator_store()
+    sidebar_eas = build_sidebar_eas(parsed_data, config)
+
+    rows = get_all_validator_results(parsed_data, config, store)
+
+    return render_template(
+        "validator.html",
+        rows=rows,
+        sidebar_eas=sidebar_eas,
+        account=parsed_data.get("account", {}),
+        show_sidebar=True,
+        active_page="validator",
+    )
+
+
+@app.route("/validator/edit/<magic>", methods=["GET", "POST"])
+def validator_edit(magic):
+    parsed_data = get_parsed_data()
+    if not parsed_data:
+        return redirect(url_for("index"))
+
+    config = load_config()
+    store = load_validator_store()
+    sidebar_eas = build_sidebar_eas(parsed_data, config)
+
+    # Find EA name from magic number
+    ea_name = None
+    ea_label = magic
+    for name, mapping in config.get("mappings", {}).items():
+        if str(mapping.get("magic", "")) == str(magic):
+            ea_name = name
+            alias = mapping.get("alias", "") or name
+            ea_label = f"{magic} - {alias}"
+            break
+
+    entry = store.get(str(magic), {})
+
+    if request.method == "POST":
+
+        def fv(key, default=None):
+            v = request.form.get(key, "").strip()
+            if v == "":
+                return default
+            try:
+                return float(v)
+            except ValueError:
+                return default
+
+        new_entry = {
+            "instrument": request.form.get("instrument", "").strip(),
+            "timeframe": request.form.get("timeframe", "H1").strip(),
+            "bt": {
+                "win_rate": fv("bt_win_rate"),
+                "profit_factor": fv("bt_profit_factor"),
+                "payout_ratio": fv("bt_payout_ratio"),
+                "expectancy": fv("bt_expectancy"),
+                "avg_bars": fv("bt_avg_bars"),
+                "max_dd_pct": fv("bt_max_dd_pct"),
+                "max_consec_losses": fv("bt_max_consec_losses"),
+                "trades_total": fv("bt_trades_total"),
+                "months": fv("bt_months"),
+                "worst_dd_1m": fv("bt_worst_dd_1m"),
+                "worst_dd_3m": fv("bt_worst_dd_3m"),
+                "stagnation_days": fv("bt_stagnation_days"),
+            },
+            "mc_retest": {
+                "max_dd": fv("mc_r_max_dd"),
+                "profit_factor": fv("mc_r_profit_factor"),
+                "win_rate": fv("mc_r_win_rate"),
+                "expectancy": fv("mc_r_expectancy"),
+                "stability": fv("mc_r_stability"),
+            },
+            "mc_trades": {
+                "max_dd": fv("mc_t_max_dd"),
+                "profit_factor": fv("mc_t_profit_factor"),
+                "win_rate": fv("mc_t_win_rate"),
+                "expectancy": fv("mc_t_expectancy"),
+            },
+            "spp": {
+                "expectancy_median": fv("spp_expectancy_median"),
+                "dd_median": fv("spp_dd_median"),
+                "stagnation_median": fv("spp_stagnation_median"),
+            },
+        }
+
+        store[str(magic)] = new_entry
+        save_validator_store(store)
+        return redirect(url_for("validator"))
+
+    # GET: find live metrics to show as preview
+    live_preview = None
+    if ea_name:
+        ea_trades = [
+            t
+            for t in parsed_data.get("closed_trades", [])
+            if t.get("comment") == ea_name
+        ]
+        if ea_trades:
+            from metrics import calculate_ea_metrics
+
+            m = calculate_ea_metrics(ea_name, ea_trades, config)
+            tf = entry.get("timeframe", "H1")
+            tf_h = timeframe_to_hours(tf)
+            avg_dur = m.get("avg_duration_hours") or 0
+            live_preview = {
+                "total_trades": m.get("total_trades", 0),
+                "weeks_operating": m.get("weeks_operating", 0),
+                "win_rate": m.get("win_rate", 0),
+                "profit_factor": _safe_float(m.get("profit_factor")) or 0,
+                "payout_ratio": _safe_float(m.get("payout_ratio")) or 0,
+                "expectancy": m.get("expectancy", 0),
+                "max_dd_pct": m.get("max_dd_pct", 0),
+                "avg_bars_live": round(avg_dur / tf_h, 1) if tf_h > 0 else 0,
+                "max_consec_losses": m.get("max_consec_losses", 0),
+                "stagnation_days": m.get("stagnation_days", 0),
+            }
+
+    return render_template(
+        "validator_input.html",
+        magic=magic,
+        ea_name=ea_name,
+        ea_label=ea_label,
+        entry=entry,
+        live_preview=live_preview,
+        sidebar_eas=sidebar_eas,
+        account=parsed_data.get("account", {}),
+        show_sidebar=True,
+        active_page="validator",
+    )
+
+
+@app.route("/validator/delete/<magic>", methods=["POST"])
+def validator_delete(magic):
+    store = load_validator_store()
+    if str(magic) in store:
+        del store[str(magic)]
+        save_validator_store(store)
+    return redirect(url_for("validator"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+PORT = int(os.environ.get("EA_PORT", 5000))
+
+
 def open_browser():
     time.sleep(1.2)
-    webbrowser.open("http://localhost:5000")
+    webbrowser.open(f"http://localhost:{PORT}")
 
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("  EA Analyzer - iniciando servidor...")
-    print("  Abriendo http://localhost:5000")
-    print("  Presiona Ctrl+C para detener")
+    print(f"  EA Analyzer - iniciando servidor...")
+    print(f"  Abriendo http://localhost:{PORT}")
+    print(f"  Presiona Ctrl+C para detener")
     print("=" * 50)
     threading.Thread(target=open_browser, daemon=True).start()
-    app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+    app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False)

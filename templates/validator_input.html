@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% set title = "Backtest Data — " + ea_label %}
+{% block content %}
+
+<header class="dash-header">
+  <div class="dash-header-accent"></div>
+  <div class="dash-header-content">
+    <a href="{{ url_for('validator') }}" class="strat-back-link">
+      <span class="strat-back-arrow">←</span> Validator
+    </a>
+    <h1 class="dash-header-title">Datos Backtest</h1>
+    <div class="dash-meta-strip">
+      <span class="dash-meta-chip">Magic: <strong>{{ magic }}</strong></span>
+      <span class="dash-meta-div">·</span>
+      <span class="dash-meta-chip">{{ ea_label }}</span>
+    </div>
+  </div>
+</header>
+
+<form method="POST" action="{{ url_for('validator_edit', magic=magic) }}">
+
+  <!-- ── Identificación ── -->
+  <div class="section val-form-section">
+    <div class="section-header">
+      <h2 class="section-title">Identificación</h2>
+    </div>
+    <div class="val-form-grid val-form-grid-3">
+      <div class="val-form-group">
+        <label class="val-form-label">Instrumento</label>
+        <input type="text" name="instrument" class="val-input" placeholder="SP500, EURUSD..." value="{{ entry.get('instrument', '') }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Timeframe</label>
+        <select name="timeframe" class="val-input">
+          {% for tf in ['M1','M5','M15','M30','H1','H4','D1','W1'] %}
+          <option value="{{ tf }}" {% if entry.get('timeframe', 'H1') == tf %}selected{% endif %}>{{ tf }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Preview Live (auto-fill) ── -->
+  {% if live_preview %}
+  <div class="section val-form-section val-live-preview">
+    <div class="section-header">
+      <h2 class="section-title">📡 Datos Live (MT5 — auto-calculados)</h2>
+      <span class="section-pill section-pill--accent">Solo lectura</span>
+    </div>
+    <div class="val-preview-grid">
+      <div class="val-preview-item"><span class="val-preview-label">Trades</span><span class="val-preview-val">{{ live_preview.total_trades }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Semanas</span><span class="val-preview-val">{{ "%.1f"|format(live_preview.weeks_operating) }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Win Rate</span><span class="val-preview-val">{{ "%.1f"|format(live_preview.win_rate) }}%</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Profit Factor</span><span class="val-preview-val">{{ "%.2f"|format(live_preview.profit_factor) }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Payout Ratio</span><span class="val-preview-val">{{ "%.2f"|format(live_preview.payout_ratio) }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Expectancy</span><span class="val-preview-val">${{ "%.2f"|format(live_preview.expectancy) }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Max DD%</span><span class="val-preview-val cell-loss">{{ "%.2f"|format(live_preview.max_dd_pct) }}%</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Avg Bars*</span><span class="val-preview-val">{{ live_preview.avg_bars_live }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Max Consec L</span><span class="val-preview-val">{{ live_preview.max_consec_losses }}</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Stagnation</span><span class="val-preview-val">{{ live_preview.stagnation_days }}d</span></div>
+    </div>
+    <div class="val-preview-note">* Avg Bars = Avg Duration Hours ÷ Timeframe Hours (calculado automáticamente)</div>
+  </div>
+  {% endif %}
+
+  <!-- ── Backtest Original (SQX Overview) ── -->
+  <div class="section val-form-section">
+    <div class="section-header">
+      <h2 class="section-title">📈 Backtest Original <span class="val-source-tag">SQX Overview</span></h2>
+    </div>
+    <div class="val-form-grid val-form-grid-4">
+      <div class="val-form-group">
+        <label class="val-form-label">Win Rate % <span class="val-hint">Winning %</span></label>
+        <input type="number" step="0.01" name="bt_win_rate" class="val-input" placeholder="42.4" value="{{ entry.get('bt',{}).get('win_rate', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Profit Factor <span class="val-hint">Profit Factor</span></label>
+        <input type="number" step="0.001" name="bt_profit_factor" class="val-input" placeholder="1.32" value="{{ entry.get('bt',{}).get('profit_factor', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Payout Ratio <span class="val-hint">Avg Win/Loss</span></label>
+        <input type="number" step="0.01" name="bt_payout_ratio" class="val-input" placeholder="1.79" value="{{ entry.get('bt',{}).get('payout_ratio', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Expectancy $/trade</label>
+        <input type="number" step="0.01" name="bt_expectancy" class="val-input" placeholder="7.99" value="{{ entry.get('bt',{}).get('expectancy', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Avg Bars/Trade <span class="val-hint">Avg # Bars</span></label>
+        <input type="number" step="0.01" name="bt_avg_bars" class="val-input" placeholder="58.62" value="{{ entry.get('bt',{}).get('avg_bars', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Max DD % <span class="val-hint">% Drawdown</span></label>
+        <input type="number" step="0.01" name="bt_max_dd_pct" class="val-input" placeholder="9.7" value="{{ entry.get('bt',{}).get('max_dd_pct', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Max Consec Losses</label>
+        <input type="number" step="1" name="bt_max_consec_losses" class="val-input" placeholder="8" value="{{ entry.get('bt',{}).get('max_consec_losses', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Trades Totales</label>
+        <input type="number" step="1" name="bt_trades_total" class="val-input" placeholder="748" value="{{ entry.get('bt',{}).get('trades_total', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Meses del BT <span class="val-hint">Duración en meses</span></label>
+        <input type="number" step="1" name="bt_months" class="val-input" placeholder="99" value="{{ entry.get('bt',{}).get('months', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Peor DD% 1 Mes <span class="val-hint">Equity Chart</span></label>
+        <input type="number" step="0.01" name="bt_worst_dd_1m" class="val-input" placeholder="7.0" value="{{ entry.get('bt',{}).get('worst_dd_1m', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Peor DD% 3 Meses</label>
+        <input type="number" step="0.01" name="bt_worst_dd_3m" class="val-input" placeholder="9.7" value="{{ entry.get('bt',{}).get('worst_dd_3m', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Stagnation días</label>
+        <input type="number" step="1" name="bt_stagnation_days" class="val-input" placeholder="357" value="{{ entry.get('bt',{}).get('stagnation_days', '') or '' }}">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Monte Carlo Retest 95% ── -->
+  <div class="section val-form-section">
+    <div class="section-header">
+      <h2 class="section-title">🎲 Monte Carlo Retest 95% <span class="val-source-tag">SQX MC Tests → Retest Methods, fila 95%</span></h2>
+    </div>
+    <div class="val-form-grid val-form-grid-4">
+      <div class="val-form-group">
+        <label class="val-form-label">Max DD%</label>
+        <input type="number" step="0.01" name="mc_r_max_dd" class="val-input" placeholder="17.53" value="{{ entry.get('mc_retest',{}).get('max_dd', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Profit Factor</label>
+        <input type="number" step="0.001" name="mc_r_profit_factor" class="val-input" placeholder="1.18" value="{{ entry.get('mc_retest',{}).get('profit_factor', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Win Rate %</label>
+        <input type="number" step="0.01" name="mc_r_win_rate" class="val-input" placeholder="42.0" value="{{ entry.get('mc_retest',{}).get('win_rate', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Expectancy</label>
+        <input type="number" step="0.01" name="mc_r_expectancy" class="val-input" placeholder="4.58" value="{{ entry.get('mc_retest',{}).get('expectancy', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Stability</label>
+        <input type="number" step="0.001" name="mc_r_stability" class="val-input" placeholder="0.79" value="{{ entry.get('mc_retest',{}).get('stability', '') or '' }}">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Monte Carlo Trades 95% ── -->
+  <div class="section val-form-section">
+    <div class="section-header">
+      <h2 class="section-title">🃏 Monte Carlo Trades Manipulation 95% <span class="val-source-tag">SQX MC Tests → Trades, fila 95%</span></h2>
+    </div>
+    <div class="val-form-grid val-form-grid-4">
+      <div class="val-form-group">
+        <label class="val-form-label">Max DD%</label>
+        <input type="number" step="0.01" name="mc_t_max_dd" class="val-input" placeholder="20.9" value="{{ entry.get('mc_trades',{}).get('max_dd', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Profit Factor</label>
+        <input type="number" step="0.001" name="mc_t_profit_factor" class="val-input" placeholder="1.27" value="{{ entry.get('mc_trades',{}).get('profit_factor', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Win Rate %</label>
+        <input type="number" step="0.01" name="mc_t_win_rate" class="val-input" placeholder="42.0" value="{{ entry.get('mc_trades',{}).get('win_rate', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Expectancy</label>
+        <input type="number" step="0.01" name="mc_t_expectancy" class="val-input" placeholder="6.81" value="{{ entry.get('mc_trades',{}).get('expectancy', '') or '' }}">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── System Parameter Permutation ── -->
+  <div class="section val-form-section">
+    <div class="section-header">
+      <h2 class="section-title">🔬 System Parameter Permutation — Medianas <span class="val-source-tag">SQX Sys Param Perm → columna Median Value</span></h2>
+    </div>
+    <div class="val-form-grid val-form-grid-4">
+      <div class="val-form-group">
+        <label class="val-form-label">Expectancy Mediana <span class="val-hint">Crucial para Edge Erosion</span></label>
+        <input type="number" step="0.01" name="spp_expectancy_median" class="val-input" placeholder="6.95" value="{{ entry.get('spp',{}).get('expectancy_median', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">DD% Mediano</label>
+        <input type="number" step="0.01" name="spp_dd_median" class="val-input" placeholder="11.14" value="{{ entry.get('spp',{}).get('dd_median', '') or '' }}">
+      </div>
+      <div class="val-form-group">
+        <label class="val-form-label">Stagnation Mediana (días)</label>
+        <input type="number" step="1" name="spp_stagnation_median" class="val-input" placeholder="350" value="{{ entry.get('spp',{}).get('stagnation_median', '') or '' }}">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Actions ── -->
+  <div class="val-form-actions">
+    <button type="submit" class="btn-primary">💾 Guardar y Analizar</button>
+    <a href="{{ url_for('validator') }}" class="btn-secondary">Cancelar</a>
+    {% if entry %}
+    <form method="POST" action="{{ url_for('validator_delete', magic=magic) }}" style="display:inline" onsubmit="return confirm('¿Eliminar datos de backtest para magic {{ magic }}?')">
+      <button type="submit" class="btn-danger">🗑 Eliminar BT</button>
+    </form>
+    {% endif %}
+  </div>
+
+</form>
+
+{% endblock %}

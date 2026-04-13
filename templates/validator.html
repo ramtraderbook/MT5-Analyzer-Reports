@@ -1,0 +1,675 @@
+{% extends "base.html" %} {% set title = "EA Validator" %} {% block content %}
+
+<!-- ── Page Header ── -->
+<header class="dash-header">
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <div class="dash-header-eyebrow">Sistema de Scoring Ponderado</div>
+        <h1 class="dash-header-title">EA Validator</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip mono"
+                >{{ rows|length }} estrategias activas</span
+            >
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono"
+                >{{ rows|selectattr('has_bt')|list|length }} con backtest
+                cargado</span
+            >
+        </div>
+    </div>
+</header>
+
+<!-- ── Legend ── -->
+<div class="val-legend">
+    <span class="val-badge val-continuar">CONTINUAR ≥ 70</span>
+    <span class="val-badge val-monitorear">MONITOREAR ≥ 45</span>
+    <span class="val-badge val-eliminar">ELIMINAR &lt; 45</span>
+    <span class="val-sep">·</span>
+    <span class="val-estado val-ok-chip">OK</span>
+    <span class="val-estado val-alerta-chip">ALERTA</span>
+    <span class="val-estado val-fuera-chip">FUERA</span>
+    <span class="val-estado val-nd-chip">N/D</span>
+</div>
+
+<!-- ── Main Table ── -->
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Resultados Live vs Backtest</h2>
+        <a
+            href="{{ url_for('validator_edit', magic='nuevo') }}"
+            class="btn-primary"
+            style="text-decoration: none; padding: 6px 16px; font-size: 0.8rem"
+        >
+            + Agregar EA
+        </a>
+    </div>
+
+    <div class="table-wrapper val-table-wrapper">
+        <table class="data-table val-compact-table" id="val-table">
+            <thead>
+                <tr>
+                    <!-- 1 → Acciones (sticky) -->
+                    <th class="val-th-actions th-center">Acciones</th>
+                    <!-- 2 → Identidad -->
+                    <th>Magic / EA</th>
+                    <!-- 3 → Live básico -->
+                    <th class="th-center">Live</th>
+                    <!-- 4 → Edge (WR + PF + Payout + Edge Erosion) -->
+                    <th class="th-center val-th-group-edge">
+                        Edge
+                        <span class="val-col-sub"
+                            >WR · PF · Payout · Erosion</span
+                        >
+                    </th>
+                    <!-- 5 → DD Riesgo -->
+                    <th class="th-center val-th-group-risk">
+                        DD Riesgo
+                        <span class="val-col-sub">Live / Límite → Estado</span>
+                    </th>
+                    <!-- 6 → Rachas + Stagnation -->
+                    <th class="th-center val-th-group-risk">
+                        Rachas
+                        <span class="val-col-sub">Consec · Stagn</span>
+                    </th>
+                    <!-- 7 → Carácter (Freq + Avg Bars) -->
+                    <th class="th-center val-th-group-char">
+                        Carácter
+                        <span class="val-col-sub">Freq% · Avg Bars</span>
+                    </th>
+                    <!-- 8 → Sub-scores -->
+                    <th class="th-center val-th-score">
+                        Sub-scores
+                        <span class="val-col-sub">R · E · C · D</span>
+                    </th>
+                    <!-- 9 → Score total -->
+                    <th class="th-center val-th-score">Score</th>
+                    <!-- 10 → Veredicto + Desv -->
+                    <th class="th-center">Veredicto</th>
+                    <!-- 11 → Acción -->
+                    <th>Acción recomendada</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for row in rows %}
+                <tr
+                    class="val-row {% if row.has_bt and row.analysis %}val-row-active{% else %}val-row-pending{% endif %}"
+                >
+                    <!-- ── 1. ACCIONES (sticky) ─────────────────────── -->
+                    <td class="val-td-actions th-center">
+                        <div class="val-actions-group">
+                            <a
+                                href="{{ url_for('validator_edit', magic=row.magic) }}"
+                                class="val-btn-edit"
+                                title="{% if row.has_bt %}Editar datos de Backtest{% else %}Ingresar datos de Backtest{% endif %}"
+                            >
+                                ✏ {% if row.has_bt %}Editar{% else %}Ingresar{%
+                                endif %}
+                            </a>
+                            {% if row.has_bt %}
+                            <form
+                                method="POST"
+                                action="{{ url_for('validator_delete', magic=row.magic) }}"
+                                style="display: inline"
+                                onsubmit="return confirm('¿Eliminar datos BT del magic {{ row.magic }}?\n\nLos datos live de MT5 se mantienen.\nSolo se borran los datos de Backtest ingresados.')"
+                            >
+                                <button
+                                    type="submit"
+                                    class="val-btn-delete"
+                                    title="Eliminar datos de Backtest"
+                                >
+                                    🗑
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+
+                    <!-- ── 2. MAGIC / EA ───────────────────────────── -->
+                    <td class="val-td-ea">
+                        <div class="val-ea-magic mono">{{ row.magic }}</div>
+                        <div class="val-ea-name">{{ row.label }}</div>
+                        <div class="val-ea-sub">
+                            {{ row.instrument }}{% if row.timeframe %} · {{
+                            row.timeframe }}{% endif %}
+                        </div>
+                    </td>
+
+                    {% if row.has_bt and row.analysis %} {% set a = row.analysis
+                    %}
+
+                    <!-- ── 3. LIVE básico ──────────────────────────── -->
+                    <td class="th-center val-td-live">
+                        <div class="val-live-stat">
+                            <span class="val-live-num"
+                                >{{ row.live.total_trades }}</span
+                            >
+                            <span class="val-live-lbl">trades</span>
+                        </div>
+                        <div class="val-live-stat">
+                            <span class="val-live-num"
+                                >{{ "%.1f"|format(row.live.weeks_operating)
+                                }}</span
+                            >
+                            <span class="val-live-lbl">sem</span>
+                        </div>
+                        <span
+                            class="val-signif val-signif-{{ a.signif | lower | replace(' ','_') }}"
+                            >{{ a.signif }}</span
+                        >
+                    </td>
+
+                    <!-- ── 4. EDGE ─────────────────────────────────── -->
+                    <td class="val-td-group">
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">WR</span>
+                            <span
+                                class="val-estado val-{{ a.wr_estado | lower }}"
+                            >
+                                {{ a.wr_estado }}{% if a.wr_delta is not none %}
+                                ({{ "%+.1f"|format(a.wr_delta) }}pp){% endif %}
+                            </span>
+                        </div>
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">PF</span>
+                            <span
+                                class="val-estado val-{{ a.pf_estado | lower }}"
+                            >
+                                {{ a.pf_estado }}{% if a.pf_live is not none %}
+                                ({{ "%.2f"|format(a.pf_live) }}){% endif %}
+                            </span>
+                        </div>
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">Payout</span>
+                            <span
+                                class="val-estado val-{{ a.payout_estado | lower }}"
+                            >
+                                {{ a.payout_estado }}{% if a.payout_var is not
+                                none %} ({{ "%+.0f"|format(a.payout_var) }}%){%
+                                endif %}
+                            </span>
+                        </div>
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">Erosion</span>
+                            {% if a.edge_erosion is not none %}
+                            <span
+                                class="val-estado val-{{ a.edge_estado | lower }}"
+                                >{{ "%+.1f"|format(a.edge_erosion) }}%</span
+                            >
+                            {% else %}<span class="val-nd">N/D</span>{% endif %}
+                        </div>
+                    </td>
+
+                    <!-- ── 5. DD RIESGO ────────────────────────────── -->
+                    <td class="val-td-group th-center">
+                        <div class="val-dd-nums">
+                            <span
+                                class="val-dd-live {% if a.dd_live is not none and a.dd_limit is not none and a.dd_live > a.dd_limit %}cell-loss{% endif %}"
+                            >
+                                {% if a.dd_live is not none %}{{
+                                "%.2f"|format(a.dd_live) }}%{% else %}—{% endif
+                                %}
+                            </span>
+                            <span class="val-dd-sep">/</span>
+                            <span class="val-dd-limit">
+                                {% if a.dd_limit is not none %}{{
+                                "%.2f"|format(a.dd_limit) }}%{% else %}—{% endif
+                                %}
+                            </span>
+                        </div>
+                        <div style="margin-top: 4px">
+                            <span
+                                class="val-estado val-{{ a.dd_estado | lower }}"
+                                >{{ a.dd_estado }}</span
+                            >
+                        </div>
+                        {% if a.dd_method and a.dd_method != 'N/D' %}
+                        <div class="val-dd-method" title="{{ a.dd_method }}">
+                            sqrt escalado
+                        </div>
+                        {% endif %}
+                    </td>
+
+                    <!-- ── 6. RACHAS ───────────────────────────────── -->
+                    <td class="val-td-group">
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">Consec</span>
+                            <span
+                                class="val-estado val-{{ a.consec_estado | lower }}"
+                                >{{ a.consec_ratio }}</span
+                            >
+                        </div>
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">Stagn</span>
+                            <span
+                                class="val-estado val-{{ a.stagn_estado | lower }}"
+                                >{{ a.stagn_label }}</span
+                            >
+                        </div>
+                    </td>
+
+                    <!-- ── 7. CARÁCTER ─────────────────────────────── -->
+                    <td class="val-td-group">
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">Freq</span>
+                            {% if a.freq_pct is not none %}
+                            <span
+                                class="val-estado val-{{ a.freq_estado | lower }}"
+                                >{{ a.freq_pct }}%</span
+                            >
+                            {% else %}<span class="val-nd">N/D</span>{% endif %}
+                        </div>
+                        <div class="val-metric-row">
+                            <span class="val-metric-lbl">Bars</span>
+                            {% if a.bars_var is not none %}
+                            <span
+                                class="val-estado val-{{ a.bars_estado | lower }}"
+                                >{{ "%+.0f"|format(a.bars_var) }}%</span
+                            >
+                            {% else %}<span class="val-nd">N/D</span>{% endif %}
+                        </div>
+                    </td>
+
+                    <!-- ── 8. SUB-SCORES ───────────────────────────── -->
+                    <td class="val-td-subscores th-center">
+                        <div class="val-subscores-grid">
+                            <div class="val-subscore-item">
+                                <span class="val-subscore-lbl">R</span>
+                                <span class="val-subscore-val"
+                                    >{{ "%.1f"|format(a.s_riesgo) }}</span
+                                >
+                            </div>
+                            <div class="val-subscore-item">
+                                <span class="val-subscore-lbl">E</span>
+                                <span class="val-subscore-val"
+                                    >{{ "%.1f"|format(a.s_edge) }}</span
+                                >
+                            </div>
+                            <div class="val-subscore-item">
+                                <span class="val-subscore-lbl">C</span>
+                                <span class="val-subscore-val"
+                                    >{{ "%.1f"|format(a.s_caracter) }}</span
+                                >
+                            </div>
+                            <div class="val-subscore-item">
+                                <span class="val-subscore-lbl">D</span>
+                                <span class="val-subscore-val"
+                                    >{{ a.s_desv }}</span
+                                >
+                            </div>
+                        </div>
+                    </td>
+
+                    <!-- ── 9. SCORE TOTAL ──────────────────────────── -->
+                    <td class="th-center">
+                        <div
+                            class="val-score-ring val-score-{{ 'high' if a.score >= 70 else ('mid' if a.score >= 45 else 'low') }}"
+                            title="Score: {{ a.score }} / 100"
+                        >
+                            {{ "%.1f"|format(a.score) }}
+                        </div>
+                    </td>
+
+                    <!-- ── 10. VEREDICTO + DESV ────────────────────── -->
+                    <td class="th-center">
+                        <div
+                            style="
+                                display: flex;
+                                flex-direction: column;
+                                align-items: center;
+                                gap: 5px;
+                            "
+                        >
+                            <span
+                                class="val-badge val-{{ a.veredicto | lower }}"
+                                >{{ a.veredicto }}</span
+                            >
+                            {% if a.desv_flag == 'DESV' %}
+                            <span class="val-desv-flag">&#9888; DESV</span>
+                            {% endif %}
+                        </div>
+                    </td>
+
+                    <!-- ── 11. ACCIÓN RECOMENDADA ──────────────────── -->
+                    <td class="val-td-accion" title="{{ a.accion }}">
+                        {{ a.accion }}
+                    </td>
+
+                    {% else %}
+                    <!-- Sin BT: columnas vacías + mensaje -->
+                    <td
+                        class="th-center val-td-live"
+                        style="color: var(--text-muted)"
+                    >
+                        <div class="val-live-stat">
+                            <span class="val-live-num"
+                                >{{ row.live.total_trades }}</span
+                            >
+                            <span class="val-live-lbl">trades</span>
+                        </div>
+                        <div class="val-live-stat">
+                            <span class="val-live-num"
+                                >{{ "%.1f"|format(row.live.weeks_operating)
+                                }}</span
+                            >
+                            <span class="val-live-lbl">sem</span>
+                        </div>
+                    </td>
+                    <td colspan="8" class="val-no-bt-msg">
+                        <span class="val-no-bt-text">
+                            Sin datos de Backtest — usa el botón
+                            <strong>Ingresar</strong> a la izquierda
+                        </span>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %} {% if not rows %}
+                <tr>
+                    <td
+                        colspan="11"
+                        class="th-center"
+                        style="padding: 2rem; color: var(--text-muted)"
+                    >
+                        No hay EAs activos con magic number asignado.
+                        <a
+                            href="{{ url_for('mapping') }}"
+                            style="color: var(--accent)"
+                            >Ir a Mapping</a
+                        >
+                        para configurarlos.
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ── Storage info strip ── -->
+<div class="val-storage-strip">
+    <span class="val-storage-item">
+        <span class="val-storage-icon">💾</span>
+        <strong>Datos BT guardados en:</strong>
+        <code>validator_store.json</code>
+        <span class="val-storage-note">— persisten al cerrar el programa</span>
+    </span>
+    <span class="val-storage-sep">·</span>
+    <span class="val-storage-item">
+        <span class="val-storage-icon">📡</span>
+        <strong>Datos Live:</strong>
+        <span class="val-storage-note"
+            >se recalculan automáticamente desde el .xlsx cargado</span
+        >
+    </span>
+</div>
+
+<!-- ── Info cards ── -->
+<div class="val-info-grid">
+    <div class="val-info-card">
+        <div class="val-info-title">📐 DD% Escalado</div>
+        <div class="val-info-body">
+            Límite = Peor DD 1 Mes × √(semanas_live / 4.33).<br />
+            A mayor tiempo en vivo, mayor tolerancia al DD acumulado.
+        </div>
+    </div>
+    <div class="val-info-card">
+        <div class="val-info-title">🔥 Edge Erosion</div>
+        <div class="val-info-body">
+            % Erosión = (Expectancy Live − Mediana SPP) / Mediana SPP × 100.<br />
+            ≥−30% OK · −30% a −60% ALERTA · &lt;−60% FUERA
+        </div>
+    </div>
+    <div class="val-info-card">
+        <div class="val-info-title">⚡ Desviación Estructural</div>
+        <div class="val-info-body">
+            Si 3+ métricas empeoran simultáneamente (WR, Payout, PF, Edge
+            Erosion, Frecuencia), se activa el flag de cambio de régimen.
+        </div>
+    </div>
+    <div class="val-info-card">
+        <div class="val-info-title">📊 Sub-scores (R·E·C·D)</div>
+        <div class="val-info-body">
+            <strong>R</strong>iesgo 35% + <strong>E</strong>dge 30% +
+            <strong>C</strong>arácter 15% + <strong>D</strong>esviación 20% =
+            Score /100.<br />
+            Avg Bars = duración promedio ÷ horas del timeframe.
+        </div>
+    </div>
+</div>
+
+{% endblock %} {% block scripts %}
+<script>
+    /* Prevenir doble-submit en botones de eliminar */
+    document.querySelectorAll(".val-btn-delete").forEach(function (btn) {
+        btn.closest("form").addEventListener("submit", function () {
+            btn.disabled = true;
+            setTimeout(function () {
+                btn.disabled = false;
+            }, 3000);
+        });
+    });
+</script>
+
+<style>
+    /* ── Compact validator table ─────────────────────────────────────────────── */
+
+    .val-table-wrapper {
+        overflow-x: auto; /* fallback en pantallas pequeñas */
+    }
+
+    /* En pantallas grandes: sin scroll */
+    @media (min-width: 1400px) {
+        .val-table-wrapper {
+            overflow-x: visible;
+        }
+    }
+
+    .val-compact-table {
+        table-layout: auto;
+        width: 100%;
+    }
+
+    /* Column widths */
+    .val-compact-table th:nth-child(1) {
+        width: 108px;
+    } /* Acciones */
+    .val-compact-table th:nth-child(2) {
+        width: 190px;
+    } /* Magic/EA */
+    .val-compact-table th:nth-child(3) {
+        width: 80px;
+    } /* Live */
+    .val-compact-table th:nth-child(4) {
+        width: 170px;
+    } /* Edge */
+    .val-compact-table th:nth-child(5) {
+        width: 130px;
+    } /* DD Riesgo */
+    .val-compact-table th:nth-child(6) {
+        width: 110px;
+    } /* Rachas */
+    .val-compact-table th:nth-child(7) {
+        width: 110px;
+    } /* Carácter */
+    .val-compact-table th:nth-child(8) {
+        width: 100px;
+    } /* Sub-scores */
+    .val-compact-table th:nth-child(9) {
+        width: 64px;
+    } /* Score */
+    .val-compact-table th:nth-child(10) {
+        width: 112px;
+    } /* Veredicto */
+    .val-compact-table th:nth-child(11) {
+        width: auto;
+    } /* Acción — ocupa el resto */
+
+    /* Column header sub-label */
+    .val-col-sub {
+        display: block;
+        font-size: 0.6rem;
+        font-weight: 400;
+        color: var(--text-muted);
+        text-transform: none;
+        letter-spacing: 0;
+        margin-top: 2px;
+    }
+
+    /* ── TD tipos ── */
+    .val-td-ea {
+        vertical-align: middle;
+        padding: 8px 10px !important;
+    }
+
+    .val-td-live {
+        vertical-align: middle;
+        padding: 6px 8px !important;
+    }
+
+    .val-td-group {
+        vertical-align: middle;
+        padding: 6px 10px !important;
+    }
+
+    .val-td-subscores {
+        vertical-align: middle;
+        padding: 6px 8px !important;
+    }
+
+    .val-td-accion {
+        vertical-align: middle;
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        line-height: 1.4;
+        padding: 8px 12px !important;
+        white-space: normal;
+        max-width: 0; /* hace que text-overflow funcione en table cell */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: help;
+    }
+
+    /* ── Live stat block ── */
+    .val-live-stat {
+        display: flex;
+        align-items: baseline;
+        gap: 3px;
+        justify-content: center;
+        line-height: 1.5;
+    }
+    .val-live-num {
+        font-family: "Roboto Mono", monospace;
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    .val-live-lbl {
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    /* ── Metric row dentro de grupo ── */
+    .val-metric-row {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-bottom: 4px;
+    }
+    .val-metric-row:last-child {
+        margin-bottom: 0;
+    }
+
+    .val-metric-lbl {
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        min-width: 38px;
+        flex-shrink: 0;
+    }
+
+    /* ── DD Riesgo cell ── */
+    .val-dd-nums {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        font-family: "Roboto Mono", monospace;
+        font-size: 0.78rem;
+    }
+    .val-dd-live {
+        color: var(--text-primary);
+        font-weight: 600;
+    }
+    .val-dd-sep {
+        color: var(--text-muted);
+    }
+    .val-dd-limit {
+        color: var(--text-muted);
+    }
+    .val-dd-method {
+        font-size: 0.6rem;
+        color: var(--text-muted);
+        font-style: italic;
+        margin-top: 3px;
+        text-align: center;
+        cursor: help;
+    }
+
+    /* ── Sub-scores 2×2 grid ── */
+    .val-subscores-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px 8px;
+    }
+    .val-subscore-item {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+    }
+    .val-subscore-lbl {
+        font-size: 0.6rem;
+        color: var(--text-muted);
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .val-subscore-val {
+        font-family: "Roboto Mono", monospace;
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    /* EA magic small label */
+    .val-ea-magic {
+        font-size: 0.65rem;
+        color: var(--text-muted);
+        letter-spacing: 0.04em;
+        margin-bottom: 1px;
+    }
+
+    /* No-BT message */
+    .val-no-bt-msg {
+        color: var(--text-muted);
+        padding: 10px 16px !important;
+        vertical-align: middle;
+    }
+    .val-no-bt-text {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+    .val-no-bt-text strong {
+        color: #4fc3f7;
+    }
+
+    /* Row states */
+    .val-row-pending {
+        opacity: 0.72;
+    }
+    .val-row-active {
+        opacity: 1;
+    }
+</style>
+{% endblock %}
