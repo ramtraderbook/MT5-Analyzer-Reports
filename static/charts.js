@@ -1,0 +1,609 @@
+/* ============================================================
+   charts.js - Plotly helpers for EA Analyzer
+   All charts use the dark theme layout defined below.
+   ============================================================ */
+
+// ─── Shared Plotly config ───────────────────────────────────────────────────
+
+const PLOTLY_LAYOUT = {
+  paper_bgcolor: '#0d1117',
+  plot_bgcolor:  '#161b22',
+  font: {
+    color: '#e6edf3',
+    family: "'Inter', -apple-system, sans-serif",
+    size: 12
+  },
+  xaxis: {
+    gridcolor: '#30363d',
+    linecolor: '#30363d',
+    zerolinecolor: '#30363d',
+    tickfont: { color: '#8b949e', size: 11 }
+  },
+  yaxis: {
+    gridcolor: '#30363d',
+    linecolor: '#30363d',
+    zerolinecolor: '#30363d',
+    tickfont: { color: '#8b949e', size: 11 }
+  },
+  legend: {
+    bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#8b949e', size: 11 },
+    bordercolor: '#30363d',
+    borderwidth: 1
+  },
+  margin: { t: 40, r: 24, b: 48, l: 72 },
+  hovermode: 'x unified',
+  hoverlabel: {
+    bgcolor: '#161b22',
+    bordercolor: '#30363d',
+    font: { color: '#e6edf3', size: 12 }
+  }
+};
+
+const PLOTLY_CONFIG = {
+  responsive: true,
+  displayModeBar: true,
+  modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+  displaylogo: false,
+  toImageButtonOptions: { format: 'png', scale: 2, filename: 'ea_chart' }
+};
+
+function mergeLayout(overrides) {
+  return Object.assign({}, PLOTLY_LAYOUT, overrides,
+    overrides.xaxis ? { xaxis: Object.assign({}, PLOTLY_LAYOUT.xaxis, overrides.xaxis) } : {},
+    overrides.yaxis ? { yaxis: Object.assign({}, PLOTLY_LAYOUT.yaxis, overrides.yaxis) } : {}
+  );
+}
+
+
+// ─── Dashboard Charts ───────────────────────────────────────────────────────
+
+async function renderEquityCurves(divId) {
+  try {
+    const res = await fetch('/api/equity_curves');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.traces || data.traces.length === 0) return;
+
+    const traces = data.traces.map(t => ({
+      x: t.x,
+      y: t.y,
+      name: t.name,
+      type: 'scatter',
+      mode: 'lines',
+      line: {
+        color: t.color,
+        width: t.width,
+        shape: 'linear'
+      },
+      visible: t.visible,
+      hovertemplate: t.is_portfolio
+        ? '<b>%{fullData.name}</b><br>%{x}<br>$%{y:,.2f}<extra></extra>'
+        : '%{fullData.name}: $%{y:,.2f}<extra></extra>'
+    }));
+
+    const layout = mergeLayout({
+      height: document.getElementById(divId).clientHeight || 500,
+      yaxis: {
+        tickprefix: '$',
+        tickformat: '+,.0f',
+        zeroline: true,
+        zerolinecolor: '#8b949e',
+        zerolinewidth: 1,
+        title: { text: 'P&L Neto (USD)', font: { color: '#8b949e', size: 11 } }
+      },
+      xaxis: { type: 'date', title: { text: '', font: { color: '#8b949e', size: 11 } } },
+    });
+
+    Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+  } catch (e) {
+    console.error('Error rendering equity curves:', e);
+  }
+}
+
+
+async function renderDrawdownCurves(divId) {
+  try {
+    const res = await fetch('/api/drawdown_curves');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.traces || data.traces.length === 0) return;
+
+    const traces = data.traces.map(t => ({
+      x: t.x,
+      y: t.y,
+      name: t.name,
+      type: 'scatter',
+      mode: 'lines',
+      fill: t.is_portfolio ? 'tozeroy' : 'none',
+      fillcolor: t.is_portfolio ? 'rgba(255,82,82,0.08)' : 'transparent',
+      line: {
+        color: t.color,
+        width: t.width,
+        shape: 'linear'
+      },
+      visible: t.visible,
+      hovertemplate: '%{fullData.name}: %{y:.2f}%<extra></extra>'
+    }));
+
+    const layout = mergeLayout({
+      height: document.getElementById(divId).clientHeight || 320,
+      yaxis: {
+        ticksuffix: '%',
+        zeroline: true,
+        zerolinecolor: '#8b949e',
+        zerolinewidth: 1,
+        title: { text: 'Drawdown (%)', font: { color: '#8b949e', size: 11 } }
+      },
+      xaxis: { type: 'date' },
+    });
+
+    Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+  } catch (e) {
+    console.error('Error rendering drawdown curves:', e);
+  }
+}
+
+
+async function renderContribution(divId) {
+  try {
+    const res = await fetch('/api/contribution');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.labels || data.labels.length === 0) return;
+
+    const traces = [{
+      x: data.values,
+      y: data.labels,
+      type: 'bar',
+      orientation: 'h',
+      marker: {
+        color: data.colors,
+        opacity: 0.85
+      },
+      text: data.values.map(v => (v >= 0 ? '+' : '') + '$' + v.toFixed(2)),
+      textposition: 'outside',
+      textfont: { color: '#c9d1d9', size: 11, family: "'Roboto Mono', monospace" },
+      hovertemplate: '<b>%{y}</b><br>%{x:+.2f} USD<extra></extra>'
+    }];
+
+    const layout = mergeLayout({
+      height: document.getElementById(divId).clientHeight || 360,
+      xaxis: {
+        tickprefix: '$',
+        tickformat: ',.0f',
+        zeroline: true,
+        zerolinecolor: '#8b949e',
+        zerolinewidth: 1,
+      },
+      yaxis: { automargin: true },
+      margin: { t: 20, r: 80, b: 40, l: 24 },
+    });
+
+    Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+  } catch (e) {
+    console.error('Error rendering contribution chart:', e);
+  }
+}
+
+
+// ─── Strategy Detail Charts ─────────────────────────────────────────────────
+
+async function renderEAEquity(equityDivId, ddDivId, eaName) {
+  try {
+    const encoded = encodeURIComponent(eaName);
+    const res = await fetch('/api/ea_equity/' + encoded);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (!data.equity || data.equity.length === 0) return;
+
+    const equityX = data.equity.map(p => p.date);
+    const equityY = data.equity.map(p => p.equity);
+    const ddX = data.drawdown.map(p => p.date);
+    const ddY = data.drawdown.map(p => p.dd_pct);
+
+    // Equity chart with drawdown fill
+    const equityTraces = [
+      {
+        x: equityX,
+        y: equityY,
+        name: data.label,
+        type: 'scatter',
+        mode: 'lines',
+        line: { color: '#4FC3F7', width: 2 },
+        fill: 'tozeroy',
+        fillcolor: 'rgba(79,195,247,0.06)',
+        hovertemplate: '%{x}<br>$%{y:,.2f}<extra></extra>'
+      }
+    ];
+
+    const equityLayout = mergeLayout({
+      height: document.getElementById(equityDivId).clientHeight || 450,
+      yaxis: {
+        tickprefix: '$',
+        tickformat: '+,.2f',
+        zeroline: true,
+        zerolinecolor: '#8b949e',
+        zerolinewidth: 1,
+        title: { text: 'P&L Neto (USD)', font: { color: '#8b949e', size: 11 } }
+      },
+      xaxis: { type: 'date' },
+      showlegend: false,
+    });
+
+    Plotly.newPlot(equityDivId, equityTraces, equityLayout, PLOTLY_CONFIG);
+
+    // Drawdown chart
+    const ddTraces = [
+      {
+        x: ddX,
+        y: ddY,
+        name: 'Drawdown',
+        type: 'scatter',
+        mode: 'lines',
+        line: { color: '#FF5252', width: 1.5 },
+        fill: 'tozeroy',
+        fillcolor: 'rgba(255,82,82,0.12)',
+        hovertemplate: '%{x}<br>%{y:.2f}%<extra></extra>'
+      }
+    ];
+
+    const ddLayout = mergeLayout({
+      height: document.getElementById(ddDivId).clientHeight || 280,
+      yaxis: {
+        ticksuffix: '%',
+        zeroline: true,
+        zerolinecolor: '#8b949e',
+        zerolinewidth: 1,
+        title: { text: 'Drawdown (%)', font: { color: '#8b949e', size: 11 } }
+      },
+      xaxis: { type: 'date' },
+      showlegend: false,
+    });
+
+    Plotly.newPlot(ddDivId, ddTraces, ddLayout, PLOTLY_CONFIG);
+
+  } catch (e) {
+    console.error('Error rendering EA equity chart:', e);
+  }
+}
+
+
+async function loadEAPnLData(eaName) {
+  try {
+    const encoded = encodeURIComponent(eaName);
+    const res = await fetch('/api/ea_pnl_data/' + encoded);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    renderPnLHistogram('pnl-histogram', data.pnl_list);
+    renderStreakChart('streak-chart', data.streak_data);
+    renderWeekdayChart('weekday-chart', data.weekday_pnl);
+    renderHourChart('hour-chart', data.hour_pnl);
+    renderLongShortPie('longshort-chart', data.long_short);
+    renderDurationScatter('duration-scatter-chart', data.duration_scatter);
+  } catch (e) {
+    console.error('Error loading EA P&L data:', e);
+  }
+}
+
+
+function renderPnLHistogram(divId, pnlList) {
+  if (!pnlList || pnlList.length === 0) return;
+
+  const wins  = pnlList.filter(v => v > 0);
+  const losses = pnlList.filter(v => v <= 0);
+
+  const traces = [];
+  if (wins.length > 0) {
+    traces.push({
+      x: wins,
+      name: 'Wins',
+      type: 'histogram',
+      marker: { color: 'rgba(76,175,80,0.75)', line: { color: '#4CAF50', width: 1 } },
+      hovertemplate: '$%{x:.2f}<br>%{y} trades<extra></extra>'
+    });
+  }
+  if (losses.length > 0) {
+    traces.push({
+      x: losses,
+      name: 'Losses',
+      type: 'histogram',
+      marker: { color: 'rgba(255,82,82,0.75)', line: { color: '#FF5252', width: 1 } },
+      hovertemplate: '$%{x:.2f}<br>%{y} trades<extra></extra>'
+    });
+  }
+
+  const layout = mergeLayout({
+    title: { text: 'Distribución P&L', font: { color: '#c9d1d9', size: 13 } },
+    height: document.getElementById(divId).clientHeight || 300,
+    barmode: 'overlay',
+    xaxis: {
+      type: 'linear',
+      tickprefix: '$',
+      tickformat: '.2f',
+      title: { text: 'P&L Neto ($)', font: { color: '#8b949e', size: 11 } }
+    },
+    yaxis: {
+      type: 'linear',
+      title: { text: 'Frecuencia', font: { color: '#8b949e', size: 11 } }
+    },
+    margin: { t: 40, r: 16, b: 48, l: 52 },
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+function renderStreakChart(divId, streakData) {
+  if (!streakData || streakData.length === 0) return;
+
+  const x      = streakData.map(d => d.index);
+  const y      = streakData.map(d => d.pnl);
+  const colors = streakData.map(d => d.pnl > 0 ? 'rgba(76,175,80,0.8)' : 'rgba(255,82,82,0.8)');
+
+  const traces = [{
+    x: x,
+    y: y,
+    type: 'bar',
+    marker: { color: colors },
+    hovertemplate: 'Trade #%{x}<br>$%{y:+.2f}<extra></extra>'
+  }];
+
+  const layout = mergeLayout({
+    title: { text: 'Rachas Win/Loss', font: { color: '#c9d1d9', size: 13 } },
+    height: document.getElementById(divId).clientHeight || 300,
+    xaxis: {
+      type: 'linear',
+      title: { text: 'Trade #', font: { color: '#8b949e', size: 11 } },
+      tickformat: 'd',
+      dtick: Math.max(1, Math.floor(streakData.length / 10))
+    },
+    yaxis: {
+      type: 'linear',
+      tickprefix: '$',
+      tickformat: '+.2f',
+      zeroline: true,
+      zerolinecolor: '#8b949e',
+      zerolinewidth: 1,
+      title: { text: 'P&L Neto ($)', font: { color: '#8b949e', size: 11 } }
+    },
+    margin: { t: 40, r: 16, b: 48, l: 64 },
+    showlegend: false,
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+function renderWeekdayChart(divId, weekdayPnl) {
+  if (!weekdayPnl || weekdayPnl.length === 0) return;
+  const labels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  const colors = weekdayPnl.map(v => v >= 0 ? 'rgba(76,175,80,0.82)' : 'rgba(255,82,82,0.82)');
+
+  const traces = [{
+    x: labels,
+    y: weekdayPnl,
+    type: 'bar',
+    marker: { color: colors, line: { color: colors.map(c => c.replace('0.82', '1')), width: 1 } },
+    hovertemplate: '<b>%{x}</b><br>$%{y:+.2f}<extra></extra>'
+  }];
+
+  const layout = mergeLayout({
+    title: { text: 'P/L por Día de Semana', font: { color: '#c9d1d9', size: 13 } },
+    height: document.getElementById(divId)?.clientHeight || 300,
+    xaxis: { type: 'category' },
+    yaxis: {
+      tickprefix: '$', tickformat: '+,.0f',
+      zeroline: true, zerolinecolor: '#8b949e', zerolinewidth: 1,
+      title: { text: 'P&L Neto ($)', font: { color: '#8b949e', size: 11 } }
+    },
+    margin: { t: 40, r: 16, b: 40, l: 64 },
+    showlegend: false,
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+function renderHourChart(divId, hourPnl) {
+  if (!hourPnl || hourPnl.length === 0) return;
+  const labels = Array.from({ length: 24 }, (_, i) => i);
+  const colors = hourPnl.map(v => v >= 0 ? 'rgba(76,175,80,0.82)' : 'rgba(255,82,82,0.82)');
+
+  const traces = [{
+    x: labels,
+    y: hourPnl,
+    type: 'bar',
+    marker: { color: colors, line: { color: colors.map(c => c.replace('0.82', '1')), width: 1 } },
+    hovertemplate: '<b>%{x}:00h</b><br>$%{y:+.2f}<extra></extra>'
+  }];
+
+  const layout = mergeLayout({
+    title: { text: 'P/L por Hora de Cierre', font: { color: '#c9d1d9', size: 13 } },
+    height: document.getElementById(divId)?.clientHeight || 300,
+    xaxis: {
+      type: 'linear', tickformat: 'd', dtick: 2,
+      title: { text: 'Hora (UTC)', font: { color: '#8b949e', size: 11 } }
+    },
+    yaxis: {
+      tickprefix: '$', tickformat: '+,.0f',
+      zeroline: true, zerolinecolor: '#8b949e', zerolinewidth: 1,
+      title: { text: 'P&L Neto ($)', font: { color: '#8b949e', size: 11 } }
+    },
+    margin: { t: 40, r: 16, b: 48, l: 64 },
+    showlegend: false,
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+function renderLongShortPie(divId, data) {
+  if (!data || (data.long_count + data.short_count) === 0) return;
+
+  const total = data.long_count + data.short_count;
+  const longPct  = ((data.long_count  / total) * 100).toFixed(1);
+  const shortPct = ((data.short_count / total) * 100).toFixed(1);
+
+  const traces = [{
+    labels: [
+      `Long (${data.long_count})`,
+      `Short (${data.short_count})`
+    ],
+    values: [data.long_count, data.short_count],
+    type: 'pie',
+    hole: 0.0,
+    marker: {
+      colors: ['#3D6EBF', '#C0392B'],
+      line: { color: '#0d1117', width: 2 }
+    },
+    textinfo: 'label+percent',
+    textfont: { color: '#e6edf3', size: 12 },
+    hovertemplate: '<b>%{label}</b><br>%{value} trades (%{percent})<br>P&L: $%{customdata:+.2f}<extra></extra>',
+    customdata: [data.long_pnl, data.short_pnl],
+    pull: [0.03, 0.03],
+  }];
+
+  const layout = mergeLayout({
+    title: { text: 'Long vs Short Trades', font: { color: '#c9d1d9', size: 13 } },
+    height: document.getElementById(divId)?.clientHeight || 300,
+    showlegend: false,
+    margin: { t: 40, r: 16, b: 16, l: 16 },
+    hovermode: 'closest',
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+function renderDurationScatter(divId, scatterData) {
+  if (!scatterData || scatterData.length === 0) return;
+
+  const wins   = scatterData.filter(d => d.win);
+  const losses = scatterData.filter(d => !d.win);
+
+  const traces = [];
+  if (wins.length > 0) {
+    traces.push({
+      x: wins.map(d => d.x),
+      y: wins.map(d => d.y),
+      name: 'Ganadora',
+      type: 'scatter',
+      mode: 'markers',
+      marker: { color: 'rgba(76,175,80,0.75)', size: 8, line: { color: '#4CAF50', width: 1 } },
+      hovertemplate: '<b>Win</b><br>Duración: %{x:.1f}h<br>P&L: $%{y:+.2f}<extra></extra>'
+    });
+  }
+  if (losses.length > 0) {
+    traces.push({
+      x: losses.map(d => d.x),
+      y: losses.map(d => d.y),
+      name: 'Perdedora',
+      type: 'scatter',
+      mode: 'markers',
+      marker: { color: 'rgba(255,82,82,0.75)', size: 8, line: { color: '#FF5252', width: 1 } },
+      hovertemplate: '<b>Loss</b><br>Duración: %{x:.1f}h<br>P&L: $%{y:+.2f}<extra></extra>'
+    });
+  }
+
+  const layout = mergeLayout({
+    title: { text: 'Duración vs P&L por Trade', font: { color: '#c9d1d9', size: 13 } },
+    height: document.getElementById(divId)?.clientHeight || 300,
+    xaxis: {
+      type: 'linear',
+      title: { text: 'Duración (horas)', font: { color: '#8b949e', size: 11 } }
+    },
+    yaxis: {
+      tickprefix: '$', tickformat: '+,.2f',
+      zeroline: true, zerolinecolor: '#8b949e', zerolinewidth: 1,
+      title: { text: 'P&L Neto ($)', font: { color: '#8b949e', size: 11 } }
+    },
+    margin: { t: 40, r: 16, b: 48, l: 72 },
+    hovermode: 'closest',
+    legend: { x: 0.01, y: 0.99, xanchor: 'left', yanchor: 'top' },
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+async function loadPortfolioAnalytics() {
+  try {
+    const res = await fetch('/api/portfolio_analytics');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    renderPnLHistogram('port-pnl-histogram', data.pnl_list);
+    renderStreakChart('port-streak-chart', data.streak_data);
+    renderWeekdayChart('port-weekday-chart', data.weekday_pnl);
+    renderHourChart('port-hour-chart', data.hour_pnl);
+    renderLongShortPie('port-longshort-chart', data.long_short);
+    renderDurationScatter('port-duration-scatter-chart', data.duration_scatter);
+  } catch (e) {
+    console.error('Error loading portfolio analytics:', e);
+  }
+}
+
+
+// ─── Table Sorting ──────────────────────────────────────────────────────────
+
+function makeSortable(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+
+  const headers = table.querySelectorAll('th[data-sort]');
+  headers.forEach(th => {
+    th.addEventListener('click', () => {
+      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      headers.forEach(h => {
+        h.dataset.dir = '';
+        h.classList.remove('sort-asc', 'sort-desc');
+      });
+      th.dataset.dir = dir;
+      th.classList.add(dir === 'asc' ? 'sort-asc' : 'sort-desc');
+
+      const colIdx = Array.from(th.parentNode.children).indexOf(th);
+      sortTableByColumn(table, colIdx, dir);
+    });
+  });
+}
+
+function sortTableByColumn(table, colIdx, dir) {
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const aText = (a.cells[colIdx]?.textContent || '').trim();
+    const bText = (b.cells[colIdx]?.textContent || '').trim();
+
+    // Try numeric
+    const aNum = parseFloat(aText.replace(/[$%,+∞]/g, '').trim());
+    const bNum = parseFloat(bText.replace(/[$%,+∞]/g, '').trim());
+
+    let cmp;
+    if (!isNaN(aNum) && !isNaN(bNum)) {
+      cmp = aNum - bNum;
+    } else {
+      cmp = aText.localeCompare(bText);
+    }
+
+    return dir === 'asc' ? cmp : -cmp;
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+
+// ─── Toast notification ─────────────────────────────────────────────────────
+
+function showToast(msg, duration = 2500) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toast.classList.add('hidden'), duration);
+}

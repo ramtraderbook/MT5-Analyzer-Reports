@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MT5 Analyzer Reports{% if title %} · {{ title }}{% endif %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+{% if show_sidebar %}
+<aside class="sidebar">
+
+  <!-- ── Brand ── -->
+  <div class="sb-brand">
+    <div class="sb-brand-row">
+      <div class="sb-logo">
+        <span class="sb-logo-ea">MT5</span><span class="sb-logo-sep">·</span><span class="sb-logo-rest">Analyzer</span>
+      </div>
+      <span class="sb-version">1.0v</span>
+    </div>
+    <div class="sb-logo-sub">Reports</div>
+    <!-- Animated scan line -->
+    <div class="sb-scanline"><span class="sb-scanlight"></span></div>
+  </div>
+
+  <!-- ── Account ── -->
+  {% if account %}
+  <div class="sb-account">
+    <div class="sb-acct-top">
+      <span class="sb-live-dot"></span>
+      <span class="sb-acct-num">{{ account.number }}</span>
+    </div>
+    {% if account.name %}
+    <div class="sb-acct-name">{{ account.name }}</div>
+    {% endif %}
+    {% if account.report_date %}
+    <div class="sb-acct-date">{{ account.report_date }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- ── Navigation ── -->
+  <nav class="sidebar-nav">
+
+    <a href="{{ url_for('dashboard') }}"
+       class="nav-link{% if active_page == 'dashboard' %} active{% endif %}">
+      <span class="sb-nav-icon">&#9638;</span>
+      <span>Dashboard</span>
+    </a>
+
+    {% if sidebar_eas %}
+    <div class="sb-section-head">
+      <span class="sb-section-label">Estrategias</span>
+      <span class="sb-section-count">{{ sidebar_eas|length }}</span>
+    </div>
+
+    {% for ea in sidebar_eas %}
+    <a href="{{ ea.url }}"
+       class="nav-link ea-link{% if ea.active %} active{% endif %}"
+       style="--ea-color: {{ ea.color }}"
+       title="{{ ea.label }}">
+      <span class="sb-ea-dot" style="background:{{ ea.color }}"></span>
+      <span class="sb-ea-text">{{ ea.label }}</span>
+    </a>
+    {% endfor %}
+    {% endif %}
+
+  </nav>
+
+  <!-- ── Footer ── -->
+  <div class="sb-footer">
+    <div class="sb-footer-sep"></div>
+    <a href="{{ url_for('export') }}"
+       class="nav-link{% if active_page == 'export' %} active{% endif %}">
+      <span class="sb-nav-icon">&#8595;</span>
+      <span>Exportar</span>
+    </a>
+    <a href="{{ url_for('index') }}" class="nav-link sb-upload-link">
+      <span class="sb-nav-icon">&#8593;</span>
+      <span>Nuevo archivo</span>
+    </a>
+    <!-- ── Creator credit ── -->
+    <div class="sb-creator">
+      <span class="sb-creator-label">by</span>
+      <a href="https://x.com/ramTraderBook" target="_blank" rel="noopener" class="sb-creator-link">
+        <svg class="sb-x-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+        </svg>
+        <span>ramTraderBook</span>
+      </a>
+    </div>
+  </div>
+
+</aside>
+
+<main class="main-content">
+{% else %}
+<main class="main-content full-width">
+{% endif %}
+
+  {% block content %}{% endblock %}
+
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="{{ url_for('static', filename='charts.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
