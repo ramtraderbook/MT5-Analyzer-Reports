@@ -706,6 +706,76 @@ code {
     margin-bottom: 24px;
 }
 
+/* ── History strip (multi-file append mode) ── */
+.history-strip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.history-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    flex: 1;
+}
+
+.history-icon { font-size: 1rem; }
+.history-stat { color: var(--text-primary); }
+.history-stat.muted { color: var(--text-secondary); }
+.history-sep { color: var(--text-muted); }
+
+.history-detail {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+.history-detail summary {
+    cursor: pointer;
+    color: var(--accent);
+    list-style: none;
+}
+.history-detail summary::-webkit-details-marker { display: none; }
+
+.history-list {
+    margin: 8px 0 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.history-item {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 0.74rem;
+}
+.history-file { color: var(--text-primary); font-family: "Roboto Mono", monospace; }
+.history-date { color: var(--text-muted); }
+.history-added { color: #4fc3f7; }
+
+.btn-reset-history {
+    background: transparent;
+    border: 1px solid var(--danger, #ff5252);
+    color: var(--danger, #ff5252);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 0.74rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+.btn-reset-history:hover {
+    background: rgba(255, 82, 82, 0.1);
+}
+
 .upload-features {
     display: flex;
     gap: 20px;
@@ -2545,6 +2615,55 @@ code {
 
 .val-storage-note {
     color: var(--text-muted);
+}
+
+/* ── Correlation & Rolling ──────────────────────────────────────────────── */
+
+.corr-alert-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    background: rgba(255, 193, 7, 0.12);
+    border: 1px solid rgba(255, 193, 7, 0.35);
+    color: #ffc107;
+}
+
+.corr-alert-chip strong {
+    color: #ff5252;
+}
+
+.corr-ok-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    color: #66bb6a;
+}
+
+.chart-empty-msg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 120px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-style: italic;
+    text-align: center;
+    padding: 1rem;
+}
+
+.rolling-window-selector {
+    display: flex;
+    gap: 4px;
+    align-items: center;
 }
 
 .val-storage-sep {

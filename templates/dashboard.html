@@ -466,6 +466,34 @@
     ></div>
 </div>
 
+<!-- ── Correlation Matrix ── -->
+<div class="chart-section dash-reveal" style="--ri: 3">
+    <div class="chart-header-row">
+        <div class="chart-title-group">
+            <span class="chart-icon">🔗</span>
+            <h2 class="chart-title">Correlación entre EAs</h2>
+        </div>
+    </div>
+    <div
+        class="chart-hint"
+        style="margin-bottom: 8px; color: var(--text-muted); font-size: 0.72rem"
+    >
+        Correlación de Pearson (ρ) de P&L diario. Dos EAs con ρ &gt; 0.7 no
+        diversifican — son la misma posición con diferente nombre. Azul =
+        correlación inversa (buena diversificación). Rojo = correlación alta
+        (riesgo concentrado).
+    </div>
+    <div
+        id="correlation-chart-alerts"
+        style="margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px"
+    ></div>
+    <div
+        id="correlation-chart"
+        class="chart-container"
+        style="height: 420px"
+    ></div>
+</div>
+
 <!-- ── Monthly Performance ── -->
 <div class="section dash-reveal" style="--ri: 4">
     <div class="section-header">
@@ -579,6 +607,7 @@
         renderEquityCurves("equity-chart");
         renderDrawdownCurves("dd-chart");
         renderContribution("contribution-chart");
+        renderCorrelationMatrix("correlation-chart");
         makeSortable("ea-summary-table");
         loadPortfolioAnalytics();
 

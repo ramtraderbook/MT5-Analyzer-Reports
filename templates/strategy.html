@@ -258,6 +258,27 @@
     </div>
 </div>
 
+<!-- ── Rolling Metrics ── -->
+<div class="chart-section dash-reveal" style="--ri: 4">
+    <div class="chart-header-row">
+        <div class="chart-title-group">
+            <span class="chart-icon">〰</span>
+            <h2 class="chart-title">Métricas Rodantes</h2>
+        </div>
+        <div class="rolling-window-selector" id="rolling-selector">
+            <!-- botones generados por JS -->
+        </div>
+    </div>
+    <div
+        class="chart-hint"
+        style="margin-bottom: 6px; color: var(--text-muted); font-size: 0.72rem"
+    >
+        Expectancy, Win Rate y Profit Factor sobre ventana deslizante de N
+        trades. Detecta erosión del edge antes que las métricas totales.
+    </div>
+    <div id="rolling-chart" class="chart-container" style="height: 300px"></div>
+</div>
+
 <!-- ── Analytics 2x2 ── -->
 <div class="charts-row">
     <div class="chart-section chart-half dash-reveal" style="--ri: 4">
@@ -438,6 +459,44 @@
 
       loadEAPnLData(EA_NAME);
       makeSortable('trades-table');
+
+      // Rolling metrics con selector de ventana
+      const ROLLING_WINDOWS = [10, 15, 20, 30];
+      let currentWindow = null;  // null = adaptativo
+
+      function buildRollingSelector() {
+        const sel = document.getElementById('rolling-selector');
+        if (!sel) return;
+        sel.className = 'time-range-selector';
+
+        // Botón AUTO primero
+        const autoBtn = document.createElement('button');
+        autoBtn.className = 'trs-btn active';
+        autoBtn.textContent = 'AUTO';
+        autoBtn.addEventListener('click', function() {
+          sel.querySelectorAll('.trs-btn').forEach(b => b.classList.remove('active'));
+          autoBtn.classList.add('active');
+          currentWindow = null;
+          renderRollingMetrics('rolling-chart', EA_NAME, null);
+        });
+        sel.appendChild(autoBtn);
+
+        ROLLING_WINDOWS.forEach(function(w) {
+          const btn = document.createElement('button');
+          btn.className = 'trs-btn';
+          btn.textContent = w + 'T';
+          btn.addEventListener('click', function() {
+            sel.querySelectorAll('.trs-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentWindow = w;
+            renderRollingMetrics('rolling-chart', EA_NAME, w);
+          });
+          sel.appendChild(btn);
+        });
+      }
+
+      buildRollingSelector();
+      renderRollingMetrics('rolling-chart', EA_NAME, null);
 
       /* Scroll-reveal */
       var io = new IntersectionObserver(function (entries) {

@@ -4,16 +4,25 @@ All metrics computed from net P&L (Profit + Commission + Swap).
 """
 
 import math
-import numpy as np
 from datetime import date, datetime, timedelta
 
+import numpy as np
 
 TODAY = date.today()
 
 EA_COLORS = [
-    "#4FC3F7", "#FF7043", "#66BB6A", "#AB47BC",
-    "#FFA726", "#26C6DA", "#EC407A", "#8D6E63",
-    "#78909C", "#D4E157", "#5C6BC0", "#FF8A65"
+    "#4FC3F7",
+    "#FF7043",
+    "#66BB6A",
+    "#AB47BC",
+    "#FFA726",
+    "#26C6DA",
+    "#EC407A",
+    "#8D6E63",
+    "#78909C",
+    "#D4E157",
+    "#5C6BC0",
+    "#FF8A65",
 ]
 
 SQN_LABELS = [
@@ -194,9 +203,92 @@ def _calc_streaks(net_pnl_list):
         loss_streaks.append(curr_loss)
 
     avg_wins = round(sum(win_streaks) / len(win_streaks), 1) if win_streaks else 0.0
-    avg_losses = round(sum(loss_streaks) / len(loss_streaks), 1) if loss_streaks else 0.0
+    avg_losses = (
+        round(sum(loss_streaks) / len(loss_streaks), 1) if loss_streaks else 0.0
+    )
 
     return max_wins, max_losses, avg_wins, avg_losses
+
+
+def _calc_risk_of_ruin(net_pnl_list: list, capital: float) -> dict:
+    """
+    Monte Carlo Risk of Ruin (5000 simulaciones, 200 trades futuros).
+    Retorna probabilidad (%) de perder 20% y 50% del capital.
+    Usa distribución empírica de trades reales como base.
+    """
+    import random
+
+    if len(net_pnl_list) < 10:
+        return {"ror_20": None, "ror_50": None}
+
+    N_SIMS = 5000
+    N_TRADES = 200
+    ruin_20 = 0
+    ruin_50 = 0
+    thr_20 = capital * 0.20
+    thr_50 = capital * 0.50
+    rng = random.Random(42)  # semilla fija → reproducible
+
+    for _ in range(N_SIMS):
+        equity = capital
+        hit_20 = False
+        hit_50 = False
+        for _ in range(N_TRADES):
+            equity += rng.choice(net_pnl_list)
+            if not hit_20 and (capital - equity) >= thr_20:
+                hit_20 = True
+                ruin_20 += 1
+            if not hit_50 and (capital - equity) >= thr_50:
+                hit_50 = True
+                ruin_50 += 1
+            if hit_50:
+                break
+
+    return {
+        "ror_20": round(ruin_20 / N_SIMS * 100, 1),
+        "ror_50": round(ruin_50 / N_SIMS * 100, 1),
+    }
+
+
+def _calc_rolling_metrics(trades_sorted: list, window: int) -> list:
+    """
+    Calcula métricas rodantes (Expectancy, Win Rate, PF) sobre ventana de N trades.
+    Retorna lista de puntos para graficar.
+    """
+    if len(trades_sorted) < window:
+        return []
+
+    result = []
+    for i in range(window - 1, len(trades_sorted)):
+        chunk = trades_sorted[i - window + 1 : i + 1]
+        pnl = [t["net_pnl"] for t in chunk]
+        wins = [p for p in pnl if p > 0]
+        losses = [p for p in pnl if p <= 0]
+
+        expectancy = round(sum(pnl) / len(pnl), 2)
+        win_rate = round(len(wins) / len(pnl) * 100, 1)
+
+        gp = sum(wins)
+        gl = abs(sum(losses))
+        pf = round(gp / gl, 3) if gl > 0 else None
+
+        ct = chunk[-1]["close_time"]
+        if isinstance(ct, str):
+            ct = ct  # keep ISO string
+        elif hasattr(ct, "isoformat"):
+            ct = ct.isoformat()
+
+        result.append(
+            {
+                "index": i + 1,
+                "date": ct,
+                "expectancy": expectancy,
+                "win_rate": win_rate,
+                "pf": pf,
+            }
+        )
+
+    return result
 
 
 def _weeks_operating(trades_sorted):
@@ -255,8 +347,16 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     avg_win = (gross_profit / winning_trades) if winning_trades > 0 else 0.0
     avg_loss = (gross_loss / losing_trades) if losing_trades > 0 else 0.0
 
-    profit_factor = (gross_profit / abs(gross_loss)) if gross_loss != 0 else (float("inf") if gross_profit > 0 else 0.0)
-    payout_ratio = (avg_win / abs(avg_loss)) if avg_loss != 0 else (float("inf") if avg_win > 0 else 0.0)
+    profit_factor = (
+        (gross_profit / abs(gross_loss))
+        if gross_loss != 0
+        else (float("inf") if gross_profit > 0 else 0.0)
+    )
+    payout_ratio = (
+        (avg_win / abs(avg_loss))
+        if avg_loss != 0
+        else (float("inf") if avg_win > 0 else 0.0)
+    )
     expectancy = net_profit / total_trades if total_trades > 0 else 0.0
 
     best_trade = max(net_pnl_list) if net_pnl_list else 0.0
@@ -269,7 +369,11 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     short_wins = sum(1 for t in short_trades if t["net_pnl"] > 0)
 
     # Avg duration
-    durations = [t["duration_hours"] for t in trades_sorted if t.get("duration_hours") is not None]
+    durations = [
+        t["duration_hours"]
+        for t in trades_sorted
+        if t.get("duration_hours") is not None
+    ]
     avg_duration = round(sum(durations) / len(durations), 2) if durations else 0.0
 
     # Capital from config (default $5,000)
@@ -280,7 +384,9 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     equity_curve = _build_equity_curve(trades_sorted)
     dd_curve = _build_drawdown_curve(equity_curve, capital)
 
-    max_dd_dollar, max_dd_pct, last_peak_date = _calc_max_drawdown(equity_curve, capital)
+    max_dd_dollar, max_dd_pct, last_peak_date = _calc_max_drawdown(
+        equity_curve, capital
+    )
     stagnation_days = _calc_stagnation(last_peak_date)
 
     ret_dd = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
@@ -288,14 +394,16 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
 
     sqn_val, sqn_note, sqn_label = _calc_sqn(net_pnl_list)
     sharpe = _calc_sharpe(net_pnl_list)
-    max_wins, max_losses, avg_wins_streak, avg_losses_streak = _calc_streaks(net_pnl_list)
+    max_wins, max_losses, avg_wins_streak, avg_losses_streak = _calc_streaks(
+        net_pnl_list
+    )
     weeks = _weeks_operating(trades_sorted)
 
     # Instrument from trades
     symbols = list(set(t["symbol"] for t in trades_sorted))
     instrument = symbols[0] if len(symbols) == 1 else ", ".join(sorted(symbols))
     magic = mapping.get("magic")
-    alias = mapping.get("alias", "") or ea_name   # alias if set, else original name
+    alias = mapping.get("alias", "") or ea_name  # alias if set, else original name
     mapped_instrument = mapping.get("instrument", instrument)
     label = f"{magic} - {alias}" if magic else alias
 
@@ -331,7 +439,9 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
         "max_dd_dollar": max_dd_dollar,
         "max_dd_pct": round(max_dd_pct, 2),
         "ret_dd": round(ret_dd, 2) if ret_dd is not None else None,
-        "recovery_factor": round(recovery_factor, 2) if recovery_factor is not None else None,
+        "recovery_factor": round(recovery_factor, 2)
+        if recovery_factor is not None
+        else None,
         "sqn": sqn_val,
         "sqn_note": sqn_note,
         "sqn_label": sqn_label,
@@ -383,8 +493,16 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
     avg_win = (gross_profit / winning_trades) if winning_trades > 0 else 0.0
     avg_loss = (gross_loss / losing_trades) if losing_trades > 0 else 0.0
 
-    profit_factor = (gross_profit / abs(gross_loss)) if gross_loss != 0 else (float("inf") if gross_profit > 0 else 0.0)
-    payout_ratio = (avg_win / abs(avg_loss)) if avg_loss != 0 else (float("inf") if avg_win > 0 else 0.0)
+    profit_factor = (
+        (gross_profit / abs(gross_loss))
+        if gross_loss != 0
+        else (float("inf") if gross_profit > 0 else 0.0)
+    )
+    payout_ratio = (
+        (avg_win / abs(avg_loss))
+        if avg_loss != 0
+        else (float("inf") if avg_win > 0 else 0.0)
+    )
     expectancy = net_profit / total_trades if total_trades > 0 else 0.0
 
     best_trade = max(net_pnl_list) if net_pnl_list else 0.0
@@ -395,20 +513,35 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
     long_wins = sum(1 for t in long_trades if t["net_pnl"] > 0)
     short_wins = sum(1 for t in short_trades if t["net_pnl"] > 0)
 
-    durations = [t["duration_hours"] for t in trades_sorted if t.get("duration_hours") is not None]
+    durations = [
+        t["duration_hours"]
+        for t in trades_sorted
+        if t.get("duration_hours") is not None
+    ]
     avg_duration = round(sum(durations) / len(durations), 2) if durations else 0.0
 
     # Portfolio capital = sum of each EA's capital from config
     mappings = config.get("mappings", {})
-    ea_names_in_portfolio = list(set(t["comment"] for t in all_trades if t.get("comment") and t["comment"] != "Unknown"))
-    portfolio_capital = sum(float(mappings.get(ea, {}).get("capital", 5000.0)) for ea in ea_names_in_portfolio)
+    ea_names_in_portfolio = list(
+        set(
+            t["comment"]
+            for t in all_trades
+            if t.get("comment") and t["comment"] != "Unknown"
+        )
+    )
+    portfolio_capital = sum(
+        float(mappings.get(ea, {}).get("capital", 5000.0))
+        for ea in ea_names_in_portfolio
+    )
     if portfolio_capital <= 0:
         portfolio_capital = 5000.0  # fallback
 
     equity_curve = _build_equity_curve(trades_sorted)
     dd_curve = _build_drawdown_curve(equity_curve, portfolio_capital)
 
-    max_dd_dollar, max_dd_pct, last_peak_date = _calc_max_drawdown(equity_curve, portfolio_capital)
+    max_dd_dollar, max_dd_pct, last_peak_date = _calc_max_drawdown(
+        equity_curve, portfolio_capital
+    )
     stagnation_days = _calc_stagnation(last_peak_date)
 
     ret_dd = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
@@ -416,7 +549,9 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
 
     sqn_val, sqn_note, sqn_label = _calc_sqn(net_pnl_list)
     sharpe = _calc_sharpe(net_pnl_list)
-    max_wins, max_losses, avg_wins_streak, avg_losses_streak = _calc_streaks(net_pnl_list)
+    max_wins, max_losses, avg_wins_streak, avg_losses_streak = _calc_streaks(
+        net_pnl_list
+    )
     weeks = _weeks_operating(trades_sorted)
 
     def fmt_pf(val):
@@ -450,7 +585,9 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         "max_dd_dollar": max_dd_dollar,
         "max_dd_pct": round(max_dd_pct, 2),
         "ret_dd": round(ret_dd, 2) if ret_dd is not None else None,
-        "recovery_factor": round(recovery_factor, 2) if recovery_factor is not None else None,
+        "recovery_factor": round(recovery_factor, 2)
+        if recovery_factor is not None
+        else None,
         "sqn": sqn_val,
         "sqn_note": sqn_note,
         "sqn_label": sqn_label,

@@ -83,6 +83,14 @@
                     </th>
                     <!-- 9 → Score total -->
                     <th class="th-center val-th-score">Score</th>
+                    <!-- 9b → WFE -->
+                    <th
+                        class="th-center val-th-score"
+                        title="Walk-Forward Efficiency: qué % del rendimiento BT se replica en live"
+                    >
+                        WFE
+                        <span class="val-col-sub">Live/BT %</span>
+                    </th>
                     <!-- 10 → Veredicto + Desv -->
                     <th class="th-center">Veredicto</th>
                     <!-- 11 → Acción -->
@@ -310,6 +318,26 @@
                         </div>
                     </td>
 
+                    <!-- ── 9b. WFE ────────────────────────────────── -->
+                    <td class="th-center">
+                        {% if a.wfe is not none %}
+                        <div class="val-wfe-cell">
+                            <span
+                                class="val-wfe-pct val-wfe-{{ a.wfe_status | lower }}"
+                            >
+                                {{ "%.0f"|format(a.wfe) }}%
+                            </span>
+                            {% if a.wfe > 120 %}
+                            <span class="val-wfe-note">↑ BT</span>
+                            {% elif a.wfe < 30 %}
+                            <span class="val-wfe-note">overfitting?</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="val-nd">N/D</span>
+                        {% endif %}
+                    </td>
+
                     <!-- ── 10. VEREDICTO + DESV ────────────────────── -->
                     <td class="th-center">
                         <div
@@ -355,7 +383,7 @@
                             <span class="val-live-lbl">sem</span>
                         </div>
                     </td>
-                    <td colspan="8" class="val-no-bt-msg">
+                    <td colspan="9" class="val-no-bt-msg">
                         <span class="val-no-bt-text">
                             Sin datos de Backtest — usa el botón
                             <strong>Ingresar</strong> a la izquierda
@@ -433,6 +461,14 @@
             <strong>C</strong>arácter 15% + <strong>D</strong>esviación 20% =
             Score /100.<br />
             Avg Bars = duración promedio ÷ horas del timeframe.
+        </div>
+    </div>
+    <div class="val-info-card">
+        <div class="val-info-title">🎯 Walk-Forward Efficiency</div>
+        <div class="val-info-body">
+            WFE = (Profit live/mes) ÷ (Profit BT/mes) × 100.<br />
+            ≥70% Excelente · 50-70% Aceptable · 30-50% Degradación · &lt;30%
+            Posible overfitting
         </div>
     </div>
 </div>
@@ -670,6 +706,41 @@
     }
     .val-row-active {
         opacity: 1;
+    }
+
+    /* WFE cell */
+    .val-wfe-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
+    .val-wfe-pct {
+        font-family: "Roboto Mono", monospace;
+        font-size: 0.82rem;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 3px;
+    }
+    .val-wfe-ok {
+        color: #4caf50;
+        background: rgba(76, 175, 80, 0.12);
+    }
+    .val-wfe-alerta {
+        color: #ffc107;
+        background: rgba(255, 193, 7, 0.12);
+    }
+    .val-wfe-fuera {
+        color: #ff5252;
+        background: rgba(255, 82, 82, 0.12);
+    }
+    .val-wfe-n\/d {
+        color: var(--text-muted);
+    }
+    .val-wfe-note {
+        font-size: 0.6rem;
+        color: var(--text-muted);
+        font-style: italic;
     }
 </style>
 {% endblock %}

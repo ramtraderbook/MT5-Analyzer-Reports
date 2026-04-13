@@ -696,6 +696,228 @@ function renderTimeRangeSelector(selectorId, onChangeFn) {
   });
 }
 
+// ─── Correlation Matrix ─────────────────────────────────────────────────────
+
+async function renderCorrelationMatrix(divId) {
+  try {
+    const res = await fetch("/api/correlation");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.error) {
+      const el = document.getElementById(divId);
+      if (el)
+        el.innerHTML =
+          '<div class="chart-empty-msg">' +
+          (data.error === "need_2_eas"
+            ? "Se necesitan al menos 2 EAs activos para calcular correlación."
+            : data.error === "insufficient_data"
+              ? "Datos insuficientes para calcular correlación."
+              : "No hay datos.") +
+          "</div>";
+      return;
+    }
+
+    const labels = data.labels;
+    const matrix = data.matrix;
+    const n = labels.length;
+
+    // Plotly heatmap — invertir Y para que diagonal vaya top-left a bottom-right
+    const z = matrix.slice().reverse();
+    const yLabels = labels.slice().reverse();
+
+    // Texto en cada celda
+    const textMatrix = z.map((row) => row.map((v) => v.toFixed(2)));
+
+    const trace = {
+      type: "heatmap",
+      x: labels,
+      y: yLabels,
+      z: z,
+      text: textMatrix,
+      texttemplate: "%{text}",
+      textfont: { size: n > 8 ? 9 : 11, color: "#ffffff" },
+      colorscale: [
+        [0.0, "#1565C0"], // -1  azul oscuro (correlación inversa)
+        [0.35, "#1E88E5"], // -0.3
+        [0.5, "#1a1f2e"], // 0   neutro oscuro
+        [0.65, "#E53935"], // +0.3
+        [0.85, "#FF5252"], // +0.7 alerta
+        [1.0, "#B71C1C"], // +1  rojo intenso
+      ],
+      zmin: -1,
+      zmax: 1,
+      showscale: true,
+      colorbar: {
+        title: { text: "ρ", font: { color: "#8b949e", size: 11 } },
+        tickfont: { color: "#8b949e", size: 10 },
+        thickness: 12,
+        len: 0.8,
+      },
+      hovertemplate: "<b>%{x}</b> × <b>%{y}</b><br>ρ = %{z:.3f}<extra></extra>",
+    };
+
+    const height = Math.max(280, Math.min(520, n * 48 + 60));
+
+    const layout = mergeLayout({
+      height,
+      margin: { t: 20, r: 80, b: 120, l: 120 },
+      xaxis: {
+        tickangle: -35,
+        tickfont: { size: n > 8 ? 9 : 10, color: "#c9d1d9" },
+        side: "bottom",
+      },
+      yaxis: {
+        tickfont: { size: n > 8 ? 9 : 10, color: "#c9d1d9" },
+        automargin: true,
+      },
+    });
+
+    Plotly.newPlot(divId, [trace], layout, PLOTLY_CONFIG);
+
+    // Renderizar alertas de alta correlación
+    if (data.high_corr_pairs && data.high_corr_pairs.length > 0) {
+      const alertDiv = document.getElementById(divId + "-alerts");
+      if (alertDiv) {
+        alertDiv.innerHTML = data.high_corr_pairs
+          .map(
+            (p) =>
+              '<span class="corr-alert-chip">' +
+              "⚠ " +
+              p.ea1 +
+              " × " +
+              p.ea2 +
+              " <strong>ρ=" +
+              p.corr.toFixed(2) +
+              "</strong></span>",
+          )
+          .join("");
+      }
+    } else {
+      const alertDiv = document.getElementById(divId + "-alerts");
+      if (alertDiv) {
+        alertDiv.innerHTML =
+          '<span class="corr-ok-chip">✓ Sin pares con correlación alta (&gt; 0.7)</span>';
+      }
+    }
+  } catch (e) {
+    console.error("Error rendering correlation matrix:", e);
+  }
+}
+
+// ─── Rolling Metrics Chart ──────────────────────────────────────────────────
+
+async function renderRollingMetrics(divId, eaName, window) {
+  try {
+    const encoded = encodeURIComponent(eaName);
+    const url =
+      "/api/rolling_metrics/" + encoded + (window ? "?window=" + window : "");
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const el = document.getElementById(divId);
+    if (!el) return;
+
+    if (data.insufficient || !data.rolling || data.rolling.length === 0) {
+      el.innerHTML =
+        '<div class="chart-empty-msg">Historial insuficiente para métricas rodantes (mínimo 10 trades). Actualmente: ' +
+        (data.total_trades || 0) +
+        " trades.</div>";
+      return;
+    }
+
+    const x = data.rolling.map((p) => p.date);
+    const expectancy = data.rolling.map((p) => p.expectancy);
+    const winRate = data.rolling.map((p) => p.win_rate);
+    const pf = data.rolling.map((p) => p.pf);
+
+    const traces = [
+      {
+        x,
+        y: expectancy,
+        name: "Expectancy",
+        type: "scatter",
+        mode: "lines",
+        line: { color: "#4FC3F7", width: 2, shape: "spline" },
+        yaxis: "y",
+        hovertemplate: "Trade #%{text}<br>Expectancy: $%{y:.2f}<extra></extra>",
+        text: data.rolling.map((p) => p.index),
+      },
+      {
+        x,
+        y: winRate,
+        name: "Win Rate %",
+        type: "scatter",
+        mode: "lines",
+        line: { color: "#66BB6A", width: 1.5, shape: "spline", dash: "dot" },
+        yaxis: "y2",
+        hovertemplate: "Trade #%{text}<br>WR: %{y:.1f}%<extra></extra>",
+        text: data.rolling.map((p) => p.index),
+      },
+      {
+        x,
+        y: pf.map((v) => v || null),
+        name: "Profit Factor",
+        type: "scatter",
+        mode: "lines",
+        line: { color: "#FFA726", width: 1.5, shape: "spline", dash: "dash" },
+        yaxis: "y2",
+        hovertemplate: "Trade #%{text}<br>PF: %{y:.2f}<extra></extra>",
+        text: data.rolling.map((p) => p.index),
+      },
+    ];
+
+    const layout = mergeLayout({
+      height: el.clientHeight || 300,
+      margin: { t: 20, r: 60, b: 48, l: 64 },
+      yaxis: {
+        title: { text: "Expectancy ($)", font: { color: "#4FC3F7", size: 10 } },
+        tickprefix: "$",
+        tickformat: "+,.2f",
+        zeroline: true,
+        zerolinecolor: "#8b949e",
+        zerolinewidth: 1,
+        tickfont: { color: "#4FC3F7", size: 9 },
+      },
+      yaxis2: {
+        title: { text: "WR% / PF", font: { color: "#66BB6A", size: 10 } },
+        overlaying: "y",
+        side: "right",
+        tickfont: { color: "#66BB6A", size: 9 },
+        showgrid: false,
+        zeroline: false,
+        range: [0, Math.max(...winRate) * 1.3],
+      },
+      xaxis: { type: "date" },
+      showlegend: true,
+      legend: {
+        x: 0.01,
+        y: 0.99,
+        xanchor: "left",
+        yanchor: "top",
+        font: { size: 10 },
+      },
+      annotations: [
+        {
+          text: "Ventana: " + data.window + " trades",
+          xref: "paper",
+          yref: "paper",
+          x: 0.5,
+          y: 1.0,
+          showarrow: false,
+          font: { size: 10, color: "#8b949e" },
+          xanchor: "center",
+        },
+      ],
+    });
+
+    Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+  } catch (e) {
+    console.error("Error rendering rolling metrics:", e);
+  }
+}
+
 // ─── Toast notification ─────────────────────────────────────────────────────
 
 function showToast(msg, duration = 2500) {

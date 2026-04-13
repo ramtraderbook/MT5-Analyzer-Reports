@@ -64,6 +64,46 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(os.path.join(APP_DIR, "test_data"), exist_ok=True)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Metrics cache (in-memory, por sesión, TTL 120 segundos)
+# Evita recalcular calculate_all_metrics() en cada llamada API del dashboard.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_metrics_cache: dict = {}  # { cache_key: {"ts": float, "result": dict} }
+_METRICS_TTL = 120  # segundos
+
+
+def _get_metrics_cached(parsed_data: dict, config: dict) -> dict:
+    """
+    Devuelve calculate_all_metrics() desde cache si sigue vigente.
+    La clave es el cache_key de sesión + hash ligero del config.
+    Se invalida automáticamente al subir un nuevo archivo (nuevo cache_key).
+    """
+    from metrics import calculate_all_metrics
+
+    cache_key = session.get("cache_key", "__no_key__")
+    now = time.time()
+
+    entry = _metrics_cache.get(cache_key)
+    if entry and (now - entry["ts"]) < _METRICS_TTL:
+        return entry["result"]
+
+    result = calculate_all_metrics(parsed_data, config)
+    _metrics_cache[cache_key] = {"ts": now, "result": result}
+
+    # Limpiar entradas viejas (evitar memoria ilimitada)
+    stale = [k for k, v in _metrics_cache.items() if now - v["ts"] > _METRICS_TTL * 10]
+    for k in stale:
+        del _metrics_cache[k]
+
+    return result
+
+
+def invalidate_metrics_cache():
+    """Llamar tras subir un nuevo archivo para forzar recálculo."""
+    cache_key = session.get("cache_key", "__no_key__")
+    _metrics_cache.pop(cache_key, None)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config helpers
@@ -186,8 +226,15 @@ def get_parsed_data():
 @app.route("/")
 def index():
     config = load_config()
+    parsed_data = get_parsed_data()
+    total_trades = len(parsed_data.get("closed_trades", [])) if parsed_data else 0
+    loaded_files = config.get("loaded_files", [])
     return render_template(
-        "upload.html", last_file=config.get("last_file"), show_sidebar=False
+        "upload.html",
+        last_file=config.get("last_file"),
+        show_sidebar=False,
+        loaded_files=loaded_files,
+        total_trades=total_trades,
     )
 
 
@@ -213,11 +260,11 @@ def upload():
     filepath = os.path.join(UPLOAD_FOLDER, safe_name)
     file.save(filepath)
 
-    # Parse
+    # Parse new file
     try:
-        from parser import parse_mt5_report
+        from parser import parse_mt5_report, merge_trades
 
-        parsed_data = parse_mt5_report(filepath)
+        new_data = parse_mt5_report(filepath)
     except ValueError as e:
         return render_template("upload.html", error=str(e), show_sidebar=False)
     except Exception as e:
@@ -227,18 +274,76 @@ def upload():
             show_sidebar=False,
         )
 
-    # Cache parsed data
-    cache_key = save_cache(parsed_data)
+    # Append mode: merge with existing cache if available
+    config = load_config()
+    existing_data = get_parsed_data()
+    added_count = len(new_data["closed_trades"])
+
+    if existing_data:
+        merged_trades = merge_trades(
+            existing_data.get("closed_trades", []),
+            new_data["closed_trades"],
+        )
+        added_count = len(merged_trades) - len(existing_data.get("closed_trades", []))
+
+        # Rebuild ea_names from merged trades
+        merged_ea_names = sorted(set(
+            t["comment"] for t in merged_trades
+            if t.get("comment") and t["comment"] != "Unknown"
+        ))
+
+        new_data["closed_trades"] = merged_trades
+        new_data["total_closed"] = len(merged_trades)
+        new_data["ea_names"] = merged_ea_names
+        # Keep account info from the most recent file (new_data already has it)
+
+    # Cache merged data
+    cache_key = save_cache(new_data)
     session["cache_key"] = cache_key
     session["filename"] = safe_name
 
-    # Update config with last file
-    config = load_config()
+    # Invalidar cache de métricas para forzar recálculo con los datos nuevos
+    invalidate_metrics_cache()
+
+    # Update config: track loaded files history
+    loaded_files = config.get("loaded_files", [])
+    # Avoid duplicate filenames on repeated upload
+    loaded_files = [f for f in loaded_files if f.get("name") != safe_name]
+    loaded_files.append({
+        "name": safe_name,
+        "date": str(date.today()),
+        "trades_added": added_count,
+    })
+    config["loaded_files"] = loaded_files
     config["last_file"] = safe_name
     config["last_updated"] = str(date.today())
     save_config(config)
 
     return redirect(url_for("mapping"))
+
+
+@app.route("/reset", methods=["POST"])
+def reset_history():
+    """Clear all trade history from the current session (reset to clean state)."""
+    cache_key = session.get("cache_key")
+    if cache_key:
+        cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
+        try:
+            os.remove(cache_path)
+        except OSError:
+            pass
+
+    session.pop("cache_key", None)
+    session.pop("filename", None)
+    invalidate_metrics_cache()
+
+    # Clear loaded_files from config
+    config = load_config()
+    config["loaded_files"] = []
+    config["last_file"] = None
+    save_config(config)
+
+    return redirect(url_for("index"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -355,7 +460,7 @@ def dashboard():
     config = load_config()
     from metrics import calculate_all_metrics
 
-    all_metrics = calculate_all_metrics(parsed_data, config)
+    all_metrics = _get_metrics_cached(parsed_data, config)
 
     portfolio = all_metrics["portfolio"]
     by_ea = all_metrics["by_ea"]
@@ -565,7 +670,7 @@ def export():
     config = load_config()
     from metrics import calculate_all_metrics
 
-    all_metrics = calculate_all_metrics(parsed_data, config)
+    all_metrics = _get_metrics_cached(parsed_data, config)
 
     by_ea = all_metrics["by_ea"]
     sidebar_eas = build_sidebar_eas(parsed_data, config)
@@ -619,9 +724,7 @@ def api_equity_curves():
     days_param = request.args.get("days", type=int)
 
     config = load_config()
-    from metrics import EA_COLORS, calculate_all_metrics
-
-    all_metrics = calculate_all_metrics(parsed_data, config)
+    all_metrics = _get_metrics_cached(parsed_data, config)
 
     cutoff_str = None
     if days_param is not None:
@@ -682,7 +785,7 @@ def api_drawdown_curves():
     config = load_config()
     from metrics import calculate_all_metrics
 
-    all_metrics = calculate_all_metrics(parsed_data, config)
+    all_metrics = _get_metrics_cached(parsed_data, config)
 
     cutoff_str = None
     if days_param is not None:
@@ -741,7 +844,7 @@ def api_contribution():
     config = load_config()
     from metrics import calculate_all_metrics
 
-    all_metrics = calculate_all_metrics(parsed_data, config)
+    all_metrics = _get_metrics_cached(parsed_data, config)
 
     items = []
     for ea_name, m in all_metrics["by_ea"].items():
@@ -884,9 +987,7 @@ def api_portfolio_analytics():
         return jsonify({"error": "No hay datos cargados"}), 400
 
     config = load_config()
-    from metrics import calculate_all_metrics
-
-    all_metrics = calculate_all_metrics(parsed_data, config)
+    all_metrics = _get_metrics_cached(parsed_data, config)
     portfolio = all_metrics["portfolio"]
     port_trades = portfolio.get("trades", [])
 
@@ -1089,6 +1190,122 @@ def validator_delete(magic):
         del store[str(magic)]
         save_validator_store(store)
     return redirect(url_for("validator"))
+
+
+@app.route("/api/rolling_metrics/<path:name>")
+def api_rolling_metrics(name):
+    ea_name = unquote(name)
+    parsed_data = get_parsed_data()
+    if not parsed_data:
+        return jsonify({"error": "No data"}), 400
+
+    config = load_config()
+    ea_trades = [
+        t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
+    ]
+
+    window_param = request.args.get("window", type=int)
+
+    from metrics import _calc_rolling_metrics, calculate_ea_metrics
+
+    m = calculate_ea_metrics(ea_name, ea_trades, config)
+
+    total = m["total_trades"]
+    if window_param and window_param >= 5:
+        window = min(window_param, total)
+    else:
+        window = m.get("rolling_window", 15)
+
+    rolling = _calc_rolling_metrics(m["trades"], window)
+
+    return jsonify(
+        {
+            "rolling": rolling,
+            "window": window,
+            "total_trades": total,
+            "insufficient": total < 10,
+        }
+    )
+
+
+@app.route("/api/correlation")
+def api_correlation():
+    parsed_data = get_parsed_data()
+    if not parsed_data:
+        return jsonify({"error": "No data"}), 400
+
+    config = load_config()
+    from collections import defaultdict
+
+    import numpy as np
+
+    from metrics import calculate_all_metrics
+
+    all_metrics = calculate_all_metrics(parsed_data, config)
+
+    if len(all_metrics["by_ea"]) < 2:
+        return jsonify({"error": "need_2_eas"})
+
+    # P&L diario por EA
+    ea_daily = {}
+    for ea_name, m in all_metrics["by_ea"].items():
+        label = get_display_label(ea_name, config)
+        daily = defaultdict(float)
+        for t in m["trades"]:
+            ct = t["close_time"]
+            if isinstance(ct, str):
+                ct = datetime.fromisoformat(ct)
+            d = ct.date().isoformat()
+            daily[d] += t["net_pnl"]
+        ea_daily[label] = daily
+
+    # Todas las fechas con actividad
+    all_dates = sorted(set(d for dly in ea_daily.values() for d in dly))
+
+    if len(all_dates) < 5:
+        return jsonify({"error": "insufficient_data"})
+
+    ea_names = list(ea_daily.keys())
+    matrix_raw = np.array(
+        [[ea_daily[n].get(d, 0.0) for d in all_dates] for n in ea_names]
+    )
+
+    # Correlación de Pearson; si desv=0 para un EA, devolver 0.0
+    corr = np.full((len(ea_names), len(ea_names)), 0.0)
+    for i in range(len(ea_names)):
+        for j in range(len(ea_names)):
+            if i == j:
+                corr[i][j] = 1.0
+            else:
+                xi = matrix_raw[i]
+                xj = matrix_raw[j]
+                if xi.std() == 0 or xj.std() == 0:
+                    corr[i][j] = 0.0
+                else:
+                    corr[i][j] = round(float(np.corrcoef(xi, xj)[0, 1]), 3)
+
+    # Detectar pares con correlación alta (> 0.7)
+    high_corr_pairs = []
+    for i in range(len(ea_names)):
+        for j in range(i + 1, len(ea_names)):
+            c = corr[i][j]
+            if abs(c) > 0.7:
+                high_corr_pairs.append(
+                    {
+                        "ea1": ea_names[i],
+                        "ea2": ea_names[j],
+                        "corr": round(c, 3),
+                    }
+                )
+
+    return jsonify(
+        {
+            "labels": ea_names,
+            "matrix": corr.tolist(),
+            "high_corr_pairs": high_corr_pairs,
+            "n_days": len(all_dates),
+        }
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

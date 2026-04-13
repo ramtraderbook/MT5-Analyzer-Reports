@@ -37,9 +37,43 @@
     </div>
   </div>
 
-  {% if last_file %}
+  {% if loaded_files %}
+  <!-- Historial de archivos cargados (append mode) -->
+  <div class="history-strip">
+    <div class="history-summary">
+      <span class="history-icon">📂</span>
+      <span class="history-stat">
+        <strong>{{ total_trades }}</strong> trades acumulados
+      </span>
+      <span class="history-sep">·</span>
+      <span class="history-stat">
+        <strong>{{ loaded_files|length }}</strong> {% if loaded_files|length == 1 %}archivo{% else %}archivos{% endif %}
+      </span>
+      <span class="history-sep">·</span>
+      <span class="history-stat muted">último: <strong>{{ loaded_files[-1].date }}</strong></span>
+    </div>
+    <details class="history-detail">
+      <summary>Ver historial</summary>
+      <ul class="history-list">
+        {% for f in loaded_files %}
+        <li class="history-item">
+          <span class="history-file">{{ f.name }}</span>
+          <span class="history-date">{{ f.date }}</span>
+          <span class="history-added">+{{ f.trades_added }} trades</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    <form method="POST" action="{{ url_for('reset_history') }}" style="display:inline"
+      onsubmit="return confirm('¿Resetear todo el historial?\n\nSe borrarán todos los trades cargados. El config y los datos de Backtest se mantienen.')">
+      <button type="submit" class="btn-reset-history" title="Borrar historial de trades y empezar desde cero">
+        Resetear historial
+      </button>
+    </form>
+  </div>
+  {% elif last_file %}
   <div class="last-file-hint">
-    Último archivo analizado: <strong>{{ last_file }}</strong>
+    Último archivo: <strong>{{ last_file }}</strong>
   </div>
   {% endif %}
 

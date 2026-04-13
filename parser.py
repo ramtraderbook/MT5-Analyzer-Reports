@@ -392,3 +392,28 @@ def parse_mt5_report(filepath: str) -> dict:
         "total_closed": len(closed_trades),
         "total_open": len(open_positions),
     }
+
+
+def merge_trades(existing: list, new_trades: list) -> list:
+    """
+    Merge two lists of trade dicts, deduplicating by position_id.
+
+    Existing trades take precedence — if the same position_id appears
+    in both lists, the existing trade is kept unchanged.
+
+    Returns a new list sorted by close_time (ascending).
+    This is the core of the append-mode multi-file loading feature.
+    """
+    seen_ids = {t["position_id"] for t in existing}
+    added = [t for t in new_trades if t["position_id"] not in seen_ids]
+    merged = existing + added
+
+    def sort_key(t):
+        ct = t.get("close_time")
+        if ct is None:
+            return ""
+        if isinstance(ct, datetime):
+            return ct.isoformat()
+        return str(ct)
+
+    return sorted(merged, key=sort_key)

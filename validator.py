@@ -430,6 +430,39 @@ def calculate_validator_score(
             accion = "Funciona pero con senal de deterioro - vigilar de cerca"
         else:
             accion = "Mantener activo - opera dentro de parametros esperados"
+    # ── Walk-Forward Efficiency ────────────────────────────────────────────
+    wfe = None
+    wfe_status = "N/D"
+    if (
+        bt_expect is not None
+        and bt_trades is not None
+        and bt_months is not None
+        and bt_months > 0
+        and bt_trades > 0
+        and expect_live is not None
+        and trades_live > 0
+        and weeks_live > 0
+    ):
+        bt_profit_per_month = bt_expect * bt_trades / bt_months
+        live_months = weeks_live / 4.33
+        live_profit_per_month = (
+            expect_live * trades_live / live_months if live_months > 0 else 0
+        )
+        if bt_profit_per_month != 0:
+            wfe = round((live_profit_per_month / bt_profit_per_month) * 100, 1)
+            if wfe > 120:
+                wfe_status = "ALERTA"  # mejor que BT, posible sobreajuste del BT
+            elif wfe >= 70:
+                wfe_status = "OK"
+            elif wfe >= 50:
+                wfe_status = "ALERTA"
+            elif wfe >= 30:
+                wfe_status = "ALERTA"
+            else:
+                wfe_status = "FUERA"
+    result["wfe"] = wfe
+    result["wfe_status"] = wfe_status
+
     result["accion"] = accion
 
     return result
