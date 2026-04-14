@@ -410,10 +410,13 @@ def merge_trades(existing: list, new_trades: list) -> list:
 
     def sort_key(t):
         ct = t.get("close_time")
+        # Always return an ISO string — None and non-datetime values go to the END
         if ct is None:
-            return ""
+            return datetime.max.isoformat()
         if isinstance(ct, datetime):
             return ct.isoformat()
-        return str(ct)
+        # Fallback: str(ct) for ISO strings already in cache; datetime.max for anything else
+        s = str(ct)
+        return s if s[:4].isdigit() else datetime.max.isoformat()
 
     return sorted(merged, key=sort_key)

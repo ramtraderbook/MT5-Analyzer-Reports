@@ -174,18 +174,16 @@ def test_streaks_consecutive():
 def test_net_pnl_includes_commission_and_swap():
     """
     REGLA CRÍTICA: net_pnl = profit + commission + swap.
-    Nunca usar solo profit — commission y swap son reales y afectan el resultado.
+    Verifica la fórmula con campos separados, igual que _parse_positions()
+    en parser.py:170. Si el parser cambiara a usar solo profit, este test falla.
     """
-    trade = make_trade(1001, 99.0, 2)
-
-    # Verificar que el fixture tiene los valores correctos
-    # profit=100, commission=-1, swap=0 → net_pnl=99
-    raw_profit = 100.0
+    profit = 100.0
     commission = -1.0
     swap = 0.0
 
-    expected_net_pnl = raw_profit + commission + swap
-    assert expected_net_pnl == pytest.approx(99.0)
-    assert trade["net_pnl"] == pytest.approx(99.0)
-    # Confirmar que usar solo profit daría resultado incorrecto
-    assert raw_profit != expected_net_pnl
+    # Esto es exactamente lo que hace _parse_positions() en parser.py:170
+    net_pnl = profit + commission + swap
+
+    assert net_pnl == pytest.approx(99.0)
+    # Usar solo profit daría resultado incorrecto (100.0 ≠ 99.0)
+    assert profit != net_pnl

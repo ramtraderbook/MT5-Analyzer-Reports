@@ -53,21 +53,34 @@ def _build_equity_curve(trades_sorted):
     if not trades_sorted:
         return []
 
-    # Add initial point at 0 one day before first trade
-    first_dt = trades_sorted[0]["close_time"]
-    if isinstance(first_dt, str):
-        first_dt = datetime.fromisoformat(first_dt)
+    # Find the first trade with a valid close_time for the initial anchor point
+    # Trades with None close_time are sorted to the end — skip them for the anchor
+    first_dt = None
+    for t in trades_sorted:
+        ct = t["close_time"]
+        if ct is not None:
+            first_dt = datetime.fromisoformat(ct) if isinstance(ct, str) else ct
+            break
+
+    if first_dt is None:
+        # All trades have None close_time — cannot build a meaningful curve
+        return []
+
     initial_date = (first_dt.date() - timedelta(days=1)).isoformat()
 
     pnl = 0.0
     curve = [{"date": initial_date, "equity": 0.0}]
 
     for trade in trades_sorted:
-        pnl += trade["net_pnl"]
         close_dt = trade["close_time"]
+        if close_dt is None:
+            # Skip trades with no close_time — they don't belong in the equity curve
+            pnl += trade["net_pnl"]  # still accumulate P&L
+            continue
         if isinstance(close_dt, str):
             close_dt = datetime.fromisoformat(close_dt)
-        date_str = close_dt.date().isoformat() if close_dt else "unknown"
+        date_str = close_dt.date().isoformat()
+        pnl += trade["net_pnl"]
         curve.append({"date": date_str, "equity": round(pnl, 2)})
 
     return curve
@@ -325,7 +338,7 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
         ct = t["close_time"]
         if isinstance(ct, str):
             return datetime.fromisoformat(ct)
-        return ct or datetime.min
+        return ct if ct is not None else datetime.max
 
     trades_sorted = sorted(trades, key=sort_key)
 
@@ -473,7 +486,7 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         ct = t["close_time"]
         if isinstance(ct, str):
             return datetime.fromisoformat(ct)
-        return ct or datetime.min
+        return ct if ct is not None else datetime.max
 
     trades_sorted = sorted(all_trades, key=sort_key)
     net_pnl_list = [t["net_pnl"] for t in trades_sorted]

@@ -255,8 +255,9 @@ def upload():
             show_sidebar=False,
         )
 
-    # Save uploaded file
-    safe_name = os.path.basename(file.filename)
+    # Save uploaded file — use secure_filename to sanitize client-supplied names
+    from werkzeug.utils import secure_filename
+    safe_name = secure_filename(file.filename) or "upload.xlsx"
     filepath = os.path.join(UPLOAD_FOLDER, safe_name)
     file.save(filepath)
 
@@ -277,14 +278,26 @@ def upload():
     # Append mode: merge with existing cache if available
     config = load_config()
     existing_data = get_parsed_data()
+    old_cache_key = session.get("cache_key")  # track to delete after merge
     added_count = len(new_data["closed_trades"])
 
     if existing_data:
-        merged_trades = merge_trades(
-            existing_data.get("closed_trades", []),
-            new_data["closed_trades"],
-        )
-        added_count = len(merged_trades) - len(existing_data.get("closed_trades", []))
+        existing_trades = existing_data.get("closed_trades", [])
+        merged_trades = merge_trades(existing_trades, new_data["closed_trades"])
+        added_count = len(merged_trades) - len(existing_trades)
+
+        # No new trades: warn user and skip cache rewrite
+        if added_count == 0:
+            config = load_config()
+            loaded_files = config.get("loaded_files", [])
+            return render_template(
+                "upload.html",
+                error="El archivo no contiene trades nuevos — todos los position_id ya estaban en el historial.",
+                last_file=config.get("last_file"),
+                loaded_files=loaded_files,
+                total_trades=len(existing_trades),
+                show_sidebar=False,
+            )
 
         # Rebuild ea_names from merged trades
         merged_ea_names = sorted(set(
@@ -292,23 +305,34 @@ def upload():
             if t.get("comment") and t["comment"] != "Unknown"
         ))
 
+        # Recompute unknown_trades from the full merged dataset
+        merged_unknown = sum(1 for t in merged_trades if t.get("comment") == "Unknown")
+
         new_data["closed_trades"] = merged_trades
         new_data["total_closed"] = len(merged_trades)
         new_data["ea_names"] = merged_ea_names
-        # Keep account info from the most recent file (new_data already has it)
+        new_data["unknown_trades"] = merged_unknown
+        # open_positions and account info come from the most recent file (new_data)
 
-    # Cache merged data
+    # Invalidar cache de métricas ANTES de save_cache (key aún no cambiada)
+    invalidate_metrics_cache()
+
+    # Cache merged data — generates a new UUID key
     cache_key = save_cache(new_data)
+
+    # CRITICAL fix: delete the old cache file to avoid orphaned files on disk
+    if old_cache_key and old_cache_key != cache_key:
+        old_cache_path = os.path.join(APP_DIR, f"cache_{old_cache_key}.json")
+        try:
+            os.remove(old_cache_path)
+        except OSError:
+            pass
+
     session["cache_key"] = cache_key
     session["filename"] = safe_name
 
-    # Invalidar cache de métricas para forzar recálculo con los datos nuevos
-    invalidate_metrics_cache()
-
-    # Update config: track loaded files history
+    # Update config: track loaded files history (no dedup by name — preserve full audit trail)
     loaded_files = config.get("loaded_files", [])
-    # Avoid duplicate filenames on repeated upload
-    loaded_files = [f for f in loaded_files if f.get("name") != safe_name]
     loaded_files.append({
         "name": safe_name,
         "date": str(date.today()),
@@ -333,9 +357,10 @@ def reset_history():
         except OSError:
             pass
 
+    # Invalidate metrics cache BEFORE popping the session key
+    invalidate_metrics_cache()
     session.pop("cache_key", None)
     session.pop("filename", None)
-    invalidate_metrics_cache()
 
     # Clear loaded_files from config
     config = load_config()
