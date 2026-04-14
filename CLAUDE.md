@@ -1,8 +1,6 @@
-# EA Analyzer Reports 1.0v — CLAUDE.md
+# EA Analyzer & Validator — CLAUDE.md
 
-Herramienta Flask local para analizar historial de trades de MetaTrader 5 (EAs).
-El usuario exporta un `.xlsx` desde MT5 y el programa calcula métricas por EA,
-genera gráficos Plotly y produce un export para su archivo "EA Validator" Excel.
+Flask app para analizar historial de trades de MetaTrader 5. Aplica a `ea_analyzer.py`, `parser.py`, `metrics.py`, `validator.py` y los templates.
 
 ---
 
@@ -10,224 +8,137 @@ genera gráficos Plotly y produce un export para su archivo "EA Validator" Excel
 
 | Archivo | Rol |
 |---|---|
-| `ea_analyzer.py` | Flask app: todas las rutas, cache de sesión, config |
-| `parser.py` | Lee el .xlsx de MT5, une POSITIONS + ORDERS, retorna trades con EA name |
-| `metrics.py` | Calcula todas las métricas: equity, drawdown, SQN, streaks, etc. |
-| `templates/` | Jinja2: `base.html`, `upload.html`, `mapping.html`, `dashboard.html`, `strategy.html`, `export.html` |
-| `static/style.css` | Dark theme con CSS custom properties |
-| `static/charts.js` | Helpers Plotly: equity, drawdown, histograma, streaks, contribution |
-| `config.json` | Persiste mapeos: magic number, alias, capital, active, instrument por EA |
-| `cache_{uuid}.json` | Cache de parsed data por sesión (evita límite 4MB de cookies) |
-| `.secret_key` | Clave Flask persistente (sesiones sobreviven reinicios) |
+| `ea_analyzer.py` | Flask app: rutas, cache de sesión, config |
+| `parser.py` | Parsea .xlsx MT5, JOIN POSITIONS + ORDERS |
+| `metrics.py` | Calcula métricas, equity curves, drawdown |
+| `validator.py` | Motor de scoring EA Validator |
+| `config.json` | Mapeos: magic, alias, capital, active |
+| `validator_store.json` | Datos de backtest por magic number |
+| `cache_{uuid}.json` | Cache de trades por sesión |
+| `templates/` | base.html, upload, mapping, dashboard, strategy, export, validator, validator_input |
+| `static/` | style.css, charts.js |
 
 ---
 
-## Flujo de datos
+## Reglas de negocio (críticas)
 
-```
-.xlsx upload → parser.py → cache_{uuid}.json → /mapping (config magic/alias/capital)
-    → /dashboard → metrics.calculate_all_metrics() → Jinja2 templates + /api/* → Plotly.js
-```
+**P&L:** `net_pnl = Profit + Commission + Swap` — NUNCA usar solo `Profit`
 
----
+**JOIN:** POSITIONS (sin comment) + ORDERS (con comment) por `position_id == order_id`
 
-## Reglas críticas de negocio
+**Filtro comments:** Descartar los que empiezan con `[` (MT5 auto-comments). Todo lo demás = nombre válido de EA.
 
-**P&L:** `net_pnl = Profit + Commission + Swap` (NUNCA usar solo `Profit`)
+**Equity curve:** Empieza en 0, acumula `net_pnl`. No es saldo absoluto.
 
-**Agrupación de trades:** Parser une POSITIONS (tiene trades, sin comentario) con ORDERS
-(tiene comentario = nombre del EA). JOIN por `position_id == order_id`. Trades sin match → `"Unknown"`.
+**Max DD%:** `(peak_pnl - valley_pnl) / (capital + peak_pnl) × 100` — capital del config, $5,000 default
 
-**Filtro de comentarios:** Se descartan comentarios que empiezan con `[` (ej: `[sl 1234.5]`,
-`[tp ...]` son comentarios automáticos de MT5). Todo lo demás es nombre válido de EA.
+**Portfolio capital:** Suma de capitals de EAs activos
 
-**Equity curve:** Empieza en 0, acumula net_pnl. El eje Y muestra ganancias/pérdidas, no saldo absoluto.
+**SQN:** `sqrt(N) × mean(net_pnl) / std(net_pnl, ddof=1)` — "(orientativo)" si N < 20
 
-**Max DD%:** `(peak_pnl - valley_pnl) / (capital + peak_pnl) × 100`
-`capital` viene de `config["mappings"][ea_name]["capital"]` (default $5,000).
-Portfolio capital = suma de capitals de todos los EAs activos.
-
-**SQN:** `sqrt(N) × mean(net_pnl) / std(net_pnl, ddof=1)`. Nota "(orientativo)" si N < 20.
-
-**EAs activos:** En `config.json`, `active: false` excluye el EA de métricas, portfolio,
-sidebar y API. El filtro ocurre en `calculate_all_metrics()` antes de cualquier cálculo.
-
-**Alias:** Campo opcional en mapping. Si vacío, se usa el nombre original del archivo.
-El `label` final = `"magic - alias"` o solo `alias` si no hay magic.
+**EAs activos:** `active: false` en config.json los excluye de métricas, portfolio, sidebar y API
 
 ---
 
-## Columnas POSITIONS (xlsx MT5)
+## Rutas principales
 
-| Col | Campo | Nota |
+| Ruta | Descripción |
+|---|---|
+| `/` | Upload de .xlsx |
+| `/upload` POST | Parsea archivo, merge trades, redirige a mapping |
+| `/reset` POST | Limpia historial y cache |
+| `/mapping` | Mapeo magic/alias/capital/instrument |
+| `/mapping/save` POST | Guarda config.json |
+| `/dashboard` | Portfolio + KPIs + charts + tabla |
+| `/strategy/<name>` | Detalle por EA |
+| `/export` | Tabla para EA Validator |
+| `/validator` | Dashboard Live vs BT scoring |
+| `/validator/edit/<magic>` | Formulario datos BT |
+| `/validator/delete/<magic>` POST | Elimina datos BT |
+
+---
+
+## APIs (para charts.js)
+
+| Endpoint | Params | Retorna |
 |---|---|---|
-| 1 | open_time | Hardcoded (duplicado "Time") |
-| 2 | position_id | ID para JOIN con ORDERS |
-| 3 | symbol | |
-| 4 | direction | buy/sell |
-| 5 | volume | string → float |
-| 6 | open_price | Hardcoded (duplicado "Price") |
-| 9 | close_time | Hardcoded |
-| 10 | close_price | Hardcoded |
-| 11 | commission | negativo |
-| 12 | swap | |
-| 13 | profit | crudo, SIN comisiones |
+| `/api/equity_curves` | `?days=N` | traces equity por EA + portfolio |
+| `/api/drawdown_curves` | `?days=N` | traces drawdown % |
+| `/api/contribution` | — | bars contribución por EA |
+| `/api/ea_equity/<name>` | `?days=N` | equity + dd de un EA |
+| `/api/ea_pnl_data/<name>` | — | histogram, streaks, weekday/hour, long/short |
+| `/api/portfolio_analytics` | — | igual que ea_pnl_data pero para portfolio |
+| `/api/rolling_metrics/<name>` | `?window=N` | expectancy/win_rate/PF rodante |
+| `/api/correlation` | — | matriz correlación Pearson diaria entre EAs |
+
+---
+
+## Funciones clave en metrics.py
+
+| Función | Qué hace |
+|---|---|
+| `calculate_ea_metrics(ea_name, trades, config)` | Métricas completas de un EA |
+| `calculate_all_metrics(parsed_data, config)` | Portfolio + todos los EAs activos |
+| `calculate_portfolio_metrics(all_trades, config)` | Portfolio completo |
+| `_build_equity_curve(trades_sorted)` | Curva equity desde 0, acumula net_pnl |
+| `_build_drawdown_curve(equity_curve, capital)` | Curva DD% desde equity curve |
+| `_calc_max_drawdown(equity_curve, capital)` | Max DD$ y DD% |
+| `_calc_sqn(net_pnl_list)` | SQN score + label |
+| `_calc_sharpe(net_pnl_list)` | Sharpe simplificado |
+| `_calc_streaks(net_pnl_list)` | Rachas max y promedio wins/losses |
+| `_calc_stagnation(last_peak_date)` | Días desde último pico equity |
+| `_calc_risk_of_ruin(net_pnl_list, capital)` | Monte Carlo RoR (5000 sims) |
+| `_calc_rolling_metrics(trades, window)` | Métricas rodantes sobre ventana N trades |
+| `_weeks_operating(trades_sorted)` | Semanas desde primer a último trade |
+
+---
+
+## Funciones clave en parser.py
+
+| Función | Qué hace |
+|---|---|
+| `parse_mt5_report(filepath)` | Entry point — parsea xlsx, retorna dict |
+| `merge_trades(existing, new_trades)` | Append mode — merge por position_id |
+| `_find_section_rows(ws)` | Detecta secciones dinámicamente |
+| `_parse_positions(ws, ...)` | Parsea trades cerrados |
+| `_parse_orders(ws, ...)` | Mapeo order_id → comment |
+| `_parse_open_positions(ws, ...)` | Posiciones abiertas |
+| `_parse_results(ws, ...)` | Sección results para validación |
+
+---
+
+## Validator (validator.py)
+
+**4 categorías ponderadas (100%):**
+- RIESGO 35% → DD% Escalado (50%) + Max Consec Losses (30%) + Stagnation (20%)
+- EDGE 30% → Win Rate (25%) + PF (30%) + Payout (20%) + Edge Erosion (25%)
+- CARÁCTER 15% → Frecuencia (55%) + Avg Bars/Trade (45%)
+- DESV. ESTRUCTURAL 20% → Conteo métricas deterioradas simultáneamente
+
+**Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45
+
+**DD_límite:** `Peor_DD_1Mes × sqrt(semanas_live / 4.33)`
+
+**Datos Live:** auto-calculados desde `calculate_ea_metrics()`
+**Datos BT:** ingresados por usuario en `/validator/edit/<magic>`
 
 ---
 
 ## Comandos
 
 ```bash
-# Instalar dependencias
 pip install -r requirements.txt
-
-# Ejecutar (abre browser automáticamente en localhost:5000)
-python ea_analyzer.py
-
-# Archivo de prueba esperado en:
-test_data/ReportHistory-4000084439.xlsx
+python ea_analyzer.py          # localhost:5000
+python -m pytest                # tests (si existen)
 ```
 
 ---
 
-## Estado actual (v1.0 — 2026-03-04)
+## Convenciones de código
 
-**Funcionando:**
-- Parsing dinámico de secciones MT5 (sin row numbers hardcodeados)
-- Mapeo con magic number, alias, capital, active checkbox
-- Dashboard portfolio: 8 KPIs + stats row + tabla + 3 charts Plotly
-- Strategy page: mismos KPIs + tabla de trades + histograma P&L + streak chart
-- Export para EA Validator (copy-paste clipboard o CSV)
-- Sidebar filtrada por EAs activos
-- Config.json persistente entre sesiones
-- Max DD% corregido: usa capital del config ($5,000 default), no $100,000
-
-**Pendiente / posibles mejoras v1.0:**
-- Validación cruzada con sección RESULTS del xlsx
-- Soporte multi-archivo (comparar períodos)
-- Tests unitarios para parser.py y metrics.py
-
----
-
-## Módulo EA Validator v1.1 (COMPLETADO)
-
-### Archivos nuevos
-
-| Archivo | Rol |
-|---|---|
-| `validator.py` | Motor de scoring: lógica completa portada del Excel EA_Validator_Final_v2.xlsx |
-| `validator_store.json` | Persiste datos de backtest por magic number `{ "12345": { "bt": {...}, "mc_retest": {...}, ... } }` |
-| `templates/validator.html` | Dashboard principal: tabla Live vs BT con scores, verdicts, chips de estado |
-| `templates/validator_input.html` | Formulario de entrada de datos BT por EA (5 secciones) |
-
-### Rutas nuevas en ea_analyzer.py
-
-| Ruta | Método | Descripción |
-|---|---|---|
-| `/validator` | GET | Dashboard principal del validator |
-| `/validator/edit/<magic>` | GET/POST | Form para ingresar/editar datos BT de un EA |
-| `/validator/delete/<magic>` | POST | Elimina datos BT de un EA del store |
-
-### Sistema de Scoring (portado del Excel)
-
-**4 categorías ponderadas (suman 100):**
-- **RIESGO** 35% → DD% Escalado (50%) + Max Consec Losses (30%) + Stagnation (20%)
-- **EDGE** 30% → Win Rate (25%) + Profit Factor (30%) + Payout Ratio (20%) + Edge Erosion (25%)
-- **CARÁCTER** 15% → Frecuencia Trades (55%) + Avg Bars/Trade (45%)
-- **DESV. ESTRUCTURAL** 20% → Score basado en conteo de métricas deterioradas simultáneamente
-
-**Umbrales de veredicto:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45
-
-**Fórmulas clave:**
-- `DD_límite = Peor_DD_1Mes × sqrt(semanas_live / 4.33)` — escala tolerancia con el tiempo
-- `Edge_Erosion% = (Expect_live − Expect_SPP_mediana) / Expect_SPP_mediana × 100`
-- `Avg_Bars_live = avg_duration_hours / timeframe_hours` (calculado automáticamente)
-- Desviación estructural si 3+ métricas deterioradas a la vez (WR, Payout, PF, Edge Erosion, Frecuencia)
-
-**Umbrales dinámicos por cantidad de trades:** < 30 (Muy baja) / 30-49 (Baja) / 50-99 (Media) / 100+ (Alta)
-
-### Flujo de datos del Validator
-
-```
-config.json (magic numbers) → validator_edit form → validator_store.json (BT data)
-    + MT5 trades ya cargados → calculate_ea_metrics() (live data)
-    → validator.py::calculate_validator_score() → validator.html (scoring + veredicto)
-```
-
-### Datos Live auto-calculados desde MT5
-
-Los siguientes campos se extraen automáticamente de `calculate_ea_metrics()` sin entrada manual:
-`total_trades`, `weeks_operating`, `win_rate`, `profit_factor`, `payout_ratio`,
-`expectancy`, `max_dd_pct`, `max_consec_losses`, `stagnation_days`,
-`avg_bars_live` (= avg_duration_hours ÷ timeframe_hours desde BT config)
-
-### Datos de Backtest que el usuario ingresa (una sola vez)
-
-- **BT Original (SQX Overview):** WR%, PF, Payout, Expectancy, Avg Bars, Max DD%, Max Consec Losses, Total Trades, Meses, Peor DD 1M, Peor DD 3M, Stagnation días
-- **Monte Carlo Retest 95%:** Max DD%, PF, WR%, Expectancy, Stability
-- **Monte Carlo Trades 95%:** Max DD%, PF, WR%, Expectancy
-- **System Param Permutation (medianas):** Expectancy, DD%, Stagnation
-
----
-
-## Plan de Mejoras v1.1 (EN PROGRESO)
-
-### 1. **Tabla Resumen por Estrategia → Agregar columna "Dias/Semanas Operativo"**
-   - **Qué:** Mostrar cuántos días/semanas lleva operativo cada EA
-   - **Archivo:** `metrics.py` + `templates/dashboard.html`
-   - **Implementación:**
-     - Función ya existe: `_weeks_operating()` en `metrics.py` [L202-218]
-     - Agregar campo `weeks_operating` a los dicts de `ea_rows` en `dashboard()` route
-     - En template, agregar columna con formato: "XX.X sem" o "XX.X días"
-     - Usar `close_time` del primer y último trade de cada EA
-
-### 2. **Reducir padding en tabla Resumen → Horizontal scroll eliminado**
-   - **Qué:** Ajustar padding/margins para que todas las columnas entren sin scroll
-   - **Archivo:** `static/style.css`
-   - **Implementación:**
-     - `.data-table th, td`: reducir padding de ~12px a ~6px (H) × ~4px (V)
-     - `.mono`: reducir font-size si es necesario
-     - Ajustar `.table-wrapper` con `overflow-x: auto` pero optimizar anchos
-     - Considerar responsivo: hide algunas columnas en pantallas < 1400px
-
-### 3. **Selector de rango temporal en gráficas Equity + Drawdown**
-   - **Qué:** Botones/tabs para cambiar ventana: 7d, 14d, 30d, 90d, 180d, 1a, ALL
-   - **Archivos:** `ea_analyzer.py`, `templates/dashboard.html` + `strategy.html`, `static/charts.js`
-   
-   **Implementación detallada:**
-   
-   a) **Backend (ea_analyzer.py):**
-      - Modificar `/api/equity_curves` y `/api/drawdown_curves` para aceptar parámetro `days` (query param)
-      - Filtrar trades: `trade["close_time"] >= (datetime.now() - timedelta(days=days))`
-      - Default: `days=None` (mostrar ALL)
-      
-   b) **Frontend (charts.js):**
-      - Crear función `renderTimeRangeSelector(containerId, onChangeCallback)` que dibuje botones
-      - Botones: 7d | 14d | 30d | 90d | 180d | 1Y | ALL
-      - Al clickear → llamar API con nuevo param `?days=X` → refrescar gráfico
-      
-   c) **HTML (dashboard.html + strategy.html):**
-      - Agregar `<div id="equity-time-selector"></div>` antes de `#equity-chart`
-      - Agregar `<div id="drawdown-time-selector"></div>` antes de `#dd-chart`
-      - Script: inicializar selectores + vincular a gráficos
-      
-   d) **Gráficos:**
-      - Mantener misma estructura de datos, solo filtrando trade list
-      - Recalcular equity curve en cada cambio de rango
-
-### 4. **Optimizaciones secundarias**
-   - Pasar `weeks_operating` al frontend para mostrar en tabla
-   - Asegurar que equity curve empiece en 0 (ya está)
-   - Cache de rangos temporales para no recalcular innecesariamente
-
----
-
-## Estado Actual de Archivos Clave
-
-| Archivo | Línea | Cambio necesario |
-|---|---|---|
-| `metrics.py` | L221-349 | Pasar `weeks_operating` en `calculate_ea_metrics()` |
-| `templates/dashboard.html` | L200-295 | Agregar columna "Operativo" + divs para selectores |
-| `static/style.css` | L381-451 | Reducir padding table + agregar estilos selectores |
-| `static/charts.js` | (TODO) | Funciones de time-range selector y refetch |
-| `ea_analyzer.py` | L542-630 | Agregar param `days` a `/api/equity_curves` + `/api/drawdown_curves` |
+- `net_pnl` es la única fuente de verdad para P&L
+- Trades sin match en ORDERS → `"Unknown"`
+- `capital` default = $5,000
+- Fechas en cache: ISO strings (no datetime objects)
+- Colors EAs: paleta fija de 12 + HSL dinámico si > 12
+- Filter EAs inactivos ANTES de cualquier cálculo en `calculate_all_metrics()`

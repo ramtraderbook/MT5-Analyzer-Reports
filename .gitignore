@@ -18,3 +18,6 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Agent Teams Lite
+.atl/

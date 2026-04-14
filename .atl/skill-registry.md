@@ -65,5 +65,6 @@ Pre-digested rules per skill. Delegators copy matching blocks into sub-agent pro
 | File | Path | Notes |
 |------|------|-------|
 | `CLAUDE.md` | `C:\Users\ramir\Desktop\MT5-Analyzer-Reports\CLAUDE.md` | Standalone project conventions |
+| `docs/original-spec.md` | `C:\Users\ramir\Desktop\MT5-Analyzer-Reports\docs\original-spec.md` | Original user spec (historical reference) |
 
 Read the convention files listed above for project-specific patterns and rules. All referenced paths have been extracted — no need to read index files to discover more.
