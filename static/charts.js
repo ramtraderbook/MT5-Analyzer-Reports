@@ -738,12 +738,12 @@ async function renderCorrelationMatrix(divId) {
       texttemplate: "%{text}",
       textfont: { size: n > 8 ? 9 : 11, color: "#ffffff" },
       colorscale: [
-        [0.0, "#1565C0"], // -1  azul oscuro (correlación inversa)
-        [0.35, "#1E88E5"], // -0.3
+        [0.0, "#B71C1C"], // -1  rojo intenso
+        [0.35, "#FF5252"], // -0.3
         [0.5, "#1a1f2e"], // 0   neutro oscuro
-        [0.65, "#E53935"], // +0.3
-        [0.85, "#FF5252"], // +0.7 alerta
-        [1.0, "#B71C1C"], // +1  rojo intenso
+        [0.65, "#66BB6A"], // +0.3
+        [0.85, "#43A047"], // +0.7
+        [1.0, "#1B5E20"], // +1  verde intenso
       ],
       zmin: -1,
       zmax: 1,

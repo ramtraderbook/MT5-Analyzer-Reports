@@ -286,18 +286,9 @@ def upload():
         merged_trades = merge_trades(existing_trades, new_data["closed_trades"])
         added_count = len(merged_trades) - len(existing_trades)
 
-        # No new trades: warn user and skip cache rewrite
+        # Same file / no new trades: keep the current session data and reopen the app.
         if added_count == 0:
-            config = load_config()
-            loaded_files = config.get("loaded_files", [])
-            return render_template(
-                "upload.html",
-                error="El archivo no contiene trades nuevos — todos los position_id ya estaban en el historial.",
-                last_file=config.get("last_file"),
-                loaded_files=loaded_files,
-                total_trades=len(existing_trades),
-                show_sidebar=False,
-            )
+            return redirect(url_for("dashboard"))
 
         # Rebuild ea_names from merged trades
         merged_ea_names = sorted(set(
