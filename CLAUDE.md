@@ -2,6 +2,17 @@
 
 Flask app para analizar historial de trades de MetaTrader 5. Aplica a `ea_analyzer.py`, `parser.py`, `metrics.py`, `validator.py` y los templates.
 
+## Documentación detallada
+
+Para no repetir información, los detalles técnicos están en `docs/`:
+
+| Documento | Qué cubre |
+|---|---|
+| [`docs/backend.md`](docs/backend.md) | Arquitectura Flask, parseo xlsx, rutas, sesión/cache, flujo de datos |
+| [`docs/frontend.md`](docs/frontend.md) | Templates Jinja2, CSS, Chart.js, APIs de gráficas, gotchas |
+| [`docs/metrics-formulas.md`](docs/metrics-formulas.md) | Todas las fórmulas: P&L, DD, SQN, Sharpe, RoR, correlación, etc. |
+| [`docs/decision-logic.md`](docs/decision-logic.md) | Scoring Live Validator + Incubation CP1/CP2/CP3, pesos, veredictos, anti-limbo |
+
 ---
 
 ## Arquitectura
