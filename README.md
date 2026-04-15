@@ -83,7 +83,7 @@ Abre `http://localhost:5000` en tu navegador.
 | `config.json` | Magic numbers, alias, capital por EA |
 | `.secret_key` | Clave Flask para sesiones |
 | `validator_store.json` | Datos de backtest ingresados |
-| `cache_*.json` | Cache de trades parseados |
+| `runtime_cache/` | Cache de trades parseados por sesión (live + incubación) |
 | `uploads/*.xlsx` | Archivos MT5 subidos |
 
 ---

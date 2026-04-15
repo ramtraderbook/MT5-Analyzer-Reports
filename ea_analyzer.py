@@ -45,6 +45,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 STATIC_DIR = os.path.join(APP_DIR, "static")
 UPLOAD_FOLDER = os.path.join(APP_DIR, "uploads")
+CACHE_DIR = os.path.join(APP_DIR, "runtime_cache")
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 SECRET_KEY_PATH = os.path.join(APP_DIR, ".secret_key")
 
@@ -63,6 +64,7 @@ else:
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(os.path.join(APP_DIR, "test_data"), exist_ok=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,6 +74,7 @@ os.makedirs(os.path.join(APP_DIR, "test_data"), exist_ok=True)
 
 _metrics_cache: dict = {}  # { cache_key: {"ts": float, "result": dict} }
 _METRICS_TTL = 120  # segundos
+LIVE_CACHE_PREFIX = "cache_"
 ANALYSIS_MODES = {
     "live": "Live Validation",
     "incubation": "Incubation Screening",
@@ -233,10 +236,52 @@ def _serialize_parsed_data(data):
     return d
 
 
+def _cache_file_path(cache_key, prefix):
+    return os.path.join(CACHE_DIR, f"{prefix}{cache_key}.json")
+
+
+def _legacy_cache_file_path(cache_key, prefix):
+    return os.path.join(APP_DIR, f"{prefix}{cache_key}.json")
+
+
+def _resolve_cache_path(cache_key, prefix):
+    if not cache_key:
+        return None
+
+    cache_path = _cache_file_path(cache_key, prefix)
+    if os.path.exists(cache_path):
+        return cache_path
+
+    legacy_path = _legacy_cache_file_path(cache_key, prefix)
+    if not os.path.exists(legacy_path):
+        return cache_path
+
+    try:
+        os.replace(legacy_path, cache_path)
+        return cache_path
+    except OSError:
+        return legacy_path
+
+
+def _delete_cache_file(cache_key, prefix):
+    if not cache_key:
+        return
+
+    for cache_path in {
+        _cache_file_path(cache_key, prefix),
+        _legacy_cache_file_path(cache_key, prefix),
+    }:
+        try:
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+        except OSError:
+            pass
+
+
 def save_cache(data):
     """Save parsed data to a cache file. Returns the cache key."""
     cache_key = str(uuid.uuid4())
-    cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
+    cache_path = _cache_file_path(cache_key, LIVE_CACHE_PREFIX)
     serialized = _serialize_parsed_data(data)
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(serialized, f, default=str)
@@ -247,7 +292,7 @@ def load_cache(cache_key):
     """Load cached parsed data. Returns dict or None."""
     if not cache_key:
         return None
-    cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
+    cache_path = _resolve_cache_path(cache_key, LIVE_CACHE_PREFIX)
     if not os.path.exists(cache_path):
         return None
     try:
@@ -260,7 +305,7 @@ def load_cache(cache_key):
 def save_incubation_cache(data):
     """Save incubation parsed data to a separate cache file."""
     cache_key = str(uuid.uuid4())
-    cache_path = os.path.join(APP_DIR, f"{INCUBATION_CACHE_PREFIX}{cache_key}.json")
+    cache_path = _cache_file_path(cache_key, INCUBATION_CACHE_PREFIX)
     serialized = _serialize_parsed_data(data)
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(serialized, f, default=str)
@@ -271,7 +316,7 @@ def load_incubation_cache(cache_key):
     """Load incubation cached parsed data. Returns dict or None."""
     if not cache_key:
         return None
-    cache_path = os.path.join(APP_DIR, f"{INCUBATION_CACHE_PREFIX}{cache_key}.json")
+    cache_path = _resolve_cache_path(cache_key, INCUBATION_CACHE_PREFIX)
     if not os.path.exists(cache_path):
         return None
     try:
@@ -283,9 +328,14 @@ def load_incubation_cache(cache_key):
 
 def cleanup_old_caches():
     """Delete cache files older than 2 hours."""
-    patterns = ["cache_*.json", f"{INCUBATION_CACHE_PREFIX}*.json"]
+    patterns = [
+        os.path.join(CACHE_DIR, f"{LIVE_CACHE_PREFIX}*.json"),
+        os.path.join(CACHE_DIR, f"{INCUBATION_CACHE_PREFIX}*.json"),
+        os.path.join(APP_DIR, f"{LIVE_CACHE_PREFIX}*.json"),
+        os.path.join(APP_DIR, f"{INCUBATION_CACHE_PREFIX}*.json"),
+    ]
     for pattern in patterns:
-        for f in glob.glob(os.path.join(APP_DIR, pattern)):
+        for f in glob.glob(pattern):
             try:
                 if time.time() - os.path.getmtime(f) > 7200:
                     os.remove(f)
@@ -1827,11 +1877,7 @@ def upload():
 
         incubation_cache_key = save_incubation_cache(new_data)
         if old_inc_cache_key and old_inc_cache_key != incubation_cache_key:
-            old_inc_path = os.path.join(APP_DIR, f"{INCUBATION_CACHE_PREFIX}{old_inc_cache_key}.json")
-            try:
-                os.remove(old_inc_path)
-            except OSError:
-                pass
+            _delete_cache_file(old_inc_cache_key, INCUBATION_CACHE_PREFIX)
 
         session["incubation_cache_key"] = incubation_cache_key
         session["filename"] = safe_name
@@ -1887,11 +1933,7 @@ def upload():
 
     # CRITICAL fix: delete the old cache file to avoid orphaned files on disk
     if old_cache_key and old_cache_key != cache_key:
-        old_cache_path = os.path.join(APP_DIR, f"cache_{old_cache_key}.json")
-        try:
-            os.remove(old_cache_path)
-        except OSError:
-            pass
+        _delete_cache_file(old_cache_key, LIVE_CACHE_PREFIX)
 
     session["cache_key"] = cache_key
     session["filename"] = safe_name
@@ -1916,12 +1958,7 @@ def upload():
 def reset_history():
     """Clear live trade history (trades + file log). Keeps mappings and BT data."""
     cache_key = session.get("cache_key")
-    if cache_key:
-        cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
-        try:
-            os.remove(cache_path)
-        except OSError:
-            pass
+    _delete_cache_file(cache_key, LIVE_CACHE_PREFIX)
 
     invalidate_metrics_cache()
     session.pop("cache_key", None)
@@ -1940,12 +1977,7 @@ def reset_history():
 def reset_all_live():
     """Full live reset: clears trades, file log, mappings, and validator BT data."""
     cache_key = session.get("cache_key")
-    if cache_key:
-        cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
-        try:
-            os.remove(cache_path)
-        except OSError:
-            pass
+    _delete_cache_file(cache_key, LIVE_CACHE_PREFIX)
 
     invalidate_metrics_cache()
     session.pop("cache_key", None)
@@ -1974,14 +2006,7 @@ def reset_all_live():
 
 def _clear_incubation_session_cache():
     incubation_cache_key = session.get("incubation_cache_key")
-    if incubation_cache_key:
-        incubation_cache_path = os.path.join(
-            APP_DIR, f"{INCUBATION_CACHE_PREFIX}{incubation_cache_key}.json"
-        )
-        try:
-            os.remove(incubation_cache_path)
-        except OSError:
-            pass
+    _delete_cache_file(incubation_cache_key, INCUBATION_CACHE_PREFIX)
 
     session.pop("incubation_cache_key", None)
     session.pop("filename", None)

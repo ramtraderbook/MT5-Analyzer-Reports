@@ -166,7 +166,7 @@ python -m pytest                # tests (si existen)
 | `incubation_validator.py` | Motor de scoring por checkpoints |
 | `incubation_store.json` | Datos de referencia BT/MC/SPP por EA |
 | `incubation_config.json` | Config EAs en incubación (magic, alias, capital, active) |
-| `incubation_cache_{uuid}.json` | Cache de trades de incubación por sesión |
+| `runtime_cache\incubation_cache_{uuid}.json` | Cache de trades de incubación por sesión |
 
 **Rutas de incubación:**
 | Ruta | Descripción |

@@ -28,8 +28,8 @@ validator_store.json    ← Datos BT/MC/SPP ingresados por el usuario (vía /val
 incubation_config.json  ← Mapeos EA incubación + loaded_files_incubation
 incubation_store.json   ← Datos BT/MC/SPP de incubación + checkpoints históricos
 
-cache_{uuid}.json       ← Cache de trades live por sesión
-incubation_cache_{uuid}.json ← Cache de trades incubación por sesión
+runtime_cache\cache_{uuid}.json       ← Cache de trades live por sesión
+runtime_cache\incubation_cache_{uuid}.json ← Cache de trades incubación por sesión
 ```
 
 ---
@@ -54,8 +54,8 @@ Al arrancar por primera vez, `ea_analyzer.py` genera 24 bytes aleatorios y los g
 
 ### Cache de trades en disco
 Los trades parseados **no** se guardan en la cookie (demasiado grandes). Se guardan en archivos JSON:
-- `cache_{uuid}.json` para live
-- `incubation_cache_{uuid}.json` para incubación
+- `runtime_cache\\cache_{uuid}.json` para live
+- `runtime_cache\\incubation_cache_{uuid}.json` para incubación
 
 El UUID del archivo activo se guarda en `session["cache_key"]` o `session["incubation_cache_key"]`. Al leer datos, la app carga el archivo correspondiente.
 

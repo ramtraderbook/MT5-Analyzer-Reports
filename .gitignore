@@ -5,6 +5,8 @@ validator_store.json
 
 # Flask session cache
 cache_*.json
+incubation_cache_*.json
+runtime_cache/
 
 # Data files
 *.xlsx
