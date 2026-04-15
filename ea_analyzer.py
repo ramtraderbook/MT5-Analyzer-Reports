@@ -816,13 +816,31 @@ def _build_incubation_dashboard():
                 score_display = f"{score:.2f}" if isinstance(score, (int, float)) else str(score)
             tooltip = _incubation_metric_summary_for_tooltip(evaluation)
             url = url_for("incubation_strategy", ea_name=ea_name)
-            status_label = checkpoint_label
-            status_class = {
-                "PRE_CP1": "verdict-pending",
-                "CP1": "verdict-continue",
-                "CP2": "verdict-observe",
-                "CP3": "verdict-approve",
-            }.get(evaluation.get("current_checkpoint"), "verdict-pending")
+            cp = evaluation.get("current_checkpoint", "")
+            details = evaluation.get("details", {})
+            if cp == "PRE_CP1":
+                status_label = "Esperando trades"
+                status_class = "verdict-pending"
+            elif cp == "CP1":
+                hg = details.get("gates", {})
+                gate_keys = ["dd_extreme", "win_rate_binomial", "max_consec_losses", "frequency"]
+                passed = sum(1 for k in gate_keys if hg.get(k, {}).get("passed"))
+                status_label = f"Gates {passed}/{len(gate_keys)}"
+                status_class = "verdict-continue" if verdict == "CONTINUAR" else "verdict-eliminate"
+            elif cp == "CP2":
+                failing_count = details.get("failing_count") or 0
+                status_label = f"{failing_count} métricas fuera" if failing_count else "Bandas MC OK"
+                status_class = "verdict-observe" if verdict == "OBSERVAR" else ("verdict-eliminate" if verdict == "ELIMINAR" else "verdict-continue")
+            elif cp == "CP3":
+                status_label = f"Score {score_display}"
+                status_class = {
+                    "APROBAR": "verdict-approve",
+                    "OBSERVAR": "verdict-observe",
+                    "ELIMINAR": "verdict-eliminate",
+                }.get(verdict, "verdict-pending")
+            else:
+                status_label = "Evaluado"
+                status_class = "verdict-pending"
 
             if verdict == "ELIMINAR":
                 eliminar_count += 1
@@ -853,8 +871,8 @@ def _build_incubation_dashboard():
                 "checkpoint_key": checkpoint_key,
                 "checkpoint_label": checkpoint_label,
                 "checkpoint_class": checkpoint_class,
-                "status_class": checkpoint_class,
-                "status_label": checkpoint_label,
+                "status_class": status_class,
+                "status_label": status_label,
                 "score": score_display,
                 "verdict": verdict,
                 "verdict_class": {

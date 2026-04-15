@@ -21,24 +21,61 @@
     </div>
     <div class="inc-explain-grid">
         <div class="inc-explain-card">
-            <div class="inc-explain-kicker">CP1</div>
-            <div class="inc-explain-title">Hard gates</div>
-            <div class="inc-explain-copy">5-20 trades. Si DD, rachas o frecuencia rompen el filtro, el EA cae en ELIMINAR o sigue a CONTINUAR.</div>
+            <div class="inc-explain-kicker" style="color: #17a2b8;">CP1</div>
+            <div class="inc-explain-title">Hard Gates · 5-20 trades</div>
+            <div class="inc-explain-copy">
+                Filtros binarios de supervivencia. Evalúa 4 gates:<br>
+                <strong>① DD extremo</strong> (DD > MC95 × 1.5)<br>
+                <strong>② Win Rate</strong> (prueba binomial, p &lt; 0.03)<br>
+                <strong>③ Rachas</strong> (consec. losses > MC95)<br>
+                <strong>④ Frecuencia</strong> (fuera de rango = warning)<br><br>
+                Si cualquier gate falla → <span style="color:#dc3545">ELIMINAR</span>.<br>
+                Si todos pasan → <span style="color:#17a2b8">CONTINUAR</span>.
+            </div>
         </div>
         <div class="inc-explain-card">
-            <div class="inc-explain-kicker">CP2</div>
-            <div class="inc-explain-title">Bandas MC</div>
-            <div class="inc-explain-copy">20-40 trades. Compara la operativa contra los rangos de Monte Carlo y puede quedar en OBSERVAR.</div>
+            <div class="inc-explain-kicker" style="color: #ffc107;">CP2</div>
+            <div class="inc-explain-title">Bandas MC · 20-40 trades</div>
+            <div class="inc-explain-copy">
+                Compara 7 métricas clave contra bandas Monte Carlo (peor caso entre Trades Manipulation y Retest Methods).<br><br>
+                Si la métrica cae <strong>por debajo del MC 95%</strong>, se marca como fuera de banda.<br>
+                Si <strong>2+ métricas</strong> están fuera → <span style="color:#ffc107">OBSERVAR</span>.<br>
+                Si <strong>4+ métricas</strong> → <span style="color:#dc3545">ELIMINAR</span>.<br>
+                Todo OK → <span style="color:#17a2b8">CONTINUAR</span>.
+            </div>
         </div>
         <div class="inc-explain-card">
-            <div class="inc-explain-kicker">CP3</div>
-            <div class="inc-explain-title">Score ponderado</div>
-            <div class="inc-explain-copy">40+ trades. El score final mezcla desviación, riesgo, coherencia y muestra la decisión APROBAR / OBSERVAR / ELIMINAR.</div>
+            <div class="inc-explain-kicker" style="color: #28a745;">CP3</div>
+            <div class="inc-explain-title">Score Ponderado · 40+ trades</div>
+            <div class="inc-explain-copy">
+                Scoring completo con 4 categorías ponderadas:<br>
+                <strong>Desviación vs BT/MC</strong> (45%) — WR, PF, Expectancy, Avg Trade, Payout, Ret/DD<br>
+                <strong>Riesgo observado</strong> (30%) — Max DD%, Consec Losses, Stagnation<br>
+                <strong>Coherencia operativa</strong> (15%) — Frecuencia mensual<br>
+                <strong>Ajuste muestra</strong> (10%) — Penaliza si &lt; 80 trades<br><br>
+                ≥ 65 → <span style="color:#28a745">APROBAR</span> · ≥ 45 → <span style="color:#ffc107">OBSERVAR</span> · &lt; 45 → <span style="color:#dc3545">ELIMINAR</span>
+            </div>
         </div>
         <div class="inc-explain-card">
-            <div class="inc-explain-kicker">Verdict</div>
+            <div class="inc-explain-kicker" style="color: #e0a0ff;">Score</div>
+            <div class="inc-explain-title">Puntuación numérica</div>
+            <div class="inc-explain-copy">
+                El score numérico <strong>solo aparece en CP3</strong> (40+ trades). En CP1 y CP2 no se calcula — se muestra <strong>"—"</strong>.<br><br>
+                Es un número de 0 a 100 que resume qué tan bien la incubación se ajusta a las expectativas del backtest y Monte Carlo.<br><br>
+                <strong>Regla anti-limbo:</strong> si la EA obtuvo OBSERVAR en CP2 y vuelve a OBSERVAR en CP3, el veredicto escala a <span style="color:#dc3545">ELIMINAR</span>.
+            </div>
+        </div>
+        <div class="inc-explain-card">
+            <div class="inc-explain-kicker" style="color: #6c757d;">Verdict</div>
             <div class="inc-explain-title">Lectura rápida</div>
-            <div class="inc-explain-copy">Verde = seguir, amarillo = vigilar, rojo = eliminar. Si aparece NO DATA, falta cargar BT/MC/SPP.</div>
+            <div class="inc-explain-copy">
+                El veredicto final de cada checkpoint:<br><br>
+                <span style="color:#28a745">● APROBAR</span> — La EA cumple las expectativas, lista para operativa real.<br>
+                <span style="color:#17a2b8">● CONTINUAR</span> — Va bien, necesita más trades para confirmar.<br>
+                <span style="color:#ffc107">● OBSERVAR</span> — Hay desviaciones, vigilar de cerca.<br>
+                <span style="color:#dc3545">● ELIMINAR</span> — Fuera de expectativas, descartar.<br>
+                <span style="color:#6c757d">● NO DATA</span> — Falta cargar datos de referencia BT/MC.
+            </div>
         </div>
     </div>
 
