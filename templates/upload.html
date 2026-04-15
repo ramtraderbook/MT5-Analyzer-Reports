@@ -59,25 +59,24 @@
     </div>
   </div>
 
-  {% if loaded_files %}
-  <!-- Historial de archivos cargados (append mode) -->
-  <div class="history-strip">
+  {# ── Live history ── #}
+  {% if loaded_files_live %}
+  <div class="history-strip history-strip--live">
+    <div class="history-strip-header">
+      <span class="history-mode-badge history-mode-badge--live">📊 Live Validation</span>
+    </div>
     <div class="history-summary">
       <span class="history-icon">📂</span>
-      <span class="history-stat">
-        <strong>{{ total_trades }}</strong> trades acumulados
-      </span>
+      <span class="history-stat"><strong>{{ total_trades_live }}</strong> trades acumulados</span>
       <span class="history-sep">·</span>
-      <span class="history-stat">
-        <strong>{{ loaded_files|length }}</strong> {% if loaded_files|length == 1 %}archivo{% else %}archivos{% endif %}
-      </span>
+      <span class="history-stat"><strong>{{ loaded_files_live|length }}</strong> {% if loaded_files_live|length == 1 %}archivo{% else %}archivos{% endif %}</span>
       <span class="history-sep">·</span>
-      <span class="history-stat muted">último: <strong>{{ loaded_files[-1].date }}</strong></span>
+      <span class="history-stat muted">último: <strong>{{ loaded_files_live[-1].date }}</strong></span>
     </div>
     <details class="history-detail">
-      <summary>Ver historial</summary>
+      <summary>Ver archivos</summary>
       <ul class="history-list">
-        {% for f in loaded_files %}
+        {% for f in loaded_files_live %}
         <li class="history-item">
           <span class="history-file">{{ f.name }}</span>
           <span class="history-date">{{ f.date }}</span>
@@ -86,18 +85,58 @@
         {% endfor %}
       </ul>
     </details>
-    <form method="POST" action="{{ url_for('reset_history') }}" style="display:inline"
-      onsubmit="return confirm('¿Resetear todo el historial?\n\nSe borrarán todos los trades cargados. El config y los datos de Backtest se mantienen.')">
-      <button type="submit" class="btn-reset-history" title="Borrar historial de trades y empezar desde cero">
-        Resetear historial
-      </button>
-    </form>
-  </div>
-  {% elif last_file %}
-  <div class="last-file-hint">
-    Último archivo: <strong>{{ last_file }}</strong>
+    <div class="history-actions">
+      <form method="POST" action="{{ url_for('reset_history') }}" style="display:inline"
+        onsubmit="return confirm('¿Resetear trades Live?\n\nSe borrarán los trades cargados y el historial de archivos.\nLos mappings de EAs y datos de Backtest/Validator se mantienen.')">
+        <button type="submit" class="btn-reset-history">Resetear trades</button>
+      </form>
+      <form method="POST" action="{{ url_for('reset_all_live') }}" style="display:inline"
+        onsubmit="return confirm('⚠ RESET COMPLETO LIVE\n\nSe eliminarán:\n• Todos los trades\n• Historial de archivos\n• Mappings de EAs\n• Datos de Backtest / Validator\n\nEsto no se puede deshacer. ¿Continuar?')">
+        <button type="submit" class="btn-reset-all">Reset completo</button>
+      </form>
+    </div>
   </div>
   {% endif %}
+
+  {# ── Incubation history ── #}
+  {% if loaded_files_inc %}
+  <div class="history-strip history-strip--inc">
+    <div class="history-strip-header">
+      <span class="history-mode-badge history-mode-badge--inc">🧪 Incubation Screening</span>
+    </div>
+    <div class="history-summary">
+      <span class="history-icon">📂</span>
+      <span class="history-stat"><strong>{{ total_trades_inc }}</strong> trades acumulados</span>
+      <span class="history-sep">·</span>
+      <span class="history-stat"><strong>{{ loaded_files_inc|length }}</strong> {% if loaded_files_inc|length == 1 %}archivo{% else %}archivos{% endif %}</span>
+      <span class="history-sep">·</span>
+      <span class="history-stat muted">último: <strong>{{ loaded_files_inc[-1].date }}</strong></span>
+    </div>
+    <details class="history-detail">
+      <summary>Ver archivos</summary>
+      <ul class="history-list">
+        {% for f in loaded_files_inc %}
+        <li class="history-item">
+          <span class="history-file">{{ f.name }}</span>
+          <span class="history-date">{{ f.date }}</span>
+          <span class="history-added">+{{ f.trades_added }} trades</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    <div class="history-actions">
+      <form method="POST" action="{{ url_for('incubation_reset') }}" style="display:inline"
+        onsubmit="return confirm('¿Resetear trades de Incubación?\n\nSe borrarán los trades y el historial de archivos.\nLos mappings de EAs y datos BT/MC/SPP se mantienen.')">
+        <button type="submit" class="btn-reset-history">Resetear trades</button>
+      </form>
+      <form method="POST" action="{{ url_for('incubation_reset_all') }}" style="display:inline"
+        onsubmit="return confirm('⚠ RESET COMPLETO INCUBACIÓN\n\nSe eliminarán:\n• Todos los trades\n• Historial de archivos\n• Mappings de EAs\n• Datos BT/MC/SPP de referencia\n• Historial de checkpoints\n\nEsto no se puede deshacer. ¿Continuar?')">
+        <button type="submit" class="btn-reset-all">Reset completo</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
 
   <div class="upload-features">
     <div class="feature-item">

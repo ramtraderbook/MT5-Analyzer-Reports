@@ -1741,15 +1741,26 @@ def _incubation_timeline_from_entry(entry):
 @app.route("/")
 def index():
     config = load_config()
+    inc_config = load_incubation_config()
     parsed_data = get_parsed_data()
-    total_trades = len(parsed_data.get("closed_trades", [])) if parsed_data else 0
-    loaded_files = config.get("loaded_files", [])
+    total_trades_live = len(parsed_data.get("closed_trades", [])) if parsed_data else 0
+    inc_parsed = get_incubation_parsed_data()
+    total_trades_inc = len(inc_parsed.get("closed_trades", [])) if inc_parsed else 0
+
+    # Support both old and new key for live
+    loaded_files_live = config.get("loaded_files_live", config.get("loaded_files", []))
+    loaded_files_inc = inc_config.get("loaded_files_incubation", [])
+
+    analysis_mode = session.get("analysis_mode", "live")
     return render_template(
         "upload.html",
         last_file=config.get("last_file"),
         show_sidebar=False,
-        loaded_files=loaded_files,
-        total_trades=total_trades,
+        loaded_files_live=loaded_files_live,
+        loaded_files_inc=loaded_files_inc,
+        total_trades_live=total_trades_live,
+        total_trades_inc=total_trades_inc,
+        analysis_mode=analysis_mode,
     )
 
 
@@ -1793,9 +1804,49 @@ def upload():
         )
 
     if analysis_mode == "incubation":
+        # Merge incubation trades (append mode, same as live)
+        inc_config = load_incubation_config()
+        existing_inc_data = get_incubation_parsed_data()
+        old_inc_cache_key = session.get("incubation_cache_key")
+        added_count_inc = len(new_data["closed_trades"])
+
+        if existing_inc_data:
+            existing_trades_inc = existing_inc_data.get("closed_trades", [])
+            from parser import merge_trades
+            merged_inc = merge_trades(existing_trades_inc, new_data["closed_trades"])
+            added_count_inc = len(merged_inc) - len(existing_trades_inc)
+            if added_count_inc == 0:
+                return redirect(url_for("incubation_dashboard"))
+            merged_ea_names_inc = sorted(set(
+                t["comment"] for t in merged_inc
+                if t.get("comment") and t["comment"] != "Unknown"
+            ))
+            new_data["closed_trades"] = merged_inc
+            new_data["total_closed"] = len(merged_inc)
+            new_data["ea_names"] = merged_ea_names_inc
+
         incubation_cache_key = save_incubation_cache(new_data)
+        if old_inc_cache_key and old_inc_cache_key != incubation_cache_key:
+            old_inc_path = os.path.join(APP_DIR, f"{INCUBATION_CACHE_PREFIX}{old_inc_cache_key}.json")
+            try:
+                os.remove(old_inc_path)
+            except OSError:
+                pass
+
         session["incubation_cache_key"] = incubation_cache_key
         session["filename"] = safe_name
+
+        loaded_files_inc = inc_config.get("loaded_files_incubation", [])
+        loaded_files_inc.append({
+            "name": safe_name,
+            "date": str(date.today()),
+            "trades_added": added_count_inc,
+        })
+        inc_config["loaded_files_incubation"] = loaded_files_inc
+        inc_config["last_file"] = safe_name
+        inc_config["last_updated"] = str(date.today())
+        save_incubation_config(inc_config)
+
         return redirect(url_for("incubation_mapping"))
 
     # Append mode: merge with existing cache if available
@@ -1845,14 +1896,15 @@ def upload():
     session["cache_key"] = cache_key
     session["filename"] = safe_name
 
-    # Update config: track loaded files history (no dedup by name — preserve full audit trail)
-    loaded_files = config.get("loaded_files", [])
+    # Update config: track loaded files history per mode
+    loaded_files = config.get("loaded_files_live", config.get("loaded_files", []))
     loaded_files.append({
         "name": safe_name,
         "date": str(date.today()),
         "trades_added": added_count,
     })
-    config["loaded_files"] = loaded_files
+    config["loaded_files_live"] = loaded_files
+    config.pop("loaded_files", None)  # migrate old key
     config["last_file"] = safe_name
     config["last_updated"] = str(date.today())
     save_config(config)
@@ -1862,7 +1914,7 @@ def upload():
 
 @app.route("/reset", methods=["POST"])
 def reset_history():
-    """Clear all trade history from the current session (reset to clean state)."""
+    """Clear live trade history (trades + file log). Keeps mappings and BT data."""
     cache_key = session.get("cache_key")
     if cache_key:
         cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
@@ -1871,17 +1923,52 @@ def reset_history():
         except OSError:
             pass
 
-    # Invalidate metrics cache BEFORE popping the session key
     invalidate_metrics_cache()
     session.pop("cache_key", None)
     session.pop("filename", None)
 
-    # Clear loaded_files from config
     config = load_config()
-    config["loaded_files"] = []
+    config["loaded_files_live"] = []
+    config.pop("loaded_files", None)
     config["last_file"] = None
     save_config(config)
 
+    return redirect(url_for("index"))
+
+
+@app.route("/reset_all_live", methods=["POST"])
+def reset_all_live():
+    """Full live reset: clears trades, file log, mappings, and validator BT data."""
+    cache_key = session.get("cache_key")
+    if cache_key:
+        cache_path = os.path.join(APP_DIR, f"cache_{cache_key}.json")
+        try:
+            os.remove(cache_path)
+        except OSError:
+            pass
+
+    invalidate_metrics_cache()
+    session.pop("cache_key", None)
+    session.pop("filename", None)
+
+    # Clear all live config and validator store
+    config = load_config()
+    config["loaded_files_live"] = []
+    config.pop("loaded_files", None)
+    config["last_file"] = None
+    config["last_updated"] = None
+    config["mappings"] = {}
+    save_config(config)
+
+    # Clear validator backtest data
+    validator_store_path = os.path.join(APP_DIR, "validator_store.json")
+    try:
+        with open(validator_store_path, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+    except OSError:
+        pass
+
+    flash("Reset completo Live — todos los datos eliminados.", "success")
     return redirect(url_for("index"))
 
 
@@ -1902,17 +1989,25 @@ def _clear_incubation_session_cache():
 
 @app.route("/incubation/reset", methods=["POST"])
 def incubation_reset():
+    """Clear incubation trade cache and file log. Keeps mappings and reference data."""
     guard = _require_incubation_mode()
     if guard:
         return guard
 
     _clear_incubation_session_cache()
-    flash("Incubation cache cleared", "success")
+
+    inc_config = load_incubation_config()
+    inc_config["loaded_files_incubation"] = []
+    inc_config["last_file"] = None
+    save_incubation_config(inc_config)
+
+    flash("Trades de incubación eliminados.", "success")
     return redirect(url_for("index"))
 
 
 @app.route("/incubation/reset_all", methods=["POST"])
 def incubation_reset_all():
+    """Full incubation reset: clears trades, file log, mappings, and all reference/checkpoint data."""
     guard = _require_incubation_mode()
     if guard:
         return guard
@@ -1923,8 +2018,9 @@ def incubation_reset_all():
     config["mappings"] = {}
     config["last_file"] = None
     config["last_updated"] = None
+    config["loaded_files_incubation"] = []
     save_incubation_config(config)
-    flash("All incubation data cleared", "success")
+    flash("Reset completo Incubación — todos los datos eliminados.", "success")
     return redirect(url_for("index"))
 
 
