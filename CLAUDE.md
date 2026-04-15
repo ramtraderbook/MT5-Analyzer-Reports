@@ -142,3 +142,76 @@ python -m pytest                # tests (si existen)
 - Fechas en cache: ISO strings (no datetime objects)
 - Colors EAs: paleta fija de 12 + HSL dinámico si > 12
 - Filter EAs inactivos ANTES de cualquier cálculo en `calculate_all_metrics()`
+
+---
+
+## Modo Incubation Screening
+
+**Propósito:** Evaluar si estrategias en paper trading/incubación se comportan conforme a sus backtests/MC/SPP.
+
+**Archivos nuevos:**
+| Archivo | Rol |
+|---|---|
+| `incubation_validator.py` | Motor de scoring por checkpoints |
+| `incubation_store.json` | Datos de referencia BT/MC/SPP por EA |
+| `incubation_config.json` | Config EAs en incubación (magic, alias, capital, active) |
+| `incubation_cache_{uuid}.json` | Cache de trades de incubación por sesión |
+
+**Rutas de incubación:**
+| Ruta | Descripción |
+|---|---|
+| `/incubation/mapping` | Mapping de EAs en incubación |
+| `/incubation/mapping/save` POST | Guarda incubation_config.json |
+| `/incubation/reference_data` | Lista EAs con estado de datos BT/MC/SPP |
+| `/incubation/reference_data/edit/<ea>` | Formulario datos BT/MC/SPP |
+| `/incubation/reference_data/save/<ea>` POST | Guarda datos de referencia |
+| `/incubation/reference_data/delete/<ea>` POST | Elimina datos de referencia |
+| `/incubation/dashboard` | Dashboard principal incubación |
+| `/incubation/strategy/<ea>` | Detalle por EA con scoring |
+| `/incubation/force_evaluate/<ea>` POST | Re-evaluar EA manualmente |
+| `/incubation/reset_checkpoints/<ea>` POST | Limpiar checkpoints de EA |
+| `/incubation/reset` POST | Limpiar cache incubación |
+| `/incubation/reset_all` POST | Limpiar todo dato de incubación |
+| `/switch_mode/<mode>` | Cambiar entre live e incubation |
+
+**APIs de incubación:**
+| Endpoint | Retorna |
+|---|---|
+| `/api/incubation/ea_equity/<ea>` | equity + drawdown de EA en incubación |
+| `/api/incubation/ea_pnl_data/<ea>` | histogram, streaks, weekday/hour, long/short |
+
+**Sistema de Checkpoints:**
+- PRE_CP1 (< 5 trades): sin evaluación
+- CP1 (5-20 trades): hard gates binarios → CONTINUAR/ELIMINAR
+- CP2 (20-40 trades): comparación probabilística contra bandas MC → CONTINUAR/OBSERVAR/ELIMINAR
+- CP3 (40+ trades): scoring ponderado completo → APROBAR/OBSERVAR/ELIMINAR
+
+**Hard Gates (aplican en todos los checkpoints):**
+- DD > MC95 × 1.5 → ELIMINAR
+- Win Rate binomial p < 0.03 → ELIMINAR
+- Max Consec Losses > MC95 → ELIMINAR
+- Frecuencia fuera de rango → WARNING (no elimina)
+
+**Scoring CP3 (pesos):**
+- DESVIACIÓN vs BT/MC: 45% (WR, PF, Expectancy, Avg Trade, Payout, Ret/DD)
+- RIESGO OBSERVADO: 30% (Max DD%, Max Consec Losses, Stagnation)
+- COHERENCIA OPERATIVA: 15% (Frecuencia mensual)
+- AJUSTE MUESTRA: 10% (penalización si < 80 trades)
+
+**Veredictos CP3:** APROBAR ≥ 65 · OBSERVAR ≥ 45 · ELIMINAR < 45
+
+**Regla anti-limbo:** OBSERVAR en CP2 + OBSERVAR en CP3 → ELIMINAR
+
+**Datos de referencia por EA:**
+- Backtest: 12 métricas obligatorias
+- Monte Carlo Trades Manipulation 95%: 10 métricas obligatorias
+- Monte Carlo Trades Manipulation 50%: 10 métricas opcionales
+- Monte Carlo Retest Methods 95%: 10 métricas obligatorias
+- Monte Carlo Retest Methods 50%: 10 métricas opcionales
+- SPP: 8 métricas opcionales (modifica scoring si spp_confidence > 1.3)
+
+**Lógica dual MC:**
+- Para scoring se usa el peor caso entre Trades Manipulation y Retest Methods
+- Higher-is-better: worst = min(manipulation, retest)
+- Lower-is-better: worst = max(manipulation, retest)
+- La vista detalle muestra ambos MC y cuál dominó cada métrica

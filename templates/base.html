@@ -7,10 +7,33 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ range(10000,99999) | random }}">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
 </head>
 <body>
+
+{% if analysis_mode %}
+<div class="analysis-mode-banner">
+  <a class="analysis-mode-chip analysis-mode-chip-link {% if analysis_mode == 'incubation' %}is-incubation{% else %}is-live{% endif %}"
+     href="{{ url_for('switch_mode', mode=analysis_mode_switch_target) }}"
+     title="Switch to {{ analysis_mode_switch_label }}">
+    {{ analysis_mode_badge }}
+  </a>
+</div>
+{% endif %}
+
+{% with flashed = get_flashed_messages(with_categories=true) %}
+  {% if flashed %}
+  <div class="flash-stack">
+    {% for category, message in flashed %}
+    <div class="alert {% if category == 'warn' %}alert-warn{% elif category == 'success' %}alert-success{% else %}alert-error{% endif %}">
+      <span class="alert-icon">!</span>
+      <span>{{ message }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
 
 {% if show_sidebar %}
 <aside class="sidebar">
@@ -46,11 +69,32 @@
 
   <!-- ── Navigation ── -->
   <nav class="sidebar-nav">
-
+    {% if analysis_mode == 'incubation' %}
+    <a href="{{ url_for('incubation_dashboard') }}"
+       class="nav-link{% if active_page == 'incubation_dashboard' %} active{% endif %}">
+      <span class="sb-nav-icon">&#9638;</span>
+      <span>Incubation Dashboard</span>
+    </a>
+    <a href="{{ url_for('incubation_reference_data') }}"
+       class="nav-link{% if active_page == 'incubation_reference_data' %} active{% endif %}">
+      <span class="sb-nav-icon">&#9873;</span>
+      <span>Reference Data</span>
+    </a>
+    {% else %}
     <a href="{{ url_for('dashboard') }}"
        class="nav-link{% if active_page == 'dashboard' %} active{% endif %}">
       <span class="sb-nav-icon">&#9638;</span>
       <span>Dashboard</span>
+    </a>
+    <a href="{{ url_for('validator') }}"
+       class="nav-link{% if active_page == 'validator' %} active{% endif %}">
+      <span class="sb-nav-icon">&#9878;</span>
+      <span>Validator</span>
+    </a>
+    <a href="{{ url_for('export') }}"
+       class="nav-link{% if active_page == 'export' %} active{% endif %}">
+      <span class="sb-nav-icon">&#8595;</span>
+      <span>Export</span>
     </a>
 
     {% if sidebar_eas %}
@@ -69,26 +113,46 @@
     </a>
     {% endfor %}
     {% endif %}
+    {% endif %}
 
   </nav>
 
   <!-- ── Footer ── -->
   <div class="sb-footer">
     <div class="sb-footer-sep"></div>
-    <a href="{{ url_for('export') }}"
-       class="nav-link{% if active_page == 'export' %} active{% endif %}">
-      <span class="sb-nav-icon">&#8595;</span>
-      <span>Exportar</span>
-    </a>
-    <a href="{{ url_for('validator') }}"
-       class="nav-link{% if active_page == 'validator' %} active{% endif %}">
-      <span class="sb-nav-icon">&#9878;</span>
-      <span>Validator</span>
-    </a>
     <a href="{{ url_for('index') }}" class="nav-link sb-upload-link">
       <span class="sb-nav-icon">&#8593;</span>
-      <span>Nuevo archivo</span>
+      <span>Upload</span>
     </a>
+    <a href="{% if analysis_mode == 'incubation' %}{{ url_for('incubation_mapping') }}{% else %}{{ url_for('mapping') }}{% endif %}"
+       class="nav-link sb-upload-link{% if active_page == 'incubation_mapping' or active_page == 'mapping' %} active{% endif %}">
+      <span class="sb-nav-icon">&#9874;</span>
+      <span>Mapping</span>
+    </a>
+    {% if analysis_mode == 'incubation' %}
+    <a href="{{ url_for('switch_mode', mode='live') }}" class="nav-link sb-upload-link">
+      <span class="sb-nav-icon">&#8645;</span>
+      <span>Switch to Live</span>
+    </a>
+    <form method="POST" action="{{ url_for('incubation_reset') }}" onsubmit="return confirm('Reset incubation cache only?')">
+      <button type="submit" class="nav-link sb-upload-link sb-link-button">
+        <span class="sb-nav-icon">&#8635;</span>
+        <span>Reset Incubation</span>
+      </button>
+    </form>
+    <form method="POST" action="{{ url_for('incubation_reset_all') }}" onsubmit="return confirm('This will wipe all incubation data. Continue?') && confirm('Last chance: delete incubation_store.json too?')">
+      <button type="submit" class="nav-link sb-upload-link sb-link-button sb-link-danger">
+        <span class="sb-nav-icon">&#9888;</span>
+        <span>Reset All</span>
+      </button>
+    </form>
+    {% endif %}
+    {% if analysis_mode != 'incubation' %}
+    <a href="{{ url_for('switch_mode', mode='incubation') }}" class="nav-link sb-upload-link">
+      <span class="sb-nav-icon">&#8645;</span>
+      <span>Switch to Incubation</span>
+    </a>
+    {% endif %}
     <!-- ── Creator credit ── -->
     <div class="sb-creator">
       <span class="sb-creator-label">by</span>
@@ -114,7 +178,7 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="{{ url_for('static', filename='charts.js') }}"></script>
+<script src="{{ url_for('static', filename='charts.js') }}?v={{ range(10000,99999) | random }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

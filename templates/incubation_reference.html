@@ -1,0 +1,51 @@
+{% extends "base.html" %} {% block content %}
+
+<header class="dash-header">
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <div class="dash-header-eyebrow">Incubation</div>
+        <h1 class="dash-header-title">Reference Data</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip mono">{{ total_active }} EAs activas</span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ loaded_count }} con datos cargados</span>
+        </div>
+    </div>
+</header>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Backtest, Monte Carlo dual y SPP</h2>
+        {% if loaded_count %}
+        <a href="{{ url_for('incubation_dashboard') }}" class="btn-primary">Ir al dashboard</a>
+        {% endif %}
+        <a href="{{ url_for('incubation_mapping') }}" class="btn-secondary">Volver al mapping</a>
+    </div>
+
+    {% if rows %}
+    <div class="ref-list">
+        {% for row in rows %}
+        <a href="{{ row.url }}" class="ref-card">
+            <div class="ref-card-main">
+                <div class="ref-card-title">{{ row.label }}</div>
+                <div class="ref-card-sub">
+                    {{ row.name }}{% if row.instrument %} · {{ row.instrument }}{% endif %}{% if row.timeframe %} · {{ row.timeframe }}{% endif %}
+                </div>
+            </div>
+            <div class="ref-list-actions">
+                <span class="ref-badge {% if row.has_data %}ok{% else %}warn{% endif %}">{{ row.status }}</span>
+                <span class="btn-secondary">Editar</span>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="placeholder-card">
+        <div class="placeholder-kicker">Incubation</div>
+        <h2 class="placeholder-title" style="font-size: 1.4rem">No hay EAs activas</h2>
+        <p class="placeholder-copy">Activa estrategias en incubation_config.json para ingresar datos de referencia.</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}

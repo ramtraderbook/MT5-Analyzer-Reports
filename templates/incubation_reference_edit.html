@@ -1,0 +1,172 @@
+{% extends "base.html" %} {% block content %}
+
+<header class="dash-header">
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <div class="dash-header-eyebrow">Incubation</div>
+        <h1 class="dash-header-title">{{ ea_name }}</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip mono">{{ mapping.alias or ea_name }}</span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ mapping.instrument or "Sin instrumento" }}</span>
+            {% if entry.timeframe %}
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ entry.timeframe }}</span>
+            {% endif %}
+        </div>
+    </div>
+</header>
+
+{% if warnings %}
+{% for warning in warnings %}
+<div class="alert alert-warn">
+    <span class="alert-icon">!</span>
+    <span>{{ warning }}</span>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if errors %}
+<div class="alert alert-error">
+    <span class="alert-icon">!</span>
+    <span>Revisa los campos marcados en rojo antes de guardar.</span>
+</div>
+{% endif %}
+
+<form action="{{ url_for('incubation_reference_save', ea_name=ea_name) }}" method="POST">
+    <div class="ref-accordion">
+        {% for section in sections %}
+        <details {% if loop.first %}open{% endif %}>
+            <summary>
+                <div class="ref-summary-main">
+                    <span>{{ section.title }}</span>
+                    {% if section.tag_label %}
+                    <span class="ref-badge {{ section.tag_class }}">{{ section.tag_label }}</span>
+                    {% endif %}
+                </div>
+                <div class="ref-summary-side">
+                    <span class="ref-badge {% if section.has_data %}ok{% else %}warn{% endif %}">
+                        {{ section.status_icon }} {{ section.status_label }}
+                    </span>
+                    {% if section.required %}
+                    <span class="ref-badge ok">Obligatorio</span>
+                    {% else %}
+                    <span class="ref-badge warn">Opcional</span>
+                    {% endif %}
+                </div>
+            </summary>
+            <div class="ref-section-body">
+                <div class="ref-section-note">{{ section.info }}</div>
+                <div class="ref-fields">
+                    {% for field in section.fields %}
+                    {% set field_id = section.key ~ '_' ~ field.key %}
+                    {% set field_value = form_values[section.key][field.key] %}
+                    <label class="ref-field" for="{{ field_id }}">
+                        <span class="ref-label">{{ field.label }}</span>
+                        {% if field.type == 'select' %}
+                        <select id="{{ field_id }}" name="{{ field_id }}" class="ref-select">
+                            <option value="">-- Seleccionar --</option>
+                            {% for opt in field.options %}
+                            <option value="{{ opt }}" {% if field_value == opt %}selected{% endif %}>{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                        {% else %}
+                        <input
+                            id="{{ field_id }}"
+                            name="{{ field_id }}"
+                            type="text"
+                            class="ref-input"
+                            placeholder="{{ field.placeholder }}"
+                            value="{{ field_value }}"
+                        />
+                        {% endif %}
+                        {% if field.ratio_source %}
+                        {% set ratio_key = field.key %}
+                        <div
+                            class="ref-ratio"
+                            data-ratio-field="{{ ratio_key }}"
+                            data-ratio-source="{{ field.ratio_source.replace('.', '_') }}"
+                            data-ratio-target="{{ field_id }}"
+                        >
+                            {% if spp_ratios[ratio_key] is not none %}
+                            Orig/Median: {{ "%.2f"|format(spp_ratios[ratio_key]) }}%
+                            {% else %}
+                            Orig/Median: N/D
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        {% if errors.get(section.key ~ '.' ~ field.key) %}
+                        <div class="ref-error">{{ errors.get(section.key ~ '.' ~ field.key) }}</div>
+                        {% endif %}
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+
+    <div class="ref-actions">
+        <button type="submit" class="btn-primary">Save</button>
+        <a href="{{ url_for('incubation_reference_data') }}" class="btn-secondary">Cancel</a>
+        <button
+            type="submit"
+            class="btn-secondary"
+            form="delete-reference-form"
+            formmethod="POST"
+            formaction="{{ url_for('incubation_reference_delete', ea_name=ea_name) }}"
+            onclick="return confirm('¿Eliminar los datos de referencia de {{ ea_name }}?')"
+        >
+            Delete
+        </button>
+    </div>
+</form>
+
+<form id="delete-reference-form" style="display:none"></form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function parseLocaleNumber(value) {
+    if (value === null || value === undefined) return null;
+    var text = String(value).trim();
+    if (!text) return null;
+    text = text.replace(/\s+/g, "");
+    var comma = text.lastIndexOf(",");
+    var dot = text.lastIndexOf(".");
+    if (comma !== -1 && dot !== -1) {
+        if (comma > dot) {
+            text = text.replace(/\./g, "").replace(",", ".");
+        } else {
+            text = text.replace(/,/g, "");
+        }
+    } else {
+        text = text.replace(",", ".");
+    }
+    var num = parseFloat(text);
+    return Number.isFinite(num) ? num : null;
+}
+
+function updateSppRatios() {
+    document.querySelectorAll("[data-ratio-field]").forEach(function (el) {
+        var source = document.getElementById(el.dataset.ratioSource);
+        var target = document.getElementById(el.dataset.ratioTarget);
+        var sourceVal = parseLocaleNumber(source ? source.value : null);
+        var targetVal = parseLocaleNumber(target ? target.value : null);
+        if (sourceVal === null || targetVal === null || targetVal === 0) {
+            el.textContent = "Orig/Median: N/D";
+            return;
+        }
+        el.textContent = "Orig/Median: " + ((sourceVal / targetVal) * 100).toFixed(2) + "%";
+    });
+}
+
+document.querySelectorAll(".ref-input, .ref-select").forEach(function (el) {
+    el.addEventListener("input", updateSppRatios);
+    el.addEventListener("change", updateSppRatios);
+});
+
+updateSppRatios();
+</script>
+{% endblock %}

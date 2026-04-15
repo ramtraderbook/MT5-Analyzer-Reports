@@ -1,0 +1,463 @@
+{% extends "base.html" %}
+{% set title = ea_name %}
+{% block content %}
+
+<header class="dash-header">
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <a href="{{ url_for('incubation_dashboard') }}" class="strat-back-link">
+            <span class="strat-back-arrow">&#8592;</span> Incubation Dashboard
+        </a>
+        <h1 class="dash-header-title strat-title">{{ chart_label }}</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip strat-instrument-chip">
+                <span class="strat-instrument-icon">&#x25C6;</span>
+                {{ instrument }}
+            </span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ timeframe }}</span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ m.total_trades }} trades</span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ current_checkpoint }}</span>
+        </div>
+    </div>
+</header>
+
+{% if actions_enabled %}
+<div class="section inc-action-bar">
+    <div class="inc-action-card">
+        <div class="inc-action-label">Estado actual</div>
+        <div class="inc-action-head">
+            <div class="inc-action-checkpoint">{{ current_verdict_card.checkpoint }}</div>
+            <div class="inc-action-score">{% if current_verdict_card.score is not none %}{{ "%.2f"|format(current_verdict_card.score) }}{% else %}—{% endif %}</div>
+            <span class="cmp-chip {{ current_verdict_card.verdict_class }}">{{ current_verdict_card.verdict }}</span>
+        </div>
+        <div class="inc-action-summary">{{ current_verdict_card.summary }}</div>
+        <div class="inc-action-reason"><strong>Razón:</strong> {{ current_verdict_card.reason }}</div>
+        {% if current_verdict_card.failing_metrics %}
+        <div class="inc-action-list">
+            <span class="inc-action-muted">Métricas fallando:</span>
+            <span>{{ current_verdict_card.failing_metrics | join(', ') }}</span>
+        </div>
+        {% endif %}
+        {% if current_verdict_card.escalation_from_cp2 %}
+        <div class="inc-action-note">Escalado desde CP2 OBSERVAR a ELIMINAR.</div>
+        {% endif %}
+        <div class="inc-gate-list">
+            {% for gate in current_verdict_card.hard_gates %}
+            <span class="inc-gate-pill {% if gate.status == 'WARNING' %}gate-warn{% elif gate.passed %}gate-pass{% else %}gate-fail{% endif %}">
+                {{ gate.key }} · {{ gate.status }}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="inc-action-buttons">
+        <form method="POST" action="{{ force_eval_url }}">
+            <button type="submit" class="btn-secondary">Force Evaluate</button>
+        </form>
+        <button type="button" class="btn-secondary" id="reset-checkpoints-btn">Reset Checkpoints</button>
+    </div>
+</div>
+{% endif %}
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Métricas actuales de incubación</h2>
+        <span class="section-pill section-pill--accent">Incubación vs Referencia</span>
+    </div>
+    <div class="inc-section-hint">
+        La operativa real se compara contra BT, MC Manipulation, MC Retest y SPP para ver si la estrategia sigue dentro de lo esperado.
+    </div>
+
+    <div class="kpi-grid">
+        <div class="kpi-card kpi-card--neutral" style="--i: 0">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Trades</div>
+            <div class="kpi-value">{{ m.total_trades }}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--{{ 'profit' if m.win_rate >= 50 else 'loss' }}" style="--i: 1">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Win Rate</div>
+            <div class="kpi-value {% if m.win_rate >= 50 %}profit{% else %}loss{% endif %}">{{ "%.2f"|format(m.win_rate) }}%</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 else 'loss' }}" style="--i: 2">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Profit Factor</div>
+            <div class="kpi-value">{% if m.profit_factor != '∞' %}{{ "%.2f"|format(m.profit_factor|float) }}{% else %}∞{% endif %}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--{{ 'profit' if m.expectancy >= 0 else 'loss' }}" style="--i: 3">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Expectancy</div>
+            <div class="kpi-value {% if m.expectancy >= 0 %}profit{% else %}loss{% endif %}">{% if m.expectancy >= 0 %}+{% endif %}${{ "%.2f"|format(m.expectancy) }}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--loss" style="--i: 4">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Max DD%</div>
+            <div class="kpi-value loss">{{ "%.2f"|format(m.max_dd_pct) }}%</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--loss" style="--i: 5">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Max Consec Losses</div>
+            <div class="kpi-value">{{ m.max_consec_losses }}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--neutral" style="--i: 6">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Payout Ratio</div>
+            <div class="kpi-value">{% if m.payout_ratio != '∞' %}{{ "%.2f"|format(m.payout_ratio|float) }}{% else %}∞{% endif %}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= 2.0 else 'loss' }}" style="--i: 7">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">SQN</div>
+            <div class="kpi-value">{% if m.sqn is not none %}{{ "%.2f"|format(m.sqn) }}{% else %}N/A{% endif %}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--neutral" style="--i: 8">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Stagnation</div>
+            <div class="kpi-value">{{ m.stagnation_days }}d</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+        <div class="kpi-card kpi-card--{{ 'profit' if m.ret_dd is not none and m.ret_dd >= 0 else 'loss' }}" style="--i: 9">
+            <div class="kpi-card-top-bar"></div>
+            <div class="kpi-label">Ret / DD</div>
+            <div class="kpi-value {% if m.ret_dd is not none and m.ret_dd >= 0 %}profit{% elif m.ret_dd is not none %}loss{% endif %}">{% if m.ret_dd is not none %}{{ "%.2f"|format(m.ret_dd) }}{% else %}N/A{% endif %}</div>
+            <div class="kpi-card-shimmer"></div>
+        </div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Curvas y Monthly Performance</h2>
+        <span class="section-pill">Equity · Drawdown · Mes</span>
+    </div>
+    <div class="inc-section-hint">
+        Las curvas usan el mismo selector temporal. Abre la ventana que quieras revisar para ver solo el tramo reciente o todo el historial.
+    </div>
+
+    <div class="inc-insights-grid">
+        <div class="chart-section dash-reveal" style="--ri: 10">
+            <div class="chart-header-row">
+                <div class="chart-title-group">
+                    <span class="chart-icon">&#x1F4C8;</span>
+                    <h2 class="chart-title">Curva de Equity</h2>
+                </div>
+                <div id="inc-equity-time-selector"></div>
+            </div>
+            <div id="inc-equity-chart" class="chart-container" style="height: 450px"></div>
+        </div>
+
+        <div class="chart-section dash-reveal" style="--ri: 11">
+            <div class="chart-header-row">
+                <div class="chart-title-group">
+                    <span class="chart-icon">&#x1F4C9;</span>
+                    <h2 class="chart-title">Drawdown</h2>
+                </div>
+                <div id="inc-dd-time-selector"></div>
+            </div>
+            <div id="inc-dd-chart" class="chart-container" style="height: 280px"></div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <h2 class="section-title">Monthly Performance</h2>
+            <span class="section-pill section-pill--accent">{{ instrument }} ($)</span>
+        </div>
+        <div class="table-wrapper">
+            <table class="data-table monthly-perf-table">
+                <thead>
+                    <tr>
+                        <th class="mp-year">Year</th>
+                        <th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th><th>May</th><th>Jun</th>
+                        <th>Jul</th><th>Aug</th><th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th>
+                        <th class="mp-ytd">YTD</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in monthly_perf %}
+                    <tr>
+                        <td class="mono mp-year"><strong>{{ row.year }}</strong></td>
+                        {% for val in row.months %}
+                        <td class="mono {% if val is none %}mp-empty{% elif val < 0 %}cell-loss{% endif %}">
+                            {% if val is none %}—{% elif val < 0 %}-{{ "%.2f"|format(val|abs) }}{% else %}{{ "%.2f"|format(val) }}{% endif %}
+                        </td>
+                        {% endfor %}
+                        <td class="mono mp-ytd {% if row.ytd < 0 %}cell-loss{% else %}cell-profit{% endif %}">
+                            <strong>{% if row.ytd >= 0 %}{{ "%.2f"|format(row.ytd) }}{% else %}-{{ "%.2f"|format(row.ytd|abs) }}{% endif %}</strong>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Comparativa Incubación vs Referencia</h2>
+        {% if not has_reference %}
+        <span class="section-pill">Reference data pending</span>
+        {% endif %}
+    </div>
+    <div class="inc-section-hint">
+        Click en cualquier fila para desplegar el detalle de MC Manipulation, MC Retest y el dominante que determinó el peor caso.
+    </div>
+
+    <div class="table-wrapper">
+        <table class="data-table inc-compare-table inc-compare-table--compact">
+            <thead>
+                <tr>
+                    <th>Métrica</th>
+                    <th>Incubación</th>
+                    <th>BT Original</th>
+                    <th>Worst MC 95%</th>
+                    <th>Worst MC 50%</th>
+                    <th>SPP Median</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in comparison_rows %}
+                <tr class="inc-compare-main" data-toggle-target="inc-detail-{{ loop.index }}">
+                    <td class="inc-name-cell">{{ row.metric }}</td>
+                    <td class="mono">{{ row.live }}</td>
+                    <td class="mono">{{ row.bt }}</td>
+                    <td class="mono">{{ row.worst95 }}</td>
+                    <td class="mono">{{ row.worst50 }}</td>
+                    <td class="mono">{{ row.spp }}</td>
+                    <td><span class="cmp-chip {{ row.state.class }}" title="Band: {{ row.state.score_band or 'n/a' }}">{{ row.state.label }}</span></td>
+                </tr>
+                <tr id="inc-detail-{{ loop.index }}" class="inc-compare-detail is-hidden">
+                    <td colspan="7">
+                        <div class="inc-detail-panel">
+                            <div class="inc-detail-item">
+                                <span class="inc-detail-label">MC Manipulation 95%</span>
+                                <span class="mono">{{ row.details.mc_manip_95 }}</span>
+                            </div>
+                            <div class="inc-detail-item">
+                                <span class="inc-detail-label">MC Retest 95%</span>
+                                <span class="mono">{{ row.details.mc_retest_95 }}</span>
+                            </div>
+                            <div class="inc-detail-item">
+                                <span class="inc-detail-label">MC Manipulation 50%</span>
+                                <span class="mono">{{ row.details.mc_manip_50 }}</span>
+                            </div>
+                            <div class="inc-detail-item">
+                                <span class="inc-detail-label">MC Retest 50%</span>
+                                <span class="mono">{{ row.details.mc_retest_50 }}</span>
+                            </div>
+                            <div class="inc-detail-item">
+                                <span class="inc-detail-label">Dominant 95%</span>
+                                <span class="cmp-chip {% if row.details.dominant_95 == 'retest' %}verdict-observe{% else %}verdict-continue{% endif %}">
+                                    {{ row.details.dominant_95|upper }}
+                                </span>
+                            </div>
+                            <div class="inc-detail-item">
+                                <span class="inc-detail-label">Dominant 50%</span>
+                                <span class="cmp-chip {% if row.details.dominant_50 == 'retest' %}verdict-observe{% else %}verdict-continue{% endif %}">
+                                    {{ row.details.dominant_50|upper }}
+                                </span>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Historial de Checkpoints</h2>
+        <span class="section-pill">Timeline</span>
+    </div>
+    <div class="inc-section-hint">
+        PRE_CP1 no evalúa. CP1 usa hard gates, CP2 compara bandas MC y CP3 aplica el score completo con veredicto final.
+    </div>
+
+    <div class="inc-timeline">
+        {% for cp in checkpoint_timeline %}
+        <div class="inc-timeline-card {% if cp.verdict == 'Pending' or cp.verdict == 'PENDING' %}is-pending{% endif %}">
+            <div class="inc-timeline-head">
+                <span class="inc-timeline-label">{{ cp.label }}</span>
+                <span class="cmp-chip {{ cp.verdict_class }}">{{ cp.verdict }}</span>
+            </div>
+            <div class="inc-timeline-meta">
+                <span>{{ cp.date }}</span>
+                <span class="dash-meta-div">·</span>
+                <span>{{ cp.trades }} trades</span>
+                <span class="dash-meta-div">·</span>
+                <span>Score: {{ cp.score }}</span>
+            </div>
+            <div class="inc-timeline-details">{{ cp.details }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Distribución de trades</h2>
+        <span class="section-pill section-pill--accent">P&L / Time</span>
+    </div>
+    <div class="inc-section-hint">
+        P&L muestra la distribución por trade. La matriz Día/Hora revela cuándo se concentra la ventaja. Long/Short y Duración vs P&L ayudan a detectar sesgos operativos.
+    </div>
+
+    <div class="chart-section dash-reveal" style="--ri: 0">
+        <div id="inc-pnl-histogram" class="chart-container" style="height: 300px"></div>
+    </div>
+
+    <div class="charts-row">
+        <div class="chart-section chart-half dash-reveal" style="--ri: 1">
+            <div id="inc-weekday-hour-heatmap" class="chart-container" style="height: 320px"></div>
+        </div>
+        <div class="chart-section chart-half dash-reveal" style="--ri: 2">
+            <div id="inc-longshort-chart" class="chart-container" style="height: 320px"></div>
+        </div>
+    </div>
+
+    <div class="chart-section dash-reveal" style="--ri: 3">
+        <div id="inc-duration-scatter-chart" class="chart-container" style="height: 320px"></div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Historial de Trades</h2>
+        <span class="section-pill">{{ trades|length }} trades</span>
+    </div>
+    <div class="inc-section-hint">
+        Cada fila muestra el trade cerrado de la estrategia en incubación. Si esta tabla queda vacía, revisa el mapping o que el EA tenga trades cerrados en el archivo cargado.
+    </div>
+
+    <div class="table-wrapper">
+        <table class="data-table" id="inc-trades-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th data-sort="open">Apertura</th>
+                    <th data-sort="close">Cierre</th>
+                    <th>Tipo</th>
+                    <th class="th-right">Vol</th>
+                    <th class="th-right">Precio In</th>
+                    <th class="th-right">Precio Out</th>
+                    <th class="th-right">SL</th>
+                    <th class="th-right">TP</th>
+                    <th class="th-right">Comisión</th>
+                    <th class="th-right">Swap</th>
+                    <th class="th-right">P&L Neto</th>
+                    <th class="th-right">Duración</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in trades %}
+                <tr class="{% if t.is_win %}row-win{% else %}row-loss{% endif %}">
+                    <td class="mono">{{ t.num }}</td>
+                    <td class="mono">{{ t.open_time }}</td>
+                    <td class="mono">{{ t.close_time }}</td>
+                    <td class="{% if t.direction == 'BUY' %}cell-profit{% else %}cell-loss{% endif %}">{{ t.direction }}</td>
+                    <td class="mono th-right">{{ "%.2f"|format(t.volume) }}</td>
+                    <td class="mono th-right">{{ t.open_price }}</td>
+                    <td class="mono th-right">{{ t.close_price }}</td>
+                    <td class="mono th-right">{% if t.sl %}{{ t.sl }}{% else %}—{% endif %}</td>
+                    <td class="mono th-right">{% if t.tp %}{{ t.tp }}{% else %}—{% endif %}</td>
+                    <td class="mono th-right cell-loss">{{ "%.2f"|format(t.commission) }}</td>
+                    <td class="mono th-right {% if t.swap >= 0 %}cell-profit{% else %}cell-loss{% endif %}">{{ "%.2f"|format(t.swap) }}</td>
+                    <td class="mono th-right {% if t.net_pnl >= 0 %}cell-profit{% else %}cell-loss{% endif %}">{% if t.net_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(t.net_pnl) }}</td>
+                    <td class="mono th-right">{{ "%.1f"|format(t.duration_hours) }}h</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const INC_EA_NAME = {{ ea_name | tojson }};
+  const RESET_URL = {{ reset_url | tojson }};
+  const INC_EQUITY_SERIES = {{ inc_equity_series | tojson }};
+  const INC_DISTRIBUTION_DATA = {{ inc_distribution | tojson }};
+
+  document.addEventListener('DOMContentLoaded', function () {
+    /* Scroll-reveal via IntersectionObserver */
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          e.target.classList.add('dash-visible');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.05 });
+    document.querySelectorAll('.dash-reveal').forEach(function (el) {
+      io.observe(el);
+    });
+
+    const equityRendered = renderEAEquityFromData('inc-equity-chart', 'inc-dd-chart', INC_EQUITY_SERIES);
+    if (!equityRendered) {
+      renderIncubationEAEquity('inc-equity-chart', 'inc-dd-chart', INC_EA_NAME);
+    }
+
+    renderTimeRangeSelector('inc-equity-time-selector', function(days) {
+      renderIncubationEAEquity('inc-equity-chart', 'inc-dd-chart', INC_EA_NAME, days);
+    });
+    renderTimeRangeSelector('inc-dd-time-selector', function(days) {
+      renderIncubationEAEquity('inc-equity-chart', 'inc-dd-chart', INC_EA_NAME, days);
+    });
+
+    const distributionRendered = renderIncubationDistributionFromData(INC_DISTRIBUTION_DATA);
+    if (!distributionRendered) {
+      loadIncubationEAPnLData(INC_EA_NAME);
+    }
+    makeSortable('inc-trades-table');
+
+    document.querySelectorAll(".inc-compare-main").forEach(function (row) {
+      row.addEventListener("click", function () {
+        var targetId = row.dataset.toggleTarget;
+        var detail = document.getElementById(targetId);
+        if (!detail) return;
+        detail.classList.toggle("is-hidden");
+      });
+    });
+
+    const resetBtn = document.getElementById('reset-checkpoints-btn');
+    if (resetBtn) {
+      const modal = document.createElement('div');
+      modal.className = 'inc-modal hidden';
+      modal.innerHTML = `
+        <div class="inc-modal-backdrop"></div>
+        <div class="inc-modal-card">
+          <h3>Reset checkpoints?</h3>
+          <p>This will clear CP1/CP2/CP3 results for this EA.</p>
+          <div class="inc-modal-actions">
+            <button type="button" class="btn-secondary" id="inc-modal-cancel">Cancel</button>
+            <form method="POST" action="${RESET_URL}">
+              <button type="submit" class="btn-danger">Reset</button>
+            </form>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      const openModal = function () { modal.classList.remove('hidden'); };
+      const closeModal = function () { modal.classList.add('hidden'); };
+      resetBtn.addEventListener('click', openModal);
+      modal.querySelector('.inc-modal-backdrop').addEventListener('click', closeModal);
+      modal.querySelector('#inc-modal-cancel').addEventListener('click', closeModal);
+    }
+  });
+</script>
+{% endblock %}

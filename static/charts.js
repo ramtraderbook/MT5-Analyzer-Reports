@@ -205,12 +205,10 @@ async function renderContribution(divId) {
 
 // ─── Strategy Detail Charts ─────────────────────────────────────────────────
 
-async function renderEAEquity(equityDivId, ddDivId, eaName, days = null) {
+async function _renderEAEquityFromApi(equityDivId, ddDivId, eaName, days, apiBase) {
   try {
     const encoded = encodeURIComponent(eaName);
-    const url = days
-      ? "/api/ea_equity/" + encoded + "?days=" + days
-      : "/api/ea_equity/" + encoded;
+    const url = days ? apiBase + encoded + "?days=" + days : apiBase + encoded;
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
@@ -287,10 +285,93 @@ async function renderEAEquity(equityDivId, ddDivId, eaName, days = null) {
   }
 }
 
-async function loadEAPnLData(eaName) {
+function renderEAEquityFromData(equityDivId, ddDivId, data) {
+  if (!data || !data.equity || data.equity.length === 0) return false;
+
+  const equityX = data.equity.map((p) => p.date);
+  const equityY = data.equity.map((p) => p.equity);
+  const ddX = data.drawdown.map((p) => p.date);
+  const ddY = data.drawdown.map((p) => p.dd_pct);
+
+  const equityTraces = [
+    {
+      x: equityX,
+      y: equityY,
+      name: data.label || "Incubation",
+      type: "scatter",
+      mode: "lines",
+      line: { color: data.color || "#4FC3F7", width: 2 },
+      fill: "tozeroy",
+      fillcolor: "rgba(79,195,247,0.06)",
+      hovertemplate: "%{x}<br>$%{y:,.2f}<extra></extra>",
+    },
+  ];
+
+  const equityLayout = mergeLayout({
+    height: document.getElementById(equityDivId)?.clientHeight || 450,
+    yaxis: {
+      tickprefix: "$",
+      tickformat: "+,.2f",
+      zeroline: true,
+      zerolinecolor: "#8b949e",
+      zerolinewidth: 1,
+      title: { text: "P&L Neto (USD)", font: { color: "#8b949e", size: 11 } },
+    },
+    xaxis: { type: "date" },
+    showlegend: false,
+  });
+
+  Plotly.newPlot(equityDivId, equityTraces, equityLayout, PLOTLY_CONFIG);
+
+  const ddTraces = [
+    {
+      x: ddX,
+      y: ddY,
+      name: "Drawdown",
+      type: "scatter",
+      mode: "lines",
+      line: { color: "#FF5252", width: 1.5 },
+      fill: "tozeroy",
+      fillcolor: "rgba(255,82,82,0.12)",
+      hovertemplate: "%{x}<br>%{y:.2f}%<extra></extra>",
+    },
+  ];
+
+  const ddLayout = mergeLayout({
+    height: document.getElementById(ddDivId)?.clientHeight || 280,
+    yaxis: {
+      ticksuffix: "%",
+      zeroline: true,
+      zerolinecolor: "#8b949e",
+      zerolinewidth: 1,
+      title: { text: "Drawdown (%)", font: { color: "#8b949e", size: 11 } },
+    },
+    xaxis: { type: "date" },
+    showlegend: false,
+  });
+
+  Plotly.newPlot(ddDivId, ddTraces, ddLayout, PLOTLY_CONFIG);
+  return true;
+}
+
+async function renderEAEquity(equityDivId, ddDivId, eaName, days = null) {
+  return _renderEAEquityFromApi(equityDivId, ddDivId, eaName, days, "/api/ea_equity/");
+}
+
+async function renderIncubationEAEquity(equityDivId, ddDivId, eaName, days = null) {
+  return _renderEAEquityFromApi(
+    equityDivId,
+    ddDivId,
+    eaName,
+    days,
+    "/api/incubation/ea_equity/",
+  );
+}
+
+async function _loadEAPnLDataFromApi(eaName, apiBase) {
   try {
     const encoded = encodeURIComponent(eaName);
-    const res = await fetch("/api/ea_pnl_data/" + encoded);
+    const res = await fetch(apiBase + encoded);
     if (!res.ok) return;
     const data = await res.json();
 
@@ -303,6 +384,35 @@ async function loadEAPnLData(eaName) {
   } catch (e) {
     console.error("Error loading EA P&L data:", e);
   }
+}
+
+async function loadEAPnLData(eaName) {
+  return _loadEAPnLDataFromApi(eaName, "/api/ea_pnl_data/");
+}
+
+async function loadIncubationEAPnLData(eaName) {
+  try {
+    const encoded = encodeURIComponent(eaName);
+    const res = await fetch("/api/incubation/ea_pnl_data/" + encoded);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    renderPnLHistogram("inc-pnl-histogram", data.pnl_list);
+    renderWeekdayHourHeatmap("inc-weekday-hour-heatmap", data.weekday_hour_heatmap);
+    renderLongShortPie("inc-longshort-chart", data.long_short);
+    renderDurationScatter("inc-duration-scatter-chart", data.duration_scatter);
+  } catch (e) {
+    console.error("Error loading incubation P&L data:", e);
+  }
+}
+
+function renderIncubationDistributionFromData(data) {
+  if (!data) return false;
+  renderPnLHistogram("inc-pnl-histogram", data.pnl_list);
+  renderWeekdayHourHeatmap("inc-weekday-hour-heatmap", data.weekday_hour_heatmap);
+  renderLongShortPie("inc-longshort-chart", data.long_short);
+  renderDurationScatter("inc-duration-scatter-chart", data.duration_scatter);
+  return true;
 }
 
 function renderPnLHistogram(divId, pnlList) {
@@ -591,6 +701,50 @@ function renderDurationScatter(divId, scatterData) {
     margin: { t: 40, r: 16, b: 48, l: 72 },
     hovermode: "closest",
     legend: { x: 0.01, y: 0.99, xanchor: "left", yanchor: "top" },
+  });
+
+  Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+function renderWeekdayHourHeatmap(divId, heatmap) {
+  if (!heatmap || !heatmap.z || heatmap.z.length === 0) return;
+
+  const traces = [
+    {
+      z: heatmap.z,
+      x: heatmap.x,
+      y: heatmap.y,
+      type: "heatmap",
+      colorscale: [
+        [0, "#FF5252"],
+        [0.5, "#2d333b"],
+        [1, "#4CAF50"],
+      ],
+      zmid: 0,
+      hovertemplate: "<b>%{y}</b> · %{x}:00<br>$%{z:+.2f}<extra></extra>",
+      colorbar: {
+        tickprefix: "$",
+        title: "P&L",
+      },
+    },
+  ];
+
+  const layout = mergeLayout({
+    title: {
+      text: "P&L por Día / Hora",
+      font: { color: "#c9d1d9", size: 13 },
+    },
+    height: document.getElementById(divId)?.clientHeight || 320,
+    xaxis: {
+      type: "category",
+      title: { text: "Hora de cierre", font: { color: "#8b949e", size: 11 } },
+    },
+    yaxis: {
+      type: "category",
+      autorange: "reversed",
+      title: { text: "Día", font: { color: "#8b949e", size: 11 } },
+    },
+    margin: { t: 40, r: 24, b: 48, l: 56 },
   });
 
   Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);

@@ -15,6 +15,28 @@
 
   <div class="upload-card">
     <form id="upload-form" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+      <input type="hidden" id="analysis-mode-input" name="analysis_mode" value="{{ analysis_mode|default('live') }}">
+
+      <div class="analysis-mode-selector">
+        <span class="analysis-mode-label">Modo de análisis</span>
+        <div class="analysis-mode-options" role="radiogroup" aria-label="Modo de análisis">
+          <label class="analysis-mode-option">
+            <input type="radio" name="analysis_mode_ui" value="live" {% if analysis_mode != 'incubation' %}checked{% endif %}>
+            <span class="analysis-mode-card">
+              <span class="analysis-mode-name">Live Validation</span>
+              <span class="analysis-mode-desc">Operativa real vs backtest / Monte Carlo</span>
+            </span>
+          </label>
+          <label class="analysis-mode-option">
+            <input type="radio" name="analysis_mode_ui" value="incubation" {% if analysis_mode == 'incubation' %}checked{% endif %}>
+            <span class="analysis-mode-card">
+              <span class="analysis-mode-name">Incubation Screening</span>
+              <span class="analysis-mode-desc">Estrategias en incubación vs backtest / MC / SPP</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
       <div class="upload-zone" id="drop-zone">
         <div class="upload-zone-icon">⬆</div>
         <div class="upload-zone-text">Arrastra tu archivo <strong>.xlsx</strong> aquí</div>
@@ -103,6 +125,19 @@ const submitBtn = document.getElementById('submit-btn');
 const fileSelected = document.getElementById('file-selected');
 const form = document.getElementById('upload-form');
 const loadingOverlay = document.getElementById('loading-overlay');
+const analysisModeInput = document.getElementById('analysis-mode-input');
+const modeRadios = document.querySelectorAll('input[name="analysis_mode_ui"]');
+
+function syncAnalysisMode() {
+  const selected = document.querySelector('input[name="analysis_mode_ui"]:checked');
+  analysisModeInput.value = selected ? selected.value : 'live';
+}
+
+modeRadios.forEach((radio) => {
+  radio.addEventListener('change', syncAnalysisMode);
+});
+
+syncAnalysisMode();
 
 function handleFile(file) {
   if (!file) return;
@@ -136,6 +171,7 @@ dropZone.addEventListener('drop', (e) => {
 });
 
 form.addEventListener('submit', () => {
+  syncAnalysisMode();
   loadingOverlay.classList.remove('hidden');
   submitBtn.disabled = true;
 });

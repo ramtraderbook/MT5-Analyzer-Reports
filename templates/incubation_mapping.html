@@ -1,0 +1,187 @@
+{% extends "base.html" %} {% block content %}
+
+<header class="dash-header">
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <div class="dash-header-eyebrow">Incubation</div>
+        <h1 class="dash-header-title">Mapping de estrategias</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip">
+                <span class="map-file-icon">&#x1F4C4;</span>
+                <span class="mono">{{ filename }}</span>
+            </span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip">
+                <span id="header-active-count"
+                    >{{ ea_list | selectattr('active') | list | length }}</span
+                >
+                <span> activas</span>
+                <span style="color: var(--text-muted)">
+                    / {{ ea_list|length }}</span
+                >
+            </span>
+        </div>
+    </div>
+</header>
+
+<div class="map-info-strip">
+    <div class="map-info-item">
+        <span class="map-info-icon">&#x2713;</span>
+        Alias, capital e instrumento se guardan en incubation_config.json
+    </div>
+    <div class="map-info-sep"></div>
+    <div class="map-info-item">
+        <span class="map-info-icon">&#x1F4B0;</span>
+        Capital default: $5,000
+    </div>
+</div>
+
+<form action="{{ url_for('incubation_mapping_save') }}" method="POST">
+    <div class="map-card">
+        <div class="map-card-header">
+            <div class="section-header" style="margin-bottom: 0">
+                <h2 class="section-title">EAs detectadas</h2>
+                <span class="section-pill" id="card-pill">
+                    <span id="card-active-count"
+                        >{{ ea_list | selectattr('active') | list | length
+                        }}</span
+                    >
+                    <span> / {{ ea_list|length }} activas</span>
+                </span>
+            </div>
+            <label class="map-select-all-label">
+                <input type="checkbox" id="select-all" checked class="map-select-all-cb" />
+                <span class="map-select-all-text">Todas activas</span>
+            </label>
+        </div>
+
+        <div class="mapping-table-wrapper">
+            <table class="mapping-table map-table-v2">
+                <thead>
+                    <tr>
+                        <th class="th-check">&#10003;</th>
+                        <th>Magic Number</th>
+                        <th>EA Name (comment)</th>
+                        <th>Alias</th>
+                        <th>Capital ($)</th>
+                        <th>Instrument</th>
+                        <th>Active</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ea in ea_list %}
+                    <tr class="{% if not ea.active %}row-excluded{% endif %}">
+                        <td class="td-check">
+                            <input
+                                type="checkbox"
+                                name="include_{{ ea.name }}"
+                                class="ea-checkbox"
+                                {% if ea.active %}checked{% endif %}
+                            />
+                        </td>
+                        <td class="td-magic">
+                            <input
+                                type="number"
+                                name="magic_{{ ea.name }}"
+                                value="{{ ea.magic }}"
+                                class="magic-input map-input"
+                                min="0"
+                            />
+                        </td>
+                        <td class="td-name">
+                            <span class="ea-comment">{{ ea.name }}</span>
+                        </td>
+                        <td class="td-alias">
+                            <input
+                                type="text"
+                                name="alias_{{ ea.name }}"
+                                value="{{ ea.alias }}"
+                                placeholder="{{ ea.name[:20] }}"
+                                class="magic-input alias-input map-input"
+                            />
+                        </td>
+                        <td class="td-magic">
+                            <input
+                                type="number"
+                                name="capital_{{ ea.name }}"
+                                value="{{ ea.capital }}"
+                                placeholder="5000"
+                                class="magic-input capital-input map-input"
+                                min="0"
+                                step="100"
+                            />
+                        </td>
+                        <td class="td-alias">
+                            <input
+                                type="text"
+                                name="instrument_{{ ea.name }}"
+                                value="{{ ea.instrument }}"
+                                placeholder="USDJPY"
+                                class="magic-input map-input"
+                            />
+                        </td>
+                        <td class="td-check">
+                            <span class="map-active-pill">{% if ea.active %}Yes{% else %}No{% endif %}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="map-actions">
+        <button type="submit" class="btn-primary map-btn-submit">Save &amp; Continue</button>
+        <a href="{{ url_for('index') }}" class="btn-secondary map-btn-skip">Volver</a>
+    </div>
+</form>
+
+{% endblock %} {% block scripts %}
+<script>
+    function updateActiveCounts() {
+        var all = document.querySelectorAll(".ea-checkbox");
+        var checked = document.querySelectorAll(".ea-checkbox:checked");
+        var n = checked.length;
+
+        document.getElementById("header-active-count").textContent = n;
+        document.getElementById("card-active-count").textContent = n;
+
+        var pill = document.getElementById("card-pill");
+        pill.style.background = "";
+        if (n === 0) {
+            pill.style.background = "rgba(255,82,82,0.15)";
+            pill.style.color = "#FF5252";
+            pill.style.borderColor = "rgba(255,82,82,0.4)";
+        } else if (n === all.length) {
+            pill.style.background = "rgba(76,175,80,0.12)";
+            pill.style.color = "#66BB6A";
+            pill.style.borderColor = "rgba(76,175,80,0.3)";
+        } else {
+            pill.style.background = "rgba(255,193,7,0.12)";
+            pill.style.color = "#FFC107";
+            pill.style.borderColor = "rgba(255,193,7,0.3)";
+        }
+
+        var selectAll = document.getElementById("select-all");
+        selectAll.indeterminate = n > 0 && n < all.length;
+        selectAll.checked = n === all.length;
+    }
+
+    document.getElementById("select-all").addEventListener("change", function () {
+        document.querySelectorAll(".ea-checkbox").forEach(function (cb) {
+            cb.checked = this.checked;
+            cb.closest("tr").classList.toggle("row-excluded", !this.checked);
+        }, this);
+        updateActiveCounts();
+    });
+
+    document.querySelectorAll(".ea-checkbox").forEach(function (cb) {
+        cb.addEventListener("change", function () {
+            this.closest("tr").classList.toggle("row-excluded", !this.checked);
+            updateActiveCounts();
+        });
+    });
+
+    updateActiveCounts();
+</script>
+{% endblock %}

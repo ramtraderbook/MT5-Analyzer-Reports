@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+
+<header class="dash-header">
+    <div class="dash-header-accent"></div>
+    <div class="dash-header-content">
+        <div class="dash-header-eyebrow">Incubation Screening</div>
+        <h1 class="dash-header-title">Dashboard</h1>
+        <div class="dash-meta-strip">
+            <span class="dash-meta-chip mono">{{ total_active }} EAs activas</span>
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip mono">{{ pending_bt_mc }} pendientes BT/MC</span>
+        </div>
+    </div>
+</header>
+
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">Estado de incubación</h2>
+        <a href="{{ url_for('incubation_reference_data') }}" class="btn-secondary">Reference Data</a>
+    </div>
+    <div class="inc-explain-grid">
+        <div class="inc-explain-card">
+            <div class="inc-explain-kicker">CP1</div>
+            <div class="inc-explain-title">Hard gates</div>
+            <div class="inc-explain-copy">5-20 trades. Si DD, rachas o frecuencia rompen el filtro, el EA cae en ELIMINAR o sigue a CONTINUAR.</div>
+        </div>
+        <div class="inc-explain-card">
+            <div class="inc-explain-kicker">CP2</div>
+            <div class="inc-explain-title">Bandas MC</div>
+            <div class="inc-explain-copy">20-40 trades. Compara la operativa contra los rangos de Monte Carlo y puede quedar en OBSERVAR.</div>
+        </div>
+        <div class="inc-explain-card">
+            <div class="inc-explain-kicker">CP3</div>
+            <div class="inc-explain-title">Score ponderado</div>
+            <div class="inc-explain-copy">40+ trades. El score final mezcla desviación, riesgo, coherencia y muestra la decisión APROBAR / OBSERVAR / ELIMINAR.</div>
+        </div>
+        <div class="inc-explain-card">
+            <div class="inc-explain-kicker">Verdict</div>
+            <div class="inc-explain-title">Lectura rápida</div>
+            <div class="inc-explain-copy">Verde = seguir, amarillo = vigilar, rojo = eliminar. Si aparece NO DATA, falta cargar BT/MC/SPP.</div>
+        </div>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="data-table inc-dashboard-table">
+            <thead>
+                <tr>
+                    <th class="inc-name-cell">EA Name</th>
+                    <th>Trades</th>
+                    <th>Days</th>
+                    <th>Checkpoint</th>
+                    <th>Status</th>
+                    <th>Score</th>
+                    <th>Verdict</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td class="inc-name-cell">
+                        <a href="{{ row.url }}" class="inc-ea-link">{{ row.label }}</a>
+                    </td>
+                    <td class="mono">{{ row.trades }}</td>
+                    <td class="mono">{{ row.days }}</td>
+                    <td>
+                        <span class="inc-checkpoint-chip inc-checkpoint-{{ row.checkpoint_class }}">{{ row.checkpoint_label }}</span>
+                    </td>
+                    <td>
+                        <span class="inc-status-chip inc-status-{{ row.status_class }}">{{ row.status_label }}</span>
+                    </td>
+                    <td class="mono">{{ row.score }}</td>
+                    <td>
+                        <span class="inc-verdict-chip {{ row.verdict_class }}" title="{{ row.tooltip }}">
+                            {% if row.no_data %}<span class="inc-warn-icon">&#9888;</span>{% endif %}
+                            {{ row.verdict }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="inc-summary-grid">
+        <div class="inc-summary-card">
+            <div class="inc-summary-label">Total EAs en incubación</div>
+            <div class="inc-summary-value">{{ total_active }}</div>
+        </div>
+        <div class="inc-summary-card">
+            <div class="inc-summary-label">Pendientes BT/MC</div>
+            <div class="inc-summary-value">{{ pending_bt_mc }}</div>
+        </div>
+        <div class="inc-summary-card">
+            <div class="inc-summary-label">Veredicto ELIMINAR</div>
+            <div class="inc-summary-value loss">{{ eliminar_count }}</div>
+        </div>
+        <div class="inc-summary-card">
+            <div class="inc-summary-label">Listas para APROBAR</div>
+            <div class="inc-summary-value profit">{{ aprobar_count }}</div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
