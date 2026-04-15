@@ -2310,6 +2310,7 @@ code {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 14px;
+    margin-top: 22px;
     margin-bottom: 18px;
 }
 
@@ -2504,45 +2505,199 @@ code {
     border-radius: 12px;
     padding: 20px;
     box-shadow: var(--shadow-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
 }
 
-.inc-action-label {
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.68rem;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-
-.inc-action-head {
+/* ── Top row: CP badge + verdict + score ── */
+.inc-vcard-toprow {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
 }
 
-.inc-action-checkpoint {
-    font-size: 1.1rem;
+.inc-vcard-cp-badge {
+    font-size: 0.7rem;
     font-weight: 700;
-}
-
-.inc-action-score {
-    font-family: "Roboto Mono", monospace;
-    font-size: 1.35rem;
-    font-weight: 700;
-}
-
-.inc-action-summary,
-.inc-action-reason,
-.inc-action-note,
-.inc-action-list {
-    margin-top: 10px;
-    color: var(--text-primary);
-    font-size: 0.9rem;
-}
-
-.inc-action-muted {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     color: var(--text-secondary);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 10px;
+}
+
+.inc-vcard-verdict {
+    font-size: 0.8rem !important;
+    padding: 5px 14px !important;
+}
+
+.inc-vcard-score-num {
+    margin-left: auto;
+    font-family: "Roboto Mono", monospace;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.inc-vcard-score-max {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-left: 2px;
+}
+
+/* ── Trade progress bar ── */
+.inc-vcard-progress-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.inc-vcard-progress-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.inc-vcard-progress-pct {
+    font-family: "Roboto Mono", monospace;
+    font-size: 0.75rem;
+}
+
+.inc-vcard-progress-bar {
+    height: 5px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 99px;
+    overflow: hidden;
+}
+
+.inc-vcard-progress-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.4s ease;
+}
+
+.progress-full  { background: var(--profit); }
+.progress-mid   { background: var(--accent); }
+.progress-low   { background: rgba(255,255,255,0.25); }
+
+/* ── CP3 score bar ── */
+.inc-vcard-scorebar-wrap {
+    margin-top: 2px;
+}
+
+.inc-vcard-scorebar-track {
+    position: relative;
+    height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 99px;
+    overflow: visible;
+}
+
+.inc-vcard-scorebar-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--loss) 0%, #ffc107 45%, var(--profit) 75%);
+    transition: width 0.5s ease;
+}
+
+.inc-vcard-scorebar-marker {
+    position: absolute;
+    top: -3px;
+    width: 2px;
+    height: 14px;
+    background: var(--profit);
+    border-radius: 2px;
+    opacity: 0.5;
+}
+
+.inc-vcard-scorebar-marker--warn {
+    background: #ffc107;
+}
+
+.inc-vcard-scorebar-labels {
+    display: flex;
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    margin-top: 3px;
+}
+
+/* ── Category score bars (CP3) ── */
+.inc-vcard-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.inc-vcard-cat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.76rem;
+}
+
+.inc-vcard-cat-name {
+    width: 160px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.inc-vcard-cat-bar-track {
+    flex: 1;
+    height: 5px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 99px;
+    overflow: hidden;
+}
+
+.inc-vcard-cat-bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: var(--accent);
+}
+
+.inc-vcard-cat-val {
+    font-family: "Roboto Mono", monospace;
+    font-size: 0.72rem;
+    width: 28px;
+    text-align: right;
+    color: var(--text-secondary);
+}
+
+/* ── Section label ── */
+.inc-vcard-section-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    margin-bottom: -6px;
+}
+
+/* ── Contextual reason / escalation ── */
+.inc-vcard-reason {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    padding: 10px 14px;
+    background: rgba(255,255,255,0.025);
+    border-radius: 7px;
+    border-left: 2px solid var(--border);
+}
+
+.inc-vcard-escalation {
+    font-size: 0.82rem;
+    color: var(--loss);
+    padding: 8px 12px;
+    background: rgba(255, 82, 82, 0.07);
+    border-radius: 7px;
+    border-left: 2px solid var(--loss);
 }
 
 .inc-gate-list {
@@ -2580,6 +2735,19 @@ code {
     flex-direction: column;
     gap: 10px;
     align-items: stretch;
+}
+
+.inc-action-btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.inc-btn-hint {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    padding: 0 2px;
 }
 
 .inc-modal.hidden {

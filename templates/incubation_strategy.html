@@ -26,24 +26,77 @@
 
 {% if actions_enabled %}
 <div class="section inc-action-bar">
+
+    {# ── Main verdict card ── #}
     <div class="inc-action-card">
-        <div class="inc-action-label">Estado actual</div>
-        <div class="inc-action-head">
-            <div class="inc-action-checkpoint">{{ current_verdict_card.checkpoint }}</div>
-            <div class="inc-action-score">{% if current_verdict_card.score is not none %}{{ "%.2f"|format(current_verdict_card.score) }}{% else %}—{% endif %}</div>
-            <span class="cmp-chip {{ current_verdict_card.verdict_class }}">{{ current_verdict_card.verdict }}</span>
+
+        {# Top row: checkpoint pill + verdict chip + score #}
+        <div class="inc-vcard-toprow">
+            <span class="inc-vcard-cp-badge">{{ current_verdict_card.checkpoint }}</span>
+            <span class="cmp-chip {{ current_verdict_card.verdict_class }} inc-vcard-verdict">{{ current_verdict_card.verdict }}</span>
+            {% if current_verdict_card.score is not none %}
+            <span class="inc-vcard-score-num">{{ "%.1f"|format(current_verdict_card.score) }}<span class="inc-vcard-score-max">/100</span></span>
+            {% endif %}
         </div>
-        <div class="inc-action-summary">{{ current_verdict_card.summary }}</div>
-        <div class="inc-action-reason"><strong>Razón:</strong> {{ current_verdict_card.reason }}</div>
-        {% if current_verdict_card.failing_metrics %}
-        <div class="inc-action-list">
-            <span class="inc-action-muted">Métricas fallando:</span>
-            <span>{{ current_verdict_card.failing_metrics | join(', ') }}</span>
+
+        {# Trade progress bar toward next checkpoint #}
+        {% set trades = m.total_trades %}
+        {% if current_verdict_card.checkpoint == 'PRE_CP1' %}
+            {% set next_cp = 'CP1' %}{% set next_thresh = 5 %}{% set bar_pct = (trades / 5 * 100)|int %}
+        {% elif current_verdict_card.checkpoint == 'CP1' %}
+            {% set next_cp = 'CP2' %}{% set next_thresh = 20 %}{% set bar_pct = (trades / 20 * 100)|int %}
+        {% elif current_verdict_card.checkpoint == 'CP2' %}
+            {% set next_cp = 'CP3' %}{% set next_thresh = 40 %}{% set bar_pct = (trades / 40 * 100)|int %}
+        {% else %}
+            {% set next_cp = '' %}{% set next_thresh = 0 %}{% set bar_pct = 100 %}
+        {% endif %}
+        {% if bar_pct > 100 %}{% set bar_pct = 100 %}{% endif %}
+        <div class="inc-vcard-progress-wrap">
+            <div class="inc-vcard-progress-labels">
+                <span class="inc-vcard-progress-text">
+                    {% if next_cp %}
+                        {{ trades }} trades → próximo <strong>{{ next_cp }}</strong> en {{ next_thresh }} trades
+                    {% else %}
+                        {{ trades }} trades · evaluación completa (CP3)
+                    {% endif %}
+                </span>
+                <span class="inc-vcard-progress-pct">{{ bar_pct }}%</span>
+            </div>
+            <div class="inc-vcard-progress-bar">
+                <div class="inc-vcard-progress-fill {% if bar_pct >= 100 %}progress-full{% elif bar_pct >= 60 %}progress-mid{% else %}progress-low{% endif %}" style="width:{{ bar_pct }}%"></div>
+            </div>
+        </div>
+
+        {# CP3 score bar + category breakdown #}
+        {% if current_verdict_card.score is not none %}
+        <div class="inc-vcard-scorebar-wrap">
+            <div class="inc-vcard-scorebar-track">
+                <div class="inc-vcard-scorebar-fill" style="width:{{ current_verdict_card.score|int }}%"></div>
+                <div class="inc-vcard-scorebar-marker" style="left:65%" title="APROBAR ≥65"></div>
+                <div class="inc-vcard-scorebar-marker inc-vcard-scorebar-marker--warn" style="left:45%" title="OBSERVAR ≥45"></div>
+            </div>
+            <div class="inc-vcard-scorebar-labels">
+                <span>0</span><span style="margin-left:auto">100</span>
+            </div>
+        </div>
+        {% if current_verdict_card.category_scores %}
+        <div class="inc-vcard-categories">
+            {% for cat, val in current_verdict_card.category_scores.items() %}
+            <div class="inc-vcard-cat-row">
+                <span class="inc-vcard-cat-name">{{ cat }}</span>
+                <div class="inc-vcard-cat-bar-track">
+                    <div class="inc-vcard-cat-bar-fill" style="width:{{ val|int }}%"></div>
+                </div>
+                <span class="inc-vcard-cat-val">{{ "%.0f"|format(val) }}</span>
+            </div>
+            {% endfor %}
         </div>
         {% endif %}
-        {% if current_verdict_card.escalation_from_cp2 %}
-        <div class="inc-action-note">Escalado desde CP2 OBSERVAR a ELIMINAR.</div>
         {% endif %}
+
+        {# Hard gates #}
+        {% if current_verdict_card.hard_gates %}
+        <div class="inc-vcard-section-label">Hard gates</div>
         <div class="inc-gate-list">
             {% for gate in current_verdict_card.hard_gates %}
             <span class="inc-gate-pill {% if gate.status == 'WARNING' %}gate-warn{% elif gate.passed %}gate-pass{% else %}gate-fail{% endif %}">
@@ -51,13 +104,62 @@
             </span>
             {% endfor %}
         </div>
+        {% endif %}
+
+        {# Failing metrics (CP2/CP3) #}
+        {% if current_verdict_card.failing_metrics %}
+        <div class="inc-vcard-section-label">Métricas fuera de banda</div>
+        <div class="inc-gate-list">
+            {% for m_key in current_verdict_card.failing_metrics %}
+            <span class="inc-gate-pill gate-fail">{{ m_key }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {# Anti-limbo escalation warning #}
+        {% if current_verdict_card.escalation_from_cp2 %}
+        <div class="inc-vcard-escalation">
+            ⚠ Regla anti-limbo: OBSERVAR en CP2 + OBSERVAR en CP3 → escalado a <strong>ELIMINAR</strong>.
+        </div>
+        {% endif %}
+
+        {# Contextual next-step hint #}
+        <div class="inc-vcard-reason">
+            {% if current_verdict_card.verdict == 'CONTINUAR' %}
+                ✓ Todos los gates pasan. Acumula más trades para avanzar al siguiente checkpoint.
+            {% elif current_verdict_card.verdict == 'OBSERVAR' %}
+                ⚠ Hay desviaciones respecto al BT/MC. Monitorea de cerca antes de decidir.
+            {% elif current_verdict_card.verdict == 'ELIMINAR' %}
+                ✗ La estrategia está fuera de las expectativas de referencia. Considera descartarla.
+            {% elif current_verdict_card.verdict == 'APROBAR' %}
+                ✓ La estrategia cumple las expectativas del backtest y MC. Lista para operativa real.
+            {% else %}
+                Carga datos de referencia BT/MC para iniciar la evaluación.
+            {% endif %}
+        </div>
+
     </div>
+
+    {# ── Action buttons ── #}
     <div class="inc-action-buttons">
-        <form method="POST" action="{{ force_eval_url }}">
-            <button type="submit" class="btn-secondary">Force Evaluate</button>
-        </form>
-        <button type="button" class="btn-secondary" id="reset-checkpoints-btn">Reset Checkpoints</button>
+        <div class="inc-action-btn-group">
+            <form method="POST" action="{{ force_eval_url }}">
+                <button type="submit" class="btn-secondary">Force Evaluate</button>
+            </form>
+            <div class="inc-btn-hint">
+                Recalcula el veredicto ahora mismo con los trades actuales y la referencia BT/MC cargada.
+                Úsalo si acabas de cargar o corregir datos de referencia.
+            </div>
+        </div>
+        <div class="inc-action-btn-group">
+            <button type="button" class="btn-secondary" id="reset-checkpoints-btn">Reset Checkpoints</button>
+            <div class="inc-btn-hint">
+                Borra el historial de evaluaciones (CP1, CP2, CP3) de esta estrategia para empezar desde cero.
+                No elimina trades ni datos BT/MC. Úsalo si cambiaste mucho la referencia o quieres reiniciar el seguimiento.
+            </div>
+        </div>
     </div>
+
 </div>
 {% endif %}
 
