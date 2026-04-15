@@ -40,13 +40,13 @@
         </div>
 
         {# Trade progress bar toward next checkpoint #}
-        {% set trades = m.total_trades %}
+        {% set trade_count = m.total_trades %}
         {% if current_verdict_card.checkpoint == 'PRE_CP1' %}
-            {% set next_cp = 'CP1' %}{% set next_thresh = 5 %}{% set bar_pct = (trades / 5 * 100)|int %}
+            {% set next_cp = 'CP1' %}{% set next_thresh = 5 %}{% set bar_pct = (trade_count / 5 * 100)|int %}
         {% elif current_verdict_card.checkpoint == 'CP1' %}
-            {% set next_cp = 'CP2' %}{% set next_thresh = 20 %}{% set bar_pct = (trades / 20 * 100)|int %}
+            {% set next_cp = 'CP2' %}{% set next_thresh = 20 %}{% set bar_pct = (trade_count / 20 * 100)|int %}
         {% elif current_verdict_card.checkpoint == 'CP2' %}
-            {% set next_cp = 'CP3' %}{% set next_thresh = 40 %}{% set bar_pct = (trades / 40 * 100)|int %}
+            {% set next_cp = 'CP3' %}{% set next_thresh = 40 %}{% set bar_pct = (trade_count / 40 * 100)|int %}
         {% else %}
             {% set next_cp = '' %}{% set next_thresh = 0 %}{% set bar_pct = 100 %}
         {% endif %}
@@ -55,9 +55,9 @@
             <div class="inc-vcard-progress-labels">
                 <span class="inc-vcard-progress-text">
                     {% if next_cp %}
-                        {{ trades }} trades → próximo <strong>{{ next_cp }}</strong> en {{ next_thresh }} trades
+                        {{ trade_count }} trades → próximo <strong>{{ next_cp }}</strong> en {{ next_thresh }} trades
                     {% else %}
-                        {{ trades }} trades · evaluación completa (CP3)
+                        {{ trade_count }} trades · evaluación completa (CP3)
                     {% endif %}
                 </span>
                 <span class="inc-vcard-progress-pct">{{ bar_pct }}%</span>
