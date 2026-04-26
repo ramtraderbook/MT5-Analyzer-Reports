@@ -1,4 +1,4 @@
-# EA Analyzer & Validator — CLAUDE.md
+# EA Analyzer & Validator — AGENTS.md
 
 Flask app para analizar historial de trades de MetaTrader 5. Aplica a `ea_analyzer.py`, `parser.py`, `metrics.py`, `validator.py` y los templates.
 
@@ -126,12 +126,19 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 - CARÁCTER 15% → Frecuencia (55%) + Avg Bars/Trade (45%)
 - DESV. ESTRUCTURAL 20% → Conteo métricas deterioradas simultáneamente
 
-**Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45
+**Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45 · SIN DATOS (guard)
 
 **DD_límite:** `Peor_DD_1Mes × sqrt(semanas_live / 4.33)`
 
 **Datos Live:** auto-calculados desde `calculate_ea_metrics()`
 **Datos BT:** ingresados por usuario en `/validator/edit/<magic>`
+
+**Guard de datos mínimos (min_trades=5, max_wait_weeks=8):**
+- `trades_live >= 5` → evaluar normalmente
+- `trades_live < 5` y `weeks_live < 8` → **SIN DATOS** (muy pronto para evaluar)
+- `trades_live < 5` y `weeks_live >= 8` → **ELIMINAR** (deadline cumplido, EA perdió frecuencia/edge)
+
+El resultado incluye siempre `sin_datos: bool`. Si `True`, `score=None` y no se muestran sub-scores.
 
 ---
 
