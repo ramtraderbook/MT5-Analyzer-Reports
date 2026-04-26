@@ -524,6 +524,7 @@ def calculate_validator_score(
     result["wfe_status"] = wfe_status
 
     result["accion"] = accion
+    result["sin_datos"] = False
 
     return result
 
