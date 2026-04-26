@@ -875,6 +875,46 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
     checkpoint = get_checkpoint_for_trades(total_trades)
 
     if checkpoint == "PRE_CP1":
+        # Frequency-based deadline: if BT tells us X trades/month, reaching 5 trades
+        # should take ~(5 / bt_monthly * 30.44) days. Give 3× tolerance.
+        # If that deadline passes with < 5 trades → frequency/edge is lost → ELIMINAR.
+        bt_total = _safe_int(_get_reference_value(reference_data, ("backtest", "total_trades")), 0) or 0
+        bt_period = _get_reference_value(reference_data, ("backtest", "bt_period"), "")
+        bt_monthly = _safe_float(_get_reference_value(reference_data, ("backtest", "monthly_frequency")))
+        if bt_monthly is None:
+            bt_monthly = calculate_monthly_frequency(bt_total, bt_period)
+
+        freq_deadline_days = None
+        actual_monthly = 0.0
+        if bt_monthly and bt_monthly > 0:
+            days_expected_for_5 = (5.0 / bt_monthly) * 30.44
+            freq_deadline_days = round(days_expected_for_5 * 3)
+            if days_incubating > 0:
+                actual_monthly = round(total_trades / (days_incubating / 30.44), 2)
+
+        deadline_exceeded = (
+            freq_deadline_days is not None and days_incubating >= freq_deadline_days
+        )
+
+        if deadline_exceeded:
+            return {
+                "ea_name": ea_name,
+                "total_trades": total_trades,
+                "days_incubating": days_incubating,
+                "current_checkpoint": checkpoint,
+                "verdict": "ELIMINAR",
+                "score": None,
+                "details": {
+                    "checkpoint": "PRE_CP1",
+                    "freq_deadline": True,
+                    "deadline_days": freq_deadline_days,
+                    "bt_monthly": round(bt_monthly, 2) if bt_monthly else None,
+                    "actual_monthly": actual_monthly,
+                },
+                "hard_gate_failures": ["freq_deadline"],
+                "timestamp": datetime.now().isoformat(),
+            }
+
         return {
             "ea_name": ea_name,
             "total_trades": total_trades,
@@ -882,7 +922,13 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
             "current_checkpoint": checkpoint,
             "verdict": "PENDING",
             "score": None,
-            "details": {"checkpoint": "PRE_CP1"},
+            "details": {
+                "checkpoint": "PRE_CP1",
+                "freq_deadline": False,
+                "deadline_days": freq_deadline_days,
+                "bt_monthly": round(bt_monthly, 2) if bt_monthly else None,
+                "actual_monthly": actual_monthly,
+            },
             "hard_gate_failures": [],
             "timestamp": datetime.now().isoformat(),
         }

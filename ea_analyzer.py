@@ -1710,7 +1710,12 @@ def _incubation_verdict_card(evaluation):
                 failing_metrics.append(key)
 
     if verdict == "ELIMINAR":
-        if hard_gates:
+        if details.get("freq_deadline"):
+            bt_mo = details.get("bt_monthly", "?")
+            act_mo = details.get("actual_monthly", "?")
+            ddl = details.get("deadline_days", "?")
+            reason = f"Frecuencia perdida: {act_mo}/mes vs BT {bt_mo}/mes — {days_incubating}d > límite {ddl}d"
+        elif hard_gates:
             failed = [g["key"] for g in hard_gates if not g["passed"]]
             reason = "Hard gates: " + ", ".join(failed) if failed else "Below reference range"
         elif failing_metrics:

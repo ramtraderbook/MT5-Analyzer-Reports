@@ -130,7 +130,11 @@
             {% elif current_verdict_card.verdict == 'OBSERVAR' %}
                 ⚠ Hay desviaciones respecto al BT/MC. Monitorea de cerca antes de decidir.
             {% elif current_verdict_card.verdict == 'ELIMINAR' %}
-                ✗ La estrategia está fuera de las expectativas de referencia. Considera descartarla.
+                {% if current_verdict_card.checkpoint == 'PRE_CP1' %}
+                    ✗ Deadline de frecuencia superado: la EA no alcanzó 5 trades en el tiempo esperado. La frecuencia live no coincide con el backtesting.
+                {% else %}
+                    ✗ La estrategia está fuera de las expectativas de referencia. Considera descartarla.
+                {% endif %}
             {% elif current_verdict_card.verdict == 'APROBAR' %}
                 ✓ La estrategia cumple las expectativas del backtest y MC. Lista para operativa real.
             {% else %}
