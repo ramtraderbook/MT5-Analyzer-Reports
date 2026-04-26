@@ -123,6 +123,55 @@
         </div>
         {% endif %}
 
+        {# Frequency deadline info — only for PRE_CP1 with deadline data #}
+        {% if current_verdict_card.freq_deadline_info %}
+        {% set fdi = current_verdict_card.freq_deadline_info %}
+        <div class="inc-freq-deadline-box {% if fdi.exceeded %}inc-freq-deadline-exceeded{% endif %}">
+            <div class="inc-freq-deadline-title">
+                {% if fdi.exceeded %}
+                    ✗ Deadline superado — frecuencia perdida
+                {% else %}
+                    ⏳ Esperando trades mínimos ({{ current_verdict_card.checkpoint }})
+                {% endif %}
+            </div>
+            <div class="inc-freq-deadline-stats">
+                <div class="inc-freq-stat">
+                    <span class="inc-freq-stat-label">Frecuencia BT</span>
+                    <span class="inc-freq-stat-value">{{ "%.2f"|format(fdi.bt_monthly) }}/mes</span>
+                </div>
+                <div class="inc-freq-stat">
+                    <span class="inc-freq-stat-label">Frecuencia actual</span>
+                    <span class="inc-freq-stat-value {% if fdi.actual_monthly < fdi.bt_monthly * 0.5 %}inc-freq-stat-warn{% endif %}">{{ "%.2f"|format(fdi.actual_monthly) }}/mes</span>
+                </div>
+                <div class="inc-freq-stat">
+                    <span class="inc-freq-stat-label">Días en incubación</span>
+                    <span class="inc-freq-stat-value">{{ fdi.days_incubating }}d</span>
+                </div>
+                <div class="inc-freq-stat">
+                    <span class="inc-freq-stat-label">Deadline</span>
+                    <span class="inc-freq-stat-value">{{ fdi.deadline_days }}d</span>
+                </div>
+                {% if not fdi.exceeded %}
+                <div class="inc-freq-stat">
+                    <span class="inc-freq-stat-label">Días restantes</span>
+                    <span class="inc-freq-stat-value profit">{{ fdi.days_remaining }}d</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="inc-freq-deadline-bar-wrap">
+                <div class="inc-freq-deadline-bar-track">
+                    <div class="inc-freq-deadline-bar-fill {% if fdi.exceeded %}exceeded{% elif fdi.deadline_pct >= 75 %}near{% endif %}" style="width:{{ fdi.deadline_pct }}%"></div>
+                    <div class="inc-freq-deadline-bar-label">{{ fdi.days_incubating }}d / {{ fdi.deadline_days }}d</div>
+                </div>
+            </div>
+            {% if not fdi.exceeded %}
+            <div class="inc-freq-deadline-hint">
+                Si no se alcanzan <strong>5 trades</strong> en {{ fdi.days_remaining }} días más → veredicto automático <span style="color:#dc3545">ELIMINAR</span> por frecuencia perdida.
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
         {# Contextual next-step hint #}
         <div class="inc-vcard-reason">
             {% if current_verdict_card.verdict == 'CONTINUAR' %}

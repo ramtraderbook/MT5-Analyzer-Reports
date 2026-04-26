@@ -1672,6 +1672,7 @@ def _incubation_verdict_card(evaluation):
     details = evaluation.get("details", {})
     checkpoint = evaluation.get("current_checkpoint", "PENDING")
     verdict = evaluation.get("verdict", "PENDING")
+    days_incubating = evaluation.get("days_incubating", 0) or 0
     verdict_class = {
         "APROBAR": "verdict-approve",
         "CONTINUAR": "verdict-continue",
@@ -1731,6 +1732,25 @@ def _incubation_verdict_card(evaluation):
     else:
         reason = "Pending evaluation"
 
+    # Build freq deadline info for PRE_CP1 display
+    freq_deadline_info = None
+    if checkpoint == "PRE_CP1":
+        deadline_days = details.get("deadline_days")
+        bt_monthly = details.get("bt_monthly")
+        actual_monthly = details.get("actual_monthly", 0.0)
+        if deadline_days is not None:
+            days_remaining = max(deadline_days - days_incubating, 0)
+            deadline_pct = min(int(days_incubating / deadline_days * 100), 100) if deadline_days else 0
+            freq_deadline_info = {
+                "deadline_days": deadline_days,
+                "days_incubating": days_incubating,
+                "days_remaining": days_remaining,
+                "deadline_pct": deadline_pct,
+                "bt_monthly": bt_monthly,
+                "actual_monthly": actual_monthly,
+                "exceeded": details.get("freq_deadline", False),
+            }
+
     return {
         "checkpoint": checkpoint,
         "score": evaluation.get("score"),
@@ -1742,6 +1762,7 @@ def _incubation_verdict_card(evaluation):
         "failing_metrics": failing_metrics,
         "escalation_from_cp2": bool(details.get("escalation_from_cp2")),
         "category_scores": details.get("category_scores", {}),
+        "freq_deadline_info": freq_deadline_info,
     }
 
 
