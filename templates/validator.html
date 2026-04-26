@@ -24,6 +24,7 @@
     <span class="val-badge val-continuar">CONTINUAR ≥ 70</span>
     <span class="val-badge val-monitorear">MONITOREAR ≥ 45</span>
     <span class="val-badge val-eliminar">ELIMINAR &lt; 45</span>
+    <span class="val-badge val-sin_datos">SIN DATOS</span>
     <span class="val-sep">·</span>
     <span class="val-estado val-ok-chip">OK</span>
     <span class="val-estado val-alerta-chip">ALERTA</span>
@@ -280,6 +281,9 @@
 
                     <!-- ── 8. SUB-SCORES ───────────────────────────── -->
                     <td class="val-td-subscores th-center">
+                        {% if a.sin_datos %}
+                        <span class="val-nd">—</span>
+                        {% else %}
                         <div class="val-subscores-grid">
                             <div class="val-subscore-item">
                                 <span class="val-subscore-lbl">R</span>
@@ -306,21 +310,28 @@
                                 >
                             </div>
                         </div>
+                        {% endif %}
                     </td>
 
                     <!-- ── 9. SCORE TOTAL ──────────────────────────── -->
                     <td class="th-center">
+                        {% if a.sin_datos %}
+                        <span class="val-nd">—</span>
+                        {% else %}
                         <div
                             class="val-score-ring val-score-{{ 'high' if a.score >= 70 else ('mid' if a.score >= 45 else 'low') }}"
                             title="Score: {{ a.score }} / 100"
                         >
                             {{ "%.1f"|format(a.score) }}
                         </div>
+                        {% endif %}
                     </td>
 
                     <!-- ── 9b. WFE ────────────────────────────────── -->
                     <td class="th-center">
-                        {% if a.wfe is not none %}
+                        {% if a.sin_datos %}
+                        <span class="val-nd">—</span>
+                        {% elif a.wfe is not none %}
                         <div class="val-wfe-cell">
                             <span
                                 class="val-wfe-pct val-wfe-{{ a.wfe_status | lower }}"
@@ -349,7 +360,7 @@
                             "
                         >
                             <span
-                                class="val-badge val-{{ a.veredicto | lower }}"
+                                class="val-badge val-{{ a.veredicto | lower | replace(' ', '_') }}"
                                 >{{ a.veredicto }}</span
                             >
                             {% if a.desv_flag == 'DESV' %}

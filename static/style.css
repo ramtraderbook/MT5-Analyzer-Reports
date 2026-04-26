@@ -3240,6 +3240,11 @@ code {
     color: #ff5252;
     border: 1px solid #ff5252;
 }
+.val-sin_datos {
+    background: rgba(139, 148, 158, 0.15);
+    color: #8b949e;
+    border: 1px solid #8b949e;
+}
 
 .val-estado {
     display: inline-block;

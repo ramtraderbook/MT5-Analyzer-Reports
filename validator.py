@@ -38,6 +38,10 @@ CONFIG = {
     "thresh_monitorear": 45,
     # Threshold desviación estructural
     "thresh_desv": 3,
+    # Umbral de datos mínimos para emitir veredicto
+    # Se requiere AMBAS condiciones: trades >= min_trades Y semanas >= min_weeks
+    "min_trades": 5,
+    "min_weeks": 8,
 }
 
 
@@ -141,6 +145,47 @@ def calculate_validator_score(
     result["signif"] = signif
     result["trades_live"] = tl
     result["weeks_live"] = round(weeks_live, 1)
+
+    # ── Guard: datos mínimos para emitir veredicto ─────────────────────────
+    # Se requieren AMBAS condiciones: trades >= min_trades Y semanas >= min_weeks
+    min_trades = CONFIG["min_trades"]
+    min_weeks = CONFIG["min_weeks"]
+    if tl < min_trades or weeks_live < min_weeks:
+        falta_trades = max(0, min_trades - tl)
+        falta_semanas = max(0.0, min_weeks - weeks_live)
+        partes = []
+        if tl < min_trades:
+            partes.append(f"{falta_trades} trade(s) más (mín {min_trades})")
+        if weeks_live < min_weeks:
+            partes.append(f"{falta_semanas:.1f} sem más (mín {min_weeks})")
+        result["veredicto"] = "SIN DATOS"
+        result["accion"] = "Faltan: " + " y ".join(partes)
+        result["sin_datos"] = True
+        result["score"] = None
+        result["desv_flag"] = "-"
+        # Rellenar campos de análisis como N/D para que el template no rompa
+        for key in (
+            "wr_delta", "wr_live", "wr_bt", "wr_estado",
+            "pf_live", "pf_bt", "pf_estado",
+            "payout_var", "payout_live", "payout_bt", "payout_estado",
+            "dd_live", "dd_limit", "dd_method", "dd_estado",
+            "consec_ratio", "consec_estado",
+            "bars_var", "avg_bars_live", "avg_bars_bt", "bars_estado",
+            "freq_pct", "freq_estado",
+            "edge_erosion", "expect_live", "spp_expect_median", "edge_estado",
+            "stagn_live", "stagn_bt", "stagn_label", "stagn_estado",
+            "s_riesgo", "s_edge", "s_caracter", "s_desv", "detcount",
+            "wfe", "wfe_status",
+        ):
+            result.setdefault(key, None)
+        for key in (
+            "wr_estado", "pf_estado", "payout_estado", "dd_estado",
+            "consec_estado", "bars_estado", "freq_estado", "edge_estado",
+            "stagn_estado", "stagn_label", "dd_method", "consec_ratio",
+        ):
+            result[key] = "N/D"
+        result["wfe_status"] = "N/D"
+        return result
 
     # ── Win Rate ───────────────────────────────────────────────────────────
     if wr_live is not None and bt_wr is not None:
