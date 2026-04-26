@@ -199,10 +199,16 @@ python -m pytest                # tests (si existen)
 | `/api/incubation/ea_pnl_data/<ea>` | histogram, streaks, weekday/hour, long/short |
 
 **Sistema de Checkpoints:**
-- PRE_CP1 (< 5 trades): sin evaluación
+- PRE_CP1 (< 5 trades): sin evaluación — aplica deadline de frecuencia
 - CP1 (5-20 trades): hard gates binarios → CONTINUAR/ELIMINAR
 - CP2 (20-40 trades): comparación probabilística contra bandas MC → CONTINUAR/OBSERVAR/ELIMINAR
 - CP3 (40+ trades): scoring ponderado completo → APROBAR/OBSERVAR/ELIMINAR
+
+**Deadline de frecuencia (PRE_CP1):**
+- `deadline_days = (5 / bt_monthly × 30.44) × 3` — triple del tiempo esperado para acumular 5 trades
+- `trades < 5 AND days < deadline` → PENDING
+- `trades < 5 AND days >= deadline` → ELIMINAR (frecuencia/edge perdidos)
+- Resultado incluye siempre: `freq_deadline`, `deadline_days`, `bt_monthly`, `actual_monthly`
 
 **Hard Gates (aplican en todos los checkpoints):**
 - DD > MC95 × 1.5 → ELIMINAR

@@ -80,7 +80,16 @@
 
     <div class="inc-explain-grid">
         <div class="inc-explain-card">
-            <div class="inc-explain-kicker" style="color: #17a2b8;">CP1</div>
+            <div class="inc-explain-kicker" style="color: #8b959e;">PRE_CP1</div>
+            <div class="inc-explain-title">Deadline de Frecuencia · &lt; 5 trades</div>
+            <div class="inc-explain-copy">
+                Antes de evaluar se necesitan <strong>mínimo 5 trades</strong>. El sistema calcula cuánto tiempo debería tomar acumularlos según la frecuencia del backtest:<br><br>
+                <strong>Deadline = (5 / BT_mensual × 30.44) × 3</strong><br><br>
+                Ej: BT = 7.5 trades/mes → deadline ≈ <strong>61 días</strong>.<br><br>
+                <span style="color:#6c757d">● PENDING</span> — Trades &lt; 5 y dentro del deadline. Esperando.<br>
+                <span style="color:#dc3545">● ELIMINAR</span> — Trades &lt; 5 y deadline superado. La EA perdió su frecuencia/edge respecto al backtest.
+            </div>
+        </div>
             <div class="inc-explain-title">Hard Gates · 5-20 trades</div>
             <div class="inc-explain-copy">
                 Filtros binarios de supervivencia. Evalúa 4 gates:<br>
