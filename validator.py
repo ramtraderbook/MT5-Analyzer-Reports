@@ -635,12 +635,13 @@ def get_all_validator_results(parsed_data: dict, config: dict, store: dict) -> l
 
         results.append(row)
 
-    # Sort: has_bt first, then by score desc
-    results.sort(
-        key=lambda x: (
-            not x["has_bt"],
-            -(x["analysis"]["score"] if x["analysis"] else -1),
-        )
-    )
+    # Sort: has_bt first, then by score desc (score can be None for SIN DATOS)
+    def _sort_key(x):
+        if not x["has_bt"] or not x["analysis"]:
+            return (1, 0)
+        score = x["analysis"].get("score")
+        return (0, -(score if score is not None else -1))
+
+    results.sort(key=_sort_key)
 
     return results
