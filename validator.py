@@ -39,7 +39,9 @@ CONFIG = {
     # Threshold desviación estructural
     "thresh_desv": 3,
     # Umbral de datos mínimos para emitir veredicto
-    # Se requiere AMBAS condiciones: trades >= min_trades Y semanas >= min_weeks
+    # - trades >= min_trades                        → evaluar (sin importar semanas)
+    # - trades < min_trades Y sem < min_weeks       → SIN DATOS (demasiado temprano)
+    # - trades < min_trades Y sem >= min_weeks      → ELIMINAR (perdió frecuencia/edge)
     "min_trades": 5,
     "min_weeks": 8,
 }
@@ -147,23 +149,19 @@ def calculate_validator_score(
     result["weeks_live"] = round(weeks_live, 1)
 
     # ── Guard: datos mínimos para emitir veredicto ─────────────────────────
-    # Se requieren AMBAS condiciones: trades >= min_trades Y semanas >= min_weeks
+    # Lógica:
+    #   trades >= min_trades            → evaluar normalmente (sin importar semanas)
+    #   trades < min_trades Y sem < max_wait_weeks → SIN DATOS (demasiado temprano)
+    #   trades < min_trades Y sem >= max_wait_weeks → ELIMINAR (2 meses sin actividad = perdió EDGE)
     min_trades = CONFIG["min_trades"]
-    min_weeks = CONFIG["min_weeks"]
-    if tl < min_trades or weeks_live < min_weeks:
-        falta_trades = max(0, min_trades - tl)
-        falta_semanas = max(0.0, min_weeks - weeks_live)
-        partes = []
-        if tl < min_trades:
-            partes.append(f"{falta_trades} trade(s) más (mín {min_trades})")
-        if weeks_live < min_weeks:
-            partes.append(f"{falta_semanas:.1f} sem más (mín {min_weeks})")
-        result["veredicto"] = "SIN DATOS"
-        result["accion"] = "Faltan: " + " y ".join(partes)
+    max_wait_weeks = CONFIG["min_weeks"]
+
+    def _nd_result(veredicto, accion):
+        result["veredicto"] = veredicto
+        result["accion"] = accion
         result["sin_datos"] = True
         result["score"] = None
         result["desv_flag"] = "-"
-        # Rellenar campos de análisis como N/D para que el template no rompa
         for key in (
             "wr_delta", "wr_live", "wr_bt", "wr_estado",
             "pf_live", "pf_bt", "pf_estado",
@@ -186,6 +184,23 @@ def calculate_validator_score(
             result[key] = "N/D"
         result["wfe_status"] = "N/D"
         return result
+
+    if tl < min_trades:
+        if weeks_live < max_wait_weeks:
+            falta_trades = min_trades - tl
+            falta_semanas = round(max_wait_weeks - weeks_live, 1)
+            return _nd_result(
+                "SIN DATOS",
+                f"Solo {tl} trade(s). Faltan {falta_trades} más (mín {min_trades}) "
+                f"o esperar hasta sem {max_wait_weeks:.0f}.",
+            )
+        else:
+            # Pasaron 8+ semanas y no llegó a 5 trades: perdió frecuencia/edge
+            return _nd_result(
+                "ELIMINAR",
+                f"Solo {tl} trade(s) en {weeks_live:.1f} sem — "
+                f"frecuencia insuficiente vs BT tras {max_wait_weeks:.0f} sem.",
+            )
 
     # ── Win Rate ───────────────────────────────────────────────────────────
     if wr_live is not None and bt_wr is not None:
