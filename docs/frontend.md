@@ -6,7 +6,7 @@
 |---|---|
 | Motor de templates | Jinja2 (vía Flask) |
 | Estilos | CSS custom en `static/style.css` (sin frameworks externos) |
-| Gráficas | Chart.js (cargado desde CDN) |
+| Gráficas | Plotly.js (cargado desde CDN, `plotly-2.27.0.min.js`) |
 | Scripts | JavaScript vanilla en `static/charts.js` + inline por template |
 | Iconos | Emojis Unicode (sin dependencias de iconografía) |
 

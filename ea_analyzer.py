@@ -2159,6 +2159,7 @@ def mapping_save():
 
     config["last_updated"] = str(date.today())
     save_config(config)
+    invalidate_metrics_cache()
 
     return redirect(url_for("dashboard"))
 
@@ -2210,6 +2211,7 @@ def incubation_mapping_save():
 
     config["last_updated"] = str(date.today())
     save_incubation_config(config)
+    invalidate_metrics_cache()
 
     return redirect(url_for("incubation_reference_data"))
 

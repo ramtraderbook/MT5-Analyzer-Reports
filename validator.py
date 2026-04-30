@@ -8,6 +8,7 @@ import math
 import os
 
 from local_json import load_local_json, save_local_json
+from metrics import calculate_ea_metrics
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VALIDATOR_STORE_PATH = os.path.join(APP_DIR, "validator_store.json")
@@ -275,12 +276,16 @@ def calculate_validator_score(
                 else ("ALERTA" if max_dd_live <= dd_limit * 1.5 else "FUERA")
             )
         elif mc_r_dd is not None and mc_t_dd is not None:
-            dd_limit_used = mc_r_dd
-            dd_method = "MC Retest 95% (fallback)"
+            # Use the more conservative (higher) of the two MC 95% DD values as the
+            # ALERTA boundary so the zone is always reachable regardless of which
+            # MC method produces a tighter threshold.
+            mc_dd_alert = max(mc_r_dd, mc_t_dd)
+            dd_limit_used = min(mc_r_dd, mc_t_dd)
+            dd_method = "MC min(Retest,Trades) 95% (fallback)"
             dd_estado = (
                 "OK"
-                if max_dd_live <= mc_r_dd
-                else ("ALERTA" if max_dd_live <= mc_t_dd else "FUERA")
+                if max_dd_live <= dd_limit_used
+                else ("ALERTA" if max_dd_live <= mc_dd_alert else "FUERA")
             )
         else:
             dd_estado = "N/D"
@@ -508,8 +513,6 @@ def calculate_validator_score(
                 wfe_status = "ALERTA"  # mejor que BT, posible sobreajuste del BT
             elif wfe >= 70:
                 wfe_status = "OK"
-            elif wfe >= 50:
-                wfe_status = "ALERTA"
             elif wfe >= 30:
                 wfe_status = "ALERTA"
             else:
@@ -524,13 +527,24 @@ def calculate_validator_score(
 
 
 def _safe_float(val):
-    """Safely convert to float. Returns None if not convertible."""
-    if val is None or val == "" or val == "inf" or val == "Inf":
+    """Safely convert to float. Returns None if not convertible.
+
+    "∞" and equivalent strings are treated as a very large finite number (1e9)
+    so that metrics like profit_factor and payout_ratio that are mathematically
+    infinite (zero losing trades) still contribute positively to the score
+    instead of being silently dropped as N/D.
+    """
+    if val is None or val == "":
         return None
+    # Infinity representations coming from metrics.fmt_pf()
+    if val in ("∞", "inf", "Inf", "+inf", "+Inf", "Infinity", float("inf")):
+        return 1e9
     try:
         f = float(val)
-        if math.isinf(f) or math.isnan(f):
+        if math.isnan(f):
             return None
+        if math.isinf(f):
+            return 1e9 if f > 0 else -1e9
         return f
     except (ValueError, TypeError):
         return None
@@ -541,8 +555,6 @@ def get_all_validator_results(parsed_data: dict, config: dict, store: dict) -> l
     Build the full validator table for all active EAs that have a magic number.
     Returns list of dicts with name, magic, live metrics, bt data, and score.
     """
-    from metrics import calculate_ea_metrics
-
     results = []
     mappings = config.get("mappings", {})
 

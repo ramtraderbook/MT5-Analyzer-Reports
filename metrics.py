@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta
 
 import numpy as np
 
-TODAY = date.today()
+TODAY = date.today()  # kept for backwards-compat imports; prefer date.today() inline
+
 
 EA_COLORS = [
     "#4FC3F7",
@@ -74,8 +75,10 @@ def _build_equity_curve(trades_sorted):
     for trade in trades_sorted:
         close_dt = trade["close_time"]
         if close_dt is None:
-            # Skip trades with no close_time — they don't belong in the equity curve
-            pnl += trade["net_pnl"]  # still accumulate P&L
+            # Trades without close_time are excluded from the equity curve entirely.
+            # Including their P&L silently would cause the curve to misrepresent
+            # drawdown peaks — the curve would show a lower peak than what actually
+            # occurred, making max DD appear artificially small.
             continue
         if isinstance(close_dt, str):
             close_dt = datetime.fromisoformat(close_dt)
@@ -141,12 +144,12 @@ def _calc_max_drawdown(equity_curve, capital):
 
 
 def _calc_stagnation(last_peak_date_str):
-    """Days from last equity peak to today."""
+    """Days from last equity peak to today. Evaluated at call time, not module load."""
     if not last_peak_date_str:
         return 0
     try:
         last_peak = date.fromisoformat(last_peak_date_str)
-        return max(0, (TODAY - last_peak).days)
+        return max(0, (date.today() - last_peak).days)
     except (ValueError, TypeError):
         return 0
 
@@ -286,11 +289,9 @@ def _calc_rolling_metrics(trades_sorted: list, window: int) -> list:
         pf = round(gp / gl, 3) if gl > 0 else None
 
         ct = chunk[-1]["close_time"]
-        if isinstance(ct, str):
-            ct = ct  # keep ISO string
-        elif hasattr(ct, "isoformat"):
+        if hasattr(ct, "isoformat"):
             ct = ct.isoformat()
-
+        # already a string — use as-is
         result.append(
             {
                 "index": i + 1,
@@ -305,8 +306,13 @@ def _calc_rolling_metrics(trades_sorted: list, window: int) -> list:
 
 
 def _weeks_operating(trades_sorted):
-    """Weeks from first to last trade close_time."""
-    if len(trades_sorted) < 2:
+    """Weeks from first trade close_time to today.
+
+    Using today (not the last trade date) correctly captures how long the EA
+    has been running — including any recent inactivity period. The validator
+    guard logic relies on this to detect EAs that stopped trading.
+    """
+    if not trades_sorted:
         return 0.0
 
     def to_dt(t):
@@ -316,10 +322,10 @@ def _weeks_operating(trades_sorted):
         return ct
 
     first = to_dt(trades_sorted[0])
-    last = to_dt(trades_sorted[-1])
-    if first and last:
-        delta = last - first
-        return round(delta.total_seconds() / (7 * 86400), 1)
+    if first is None:
+        return 0.0
+    delta = datetime.combine(date.today(), datetime.min.time()) - first
+    return round(delta.total_seconds() / (7 * 86400), 1)
     return 0.0
 
 
@@ -402,8 +408,10 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     )
     stagnation_days = _calc_stagnation(last_peak_date)
 
+    # ret_dd and recovery_factor are the same ratio — calculated once.
+    # ret_dd is the canonical key used internally and by the validator.
+    # recovery_factor is kept as an alias in the output dict for template compatibility.
     ret_dd = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
-    recovery_factor = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
 
     sqn_val, sqn_note, sqn_label = _calc_sqn(net_pnl_list)
     sharpe = _calc_sharpe(net_pnl_list)
@@ -452,9 +460,7 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
         "max_dd_dollar": max_dd_dollar,
         "max_dd_pct": round(max_dd_pct, 2),
         "ret_dd": round(ret_dd, 2) if ret_dd is not None else None,
-        "recovery_factor": round(recovery_factor, 2)
-        if recovery_factor is not None
-        else None,
+        "recovery_factor": round(ret_dd, 2) if ret_dd is not None else None,
         "sqn": sqn_val,
         "sqn_note": sqn_note,
         "sqn_label": sqn_label,
@@ -558,7 +564,6 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
     stagnation_days = _calc_stagnation(last_peak_date)
 
     ret_dd = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
-    recovery_factor = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
 
     sqn_val, sqn_note, sqn_label = _calc_sqn(net_pnl_list)
     sharpe = _calc_sharpe(net_pnl_list)
@@ -598,9 +603,7 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         "max_dd_dollar": max_dd_dollar,
         "max_dd_pct": round(max_dd_pct, 2),
         "ret_dd": round(ret_dd, 2) if ret_dd is not None else None,
-        "recovery_factor": round(recovery_factor, 2)
-        if recovery_factor is not None
-        else None,
+        "recovery_factor": round(ret_dd, 2) if ret_dd is not None else None,
         "sqn": sqn_val,
         "sqn_note": sqn_note,
         "sqn_label": sqn_label,
@@ -639,11 +642,12 @@ def calculate_all_metrics(parsed_data: dict, config: dict) -> dict:
         metrics = calculate_ea_metrics(ea_name, ea_trades, config)
         by_ea[ea_name] = metrics
 
-        # Assign color
-        if len(ea_names) <= len(EA_COLORS):
-            ea_colors[ea_name] = EA_COLORS[i % len(EA_COLORS)]
+        # Assign color: use the fixed palette first; generate HSL only beyond it.
+        # Previous logic used palette for ≤12 EAs and HSL for ALL when >12,
+        # discarding the defined colors entirely in the common >12 case.
+        if i < len(EA_COLORS):
+            ea_colors[ea_name] = EA_COLORS[i]
         else:
-            # Generate colors with HSL distributed uniformly
             hue = int((i / len(ea_names)) * 360)
             ea_colors[ea_name] = f"hsl({hue}, 70%, 60%)"
 

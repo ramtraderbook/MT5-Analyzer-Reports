@@ -419,10 +419,6 @@ def evaluate_cp2(live_metrics, reference_data):
 
     for output_key, live_key, mc_key, higher_is_better in metric_specs:
         live_value = _safe_float(live_metrics.get(live_key), 0.0)
-        if output_key == "avg_trade":
-            live_value = _safe_float(live_metrics.get("expectancy"), 0.0)
-        if output_key == "max_consec_losses":
-            live_value = _safe_float(live_metrics.get("max_consec_losses"), 0.0)
 
         mc50 = _safe_float(mc50_bundle["worst"].get(mc_key))
         mc95 = _safe_float(mc95_bundle["worst"].get(mc_key))
@@ -810,8 +806,13 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
         + category_scores["sample"]["score"] * category_scores["sample"]["weight"]
     )
 
+    # Detect metrics below MC95 threshold.
+    # "avg_trade" and "expectancy" share the same live source — deduplicate by
+    # skipping "avg_trade" here to avoid counting the same value twice.
     below_mc95 = []
     for key, spec in metric_sources.items():
+        if key == "avg_trade":
+            continue  # same live value as "expectancy", would double-count
         live_value = spec["live"]
         if live_value is None or spec["mc95"] is None or spec["mc50"] is None:
             continue
