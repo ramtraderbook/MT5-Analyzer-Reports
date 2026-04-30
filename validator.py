@@ -4,9 +4,10 @@ Implementación Python del EA_Validator_Final_v2.xlsx
 Compara resultados LIVE (MT5) vs Backtest (SQX/manual) por magic number.
 """
 
-import json
 import math
 import os
+
+from local_json import load_local_json, save_local_json
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VALIDATOR_STORE_PATH = os.path.join(APP_DIR, "validator_store.json")
@@ -56,18 +57,11 @@ def _pts(estado: str) -> int:
 
 
 def load_validator_store() -> dict:
-    if os.path.exists(VALIDATOR_STORE_PATH):
-        try:
-            with open(VALIDATOR_STORE_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    return load_local_json(VALIDATOR_STORE_PATH, {})
 
 
 def save_validator_store(store: dict):
-    with open(VALIDATOR_STORE_PATH, "w", encoding="utf-8") as f:
-        json.dump(store, f, indent=2, ensure_ascii=False)
+    save_local_json(VALIDATOR_STORE_PATH, store)
 
 
 def timeframe_to_hours(tf: str) -> float:

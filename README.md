@@ -61,6 +61,8 @@ python ea_analyzer.py
 
 Abre `http://localhost:5000` en tu navegador.
 
+En el primer arranque, la app crea archivos locales ignorados (`config.json`, `validator_store.json`, `incubation_config.json`, `incubation_store.json`) a partir de las plantillas `*.example.json`.
+
 ---
 
 ## Archivos principales
@@ -83,7 +85,10 @@ Abre `http://localhost:5000` en tu navegador.
 | `config.json` | Magic numbers, alias, capital por EA |
 | `.secret_key` | Clave Flask para sesiones |
 | `validator_store.json` | Datos de backtest ingresados |
+| `incubation_config.json` | Mapping local de EAs en incubación |
+| `incubation_store.json` | Referencias BT/MC/SPP locales |
 | `runtime_cache/` | Cache de trades parseados por sesión (live + incubación) |
 | `uploads/*.xlsx` | Archivos MT5 subidos |
+| `_debug_*.py` | Scripts temporales de depuración local |
 
 ---

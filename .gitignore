@@ -1,7 +1,10 @@
 # Config & secrets (local only)
 config.json
+incubation_config.json
+incubation_store.json
 .secret_key
 validator_store.json
+_debug_*.py
 
 # Flask session cache
 cache_*.json

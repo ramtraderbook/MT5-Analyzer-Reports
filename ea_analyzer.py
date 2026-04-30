@@ -36,6 +36,7 @@ from validator import (
     save_validator_store,
     timeframe_to_hours,
 )
+from local_json import load_local_json, save_local_json
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Setup
@@ -82,6 +83,18 @@ ANALYSIS_MODES = {
 INCUBATION_CACHE_PREFIX = "incubation_cache_"
 INCUBATION_STORE_PATH = os.path.join(APP_DIR, "incubation_store.json")
 INCUBATION_CONFIG_PATH = os.path.join(APP_DIR, "incubation_config.json")
+LIVE_CONFIG_DEFAULT = {
+    "mappings": {},
+    "last_file": None,
+    "last_updated": None,
+    "loaded_files_live": [],
+}
+INCUBATION_CONFIG_DEFAULT = {
+    "mappings": {},
+    "last_file": None,
+    "last_updated": None,
+    "loaded_files_incubation": [],
+}
 
 
 def _get_metrics_cached(parsed_data: dict, config: dict) -> dict:
@@ -122,13 +135,7 @@ def invalidate_metrics_cache():
 
 
 def load_config():
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"mappings": {}, "last_file": None, "last_updated": None}
+    return load_local_json(CONFIG_PATH, LIVE_CONFIG_DEFAULT)
 
 
 def _normalize_analysis_mode(value):
@@ -150,38 +157,23 @@ def inject_analysis_mode():
 
 
 def save_config(config):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    save_local_json(CONFIG_PATH, config)
 
 
 def load_incubation_store():
-    if os.path.exists(INCUBATION_STORE_PATH):
-        try:
-            with open(INCUBATION_STORE_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    return load_local_json(INCUBATION_STORE_PATH, {})
 
 
 def save_incubation_store(data):
-    with open(INCUBATION_STORE_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    save_local_json(INCUBATION_STORE_PATH, data)
 
 
 def load_incubation_config():
-    if os.path.exists(INCUBATION_CONFIG_PATH):
-        try:
-            with open(INCUBATION_CONFIG_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"mappings": {}, "last_file": None, "last_updated": None}
+    return load_local_json(INCUBATION_CONFIG_PATH, INCUBATION_CONFIG_DEFAULT)
 
 
 def save_incubation_config(data):
-    with open(INCUBATION_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    save_local_json(INCUBATION_CONFIG_PATH, data)
 
 
 def migrate_incubation_store():
@@ -2019,12 +2011,7 @@ def reset_all_live():
     save_config(config)
 
     # Clear validator backtest data
-    validator_store_path = os.path.join(APP_DIR, "validator_store.json")
-    try:
-        with open(validator_store_path, "w", encoding="utf-8") as f:
-            json.dump({}, f)
-    except OSError:
-        pass
+    save_validator_store({})
 
     flash("Reset completo Live — todos los datos eliminados.", "success")
     return redirect(url_for("index"))
