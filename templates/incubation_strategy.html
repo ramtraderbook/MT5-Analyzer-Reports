@@ -172,23 +172,14 @@
         </div>
         {% endif %}
 
-        {# Contextual next-step hint #}
-        <div class="inc-vcard-reason">
-            {% if current_verdict_card.verdict == 'CONTINUAR' %}
-                ✓ Todos los gates pasan. Acumula más trades para avanzar al siguiente checkpoint.
-            {% elif current_verdict_card.verdict == 'OBSERVAR' %}
-                ⚠ Hay desviaciones respecto al BT/MC. Monitorea de cerca antes de decidir.
-            {% elif current_verdict_card.verdict == 'ELIMINAR' %}
-                {% if current_verdict_card.checkpoint == 'PRE_CP1' %}
-                    ✗ Deadline de frecuencia superado: la EA no alcanzó 5 trades en el tiempo esperado. La frecuencia live no coincide con el backtesting.
-                {% else %}
-                    ✗ La estrategia está fuera de las expectativas de referencia. Considera descartarla.
-                {% endif %}
-            {% elif current_verdict_card.verdict == 'APROBAR' %}
-                ✓ La estrategia cumple las expectativas del backtest y MC. Lista para operativa real.
-            {% else %}
-                Carga datos de referencia BT/MC para iniciar la evaluación.
-            {% endif %}
+        {# Human verdict reading #}
+        {% set reading = current_verdict_card.verdict_reading %}
+        <div class="inc-vcard-reason inc-vcard-reason-{{ reading.tone }}">
+            <div class="inc-vcard-reason-title">
+                <span class="inc-vcard-reason-icon">{{ reading.icon }}</span>
+                {{ reading.title }}
+            </div>
+            <div class="inc-vcard-reason-message">{{ reading.message }}</div>
         </div>
 
     </div>

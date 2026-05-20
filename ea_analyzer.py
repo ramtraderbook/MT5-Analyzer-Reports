@@ -1658,6 +1658,12 @@ def _incubation_verdict_card(evaluation):
             "summary": "Cargar datos de referencia BT/MC/SPP",
             "hard_gates": [],
             "reason": "No reference data",
+            "verdict_reading": {
+                "icon": "ℹ",
+                "title": "Lectura del veredicto",
+                "message": "Faltan datos de referencia para explicar el estado de esta estrategia.",
+                "tone": "neutral",
+            },
             "failing_metrics": [],
         }
 
@@ -1701,6 +1707,8 @@ def _incubation_verdict_card(evaluation):
                 key in {"max_dd_pct", "max_consec_losses", "stagnation_days"},
             )["score_band"] == "below_mc95":
                 failing_metrics.append(key)
+
+    verdict_reading = _incubation_verdict_reading(evaluation, hard_gates, failing_metrics)
 
     if verdict == "ELIMINAR":
         if details.get("freq_deadline"):
@@ -1751,11 +1759,117 @@ def _incubation_verdict_card(evaluation):
         "summary": _incubation_metric_summary_for_tooltip(evaluation),
         "hard_gates": hard_gates,
         "reason": reason,
+        "verdict_reading": verdict_reading,
         "failing_metrics": failing_metrics,
         "escalation_from_cp2": bool(details.get("escalation_from_cp2")),
         "category_scores": details.get("category_scores", {}),
         "freq_deadline_info": freq_deadline_info,
     }
+
+
+def _incubation_fmt_pct(value):
+    if isinstance(value, (int, float)):
+        return f"{value:.0f}%" if float(value).is_integer() else f"{value:.2f}%"
+    return "—"
+
+
+def _incubation_verdict_reading(evaluation, hard_gates, failing_metrics):
+    details = evaluation.get("details", {}) if evaluation else {}
+    verdict = evaluation.get("verdict", "PENDING") if evaluation else "PENDING"
+    checkpoint = evaluation.get("current_checkpoint", "PENDING") if evaluation else "PENDING"
+    total_trades = evaluation.get("total_trades") or details.get("total_trades") or 0
+
+    base = {
+        "icon": "ℹ",
+        "title": "Lectura del veredicto",
+        "message": "Estado pendiente de interpretación.",
+        "tone": "neutral",
+    }
+
+    if verdict == "ELIMINAR":
+        base.update({"icon": "✕", "title": "Motivo principal de eliminación", "tone": "danger"})
+
+        if details.get("freq_deadline"):
+            base["message"] = "No generó suficientes operaciones dentro del tiempo esperado para esta etapa."
+            return base
+
+        failed = [gate for gate in hard_gates if not gate.get("passed")]
+        failed_keys = [gate.get("key") for gate in failed]
+
+        if "win_rate_binomial" in failed_keys:
+            gate = next((g.get("value", {}) for g in failed if g.get("key") == "win_rate_binomial"), {})
+            live_wr = gate.get("live_wr")
+            n = gate.get("n") or total_trades
+            base["message"] = f"Ganó muy pocas operaciones para esta etapa: solo {_incubation_fmt_pct(live_wr)} de aciertos en {n} trades."
+            return base
+
+        if "dd_extreme" in failed_keys:
+            gate = next((g.get("value", {}) for g in failed if g.get("key") == "dd_extreme"), {})
+            live = _incubation_fmt_pct(gate.get("live_value"))
+            threshold = _incubation_fmt_pct(gate.get("threshold"))
+            base["message"] = f"El drawdown superó el límite esperado para esta etapa: {live} frente a un límite de {threshold}."
+            return base
+
+        if "max_consec_losses" in failed_keys:
+            gate = next((g.get("value", {}) for g in failed if g.get("key") == "max_consec_losses"), {})
+            live = gate.get("live_value", "—")
+            limit = gate.get("mc95_value", "—")
+            base["message"] = f"Acumuló demasiadas pérdidas consecutivas para esta etapa: {live} seguidas frente a un límite de {limit}."
+            return base
+
+        if failing_metrics:
+            base["message"] = _incubation_metric_reason_message(failing_metrics[0], eliminated=True)
+            return base
+
+        base["message"] = "El resultado quedó por debajo del mínimo esperado para esta etapa."
+        return base
+
+    if verdict == "OBSERVAR":
+        base.update({"icon": "⚠", "title": "Motivo principal de observación", "tone": "warning"})
+        if failing_metrics:
+            base["message"] = _incubation_metric_reason_message(failing_metrics[0], eliminated=False)
+        else:
+            base["message"] = "La estrategia muestra señales de deterioro, pero todavía no suficientes para eliminarla."
+        return base
+
+    if verdict == "APROBAR":
+        base.update({"icon": "✓", "title": "Motivo principal de aprobación", "tone": "success"})
+        base["message"] = "Completó la incubación manteniéndose dentro de los parámetros esperados."
+        return base
+
+    if verdict == "CONTINUAR":
+        base.update({"icon": "✓", "title": "Motivo principal para continuar", "tone": "success"})
+        if checkpoint == "CP1":
+            base["message"] = "Pasó los controles principales y necesita más trades para confirmar su comportamiento."
+        elif checkpoint == "CP2":
+            base["message"] = "Se mantiene dentro de las bandas esperadas y debe seguir acumulando evidencia."
+        else:
+            base["message"] = "La estrategia sigue dentro de los límites esperados para esta etapa."
+        return base
+
+    if verdict == "PENDING":
+        base.update({"icon": "…", "title": "Motivo del estado pendiente", "tone": "neutral"})
+        base["message"] = "Todavía está acumulando operaciones; necesita más datos antes de tomar una decisión."
+        return base
+
+    return base
+
+
+def _incubation_metric_reason_message(metric_key, eliminated=False):
+    severity = "fuera de lo esperado" if eliminated else "por debajo de lo ideal"
+    messages = {
+        "win_rate": f"Ganó menos operaciones de las esperadas y quedó {severity}.",
+        "profit_factor": f"La relación entre ganancias y pérdidas quedó {severity}.",
+        "expectancy": f"El resultado promedio por operación quedó {severity}.",
+        "avg_trade": f"El beneficio promedio por trade quedó {severity}.",
+        "max_dd_pct": f"El drawdown quedó {severity} para esta etapa.",
+        "max_consec_losses": f"La racha de pérdidas consecutivas quedó {severity}.",
+        "payout_ratio": f"La relación entre trades ganadores y perdedores quedó {severity}.",
+        "ret_dd_ratio": f"La recompensa frente al drawdown quedó {severity}.",
+        "stagnation_days": f"Pasó demasiado tiempo sin recuperar un nuevo máximo de equity.",
+        "frequency": f"La frecuencia de operaciones quedó {severity}.",
+    }
+    return messages.get(metric_key, f"Una métrica clave quedó {severity}.")
 
 
 def _incubation_timeline_from_entry(entry):

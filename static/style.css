@@ -2824,10 +2824,67 @@ code {
     font-size: 0.82rem;
     color: var(--text-secondary);
     line-height: 1.5;
-    padding: 10px 14px;
+    padding: 12px 14px;
     background: rgba(255,255,255,0.025);
     border-radius: 7px;
     border-left: 2px solid var(--border);
+}
+
+.inc-vcard-reason-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-primary);
+}
+
+.inc-vcard-reason-icon {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    background: rgba(255,255,255,0.06);
+}
+
+.inc-vcard-reason-message {
+    color: var(--text-secondary);
+}
+
+.inc-vcard-reason-danger {
+    background: rgba(255, 82, 82, 0.055);
+    border-left-color: var(--loss);
+}
+
+.inc-vcard-reason-danger .inc-vcard-reason-icon,
+.inc-vcard-reason-danger .inc-vcard-reason-title {
+    color: var(--loss);
+}
+
+.inc-vcard-reason-warning {
+    background: rgba(255, 193, 7, 0.055);
+    border-left-color: #ffc107;
+}
+
+.inc-vcard-reason-warning .inc-vcard-reason-icon,
+.inc-vcard-reason-warning .inc-vcard-reason-title {
+    color: #ffc107;
+}
+
+.inc-vcard-reason-success {
+    background: rgba(76, 175, 80, 0.055);
+    border-left-color: var(--profit);
+}
+
+.inc-vcard-reason-success .inc-vcard-reason-icon,
+.inc-vcard-reason-success .inc-vcard-reason-title {
+    color: var(--profit);
 }
 
 .inc-vcard-escalation {
