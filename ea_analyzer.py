@@ -217,6 +217,17 @@ def migrate_incubation_store():
         if "monte_carlo" not in data:
             data["monte_carlo"] = None
 
+        # Defensive backfill (design §2, F4 correction): every entry should
+        # carry a `date_added` -- the authoritative incubation clock start
+        # (`_incubation_start_date` in incubation_validator.py). Not
+        # currently reachable (existing stores have no entries lacking it,
+        # since ea_analyzer.py stamps it on every save), but a migration
+        # must not leave an entry without a clock start if one is ever
+        # loaded from an older/foreign store.
+        if not data.get("date_added"):
+            data["date_added"] = str(date.today())
+            modified = True
+
     if modified:
         save_incubation_store(store)
 
@@ -548,7 +559,15 @@ def _build_incubation_dashboard():
                 elif verdict == "SIN DATOS":
                     sin_datos_count += 1
 
-            if evaluation:
+            # F5 correction: SIN DATOS is deliberately never persisted into a
+            # cp1/cp2/cp3 slot (design §1), so `current_result_from_entry`
+            # would fall back to whatever CONFIDENT result is still sitting
+            # in a stale slot and overwrite score_display with a numeric
+            # score that no longer applies -- a row would render
+            # "SIN DATOS" next to a stale "72.50". Skip the stale-slot
+            # lookup entirely when the current verdict is SIN DATOS so the
+            # placeholder set above ("--") survives.
+            if evaluation and verdict != "SIN DATOS":
                 checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
                 if checkpoint_record:
                     score_display = (
