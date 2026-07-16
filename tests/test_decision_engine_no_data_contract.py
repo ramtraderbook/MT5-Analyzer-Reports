@@ -16,6 +16,7 @@ import math
 import pytest
 
 from incubation_validator import (
+    SPP_ADJUSTMENT_ENABLED,
     _binomial_p_value,
     _mc_source_bundle,
     _score_metric,
@@ -399,36 +400,63 @@ def test_spp_confidence_lower_is_better_orientation_is_original_over_median():
     assert conf == pytest.approx(8.0 / 6.0)
 
 
+def test_spp_confidence_median_zero_returns_none_no_crash():
+    """Defense in depth (F1 correction): a median of exactly 0 used to
+    divide-by-zero in the lower-is-better branch (`original / median`).
+    Guarded even though the adjustment itself is currently disabled."""
+    reference_data = {"backtest": {"max_dd_pct": 8.0}, "spp": {"median_max_dd_pct": 0.0}}
+    assert _spp_confidence(reference_data, "max_dd_pct", higher_is_better=False) is None
+
+    reference_data_hib = {"backtest": {"payout_ratio": 1.0}, "spp": {"median_payout_ratio": 0.0}}
+    assert _spp_confidence(reference_data_hib, "payout_ratio", higher_is_better=True) is None
+
+
+def test_spp_adjustment_is_disabled_module_flag():
+    """F1 (CRITICAL): the SPP adjustment was DEAD since inception
+    (`orig_vs_median_pct` had zero write sites). Reviving it introduced a
+    ZeroDivisionError and a blend that only ever lowers scores -- verified
+    strict downgrades: payout 24.14->23.14, max_dd 38.33->34.46. Disabled
+    explicitly pending a redesign of the blend semantics (follow-up)."""
+    assert SPP_ADJUSTMENT_ENABLED is False
+
+
+# Physically plausible MC ordering for a higher-is-better metric: the
+# original backtest run is the best-known result, MC50 is a moderate
+# degradation, MC95 is the worst-case degradation (bt >= mc50 >= mc95). The
+# pre-correction fixture violated this (bt=1.0 while mc95=1.45/mc50=1.6 --
+# the "worst case" was BETTER than the actual backtest), which the design
+# flagged as physically impossible (F6).
 _CP2_SPP_REFERENCE = {
     "date_added": "2020-01-01",
-    "backtest": {"win_rate": 55, "total_trades": 300, "bt_period": "2015.01.01 - 2020.01.01", "payout_ratio": 1.0},
+    "backtest": {"win_rate": 55, "total_trades": 300, "bt_period": "2015.01.01 - 2020.01.01", "payout_ratio": 2.0},
     "mc_manipulation": {
         "confidence_95": {
             "win_rate": 40, "profit_factor": 1.0, "expectancy": 10, "avg_trade": 10,
-            "max_dd_pct": 12, "max_consec_losses": 8, "payout_ratio": 1.45,
+            "max_dd_pct": 12, "max_consec_losses": 8, "payout_ratio": 1.0,
         },
         "confidence_50": {
             "win_rate": 48, "profit_factor": 1.4, "expectancy": 15, "avg_trade": 15,
-            "max_dd_pct": 10, "max_consec_losses": 6, "payout_ratio": 1.6,
+            "max_dd_pct": 10, "max_consec_losses": 6, "payout_ratio": 1.5,
         },
     },
-    "spp": {"median_payout_ratio": 1.4},
+    "spp": {"median_payout_ratio": 2.8},
 }
 _CP2_SPP_LIVE = {
     "total_trades": 25, "win_rate": 55, "profit_factor": 1.8, "expectancy": 20.0,
-    "payout_ratio": 1.4, "max_dd_pct": 8.0, "max_consec_losses": 4,
+    "payout_ratio": 0.8, "max_dd_pct": 8.0, "max_consec_losses": 4,
 }
 
 
-def test_cp2_rescue_fires_for_the_first_time_with_correct_orientation():
-    """median (1.4) is 40% above original bt (1.0) -> conf=1.4>1.3, live
-    sits exactly at the median -> payout_ratio rescued from failing to
-    acceptable. This code path was dead before the orientation fix (design
-    §5) because it read the never-populated orig_vs_median_pct ratios."""
+def test_cp2_spp_disabled_does_not_rescue_a_failing_status():
+    """payout_ratio live (0.8) sits below MC95 (1.0) -> failing on the raw
+    bands. The SPP median (2.8) is >=130% of the original bt (2.0), which
+    would have rescued the metric to "acceptable" under the old (buggy)
+    blend -- but the adjustment is disabled (F1), so the status and
+    spp_adjustments must be unaffected by the SPP data."""
     result = evaluate_cp2(_CP2_SPP_LIVE, _CP2_SPP_REFERENCE)
 
-    assert result["metrics_evaluation"]["payout_ratio"]["status"] == "acceptable"
-    assert "payout_ratio" in result["spp_adjustments"]
+    assert result["metrics_evaluation"]["payout_ratio"]["status"] == "failing"
+    assert result["spp_adjustments"] == []
 
 
 def test_cp2_spp_absent_no_adjustment_and_still_a_confident_verdict():
@@ -443,27 +471,32 @@ def test_cp2_spp_absent_no_adjustment_and_still_a_confident_verdict():
     assert not result.get("sin_datos")
 
 
-def test_cp3_spp_blend_shifts_score_first_ever_activation():
+def test_cp3_spp_disabled_does_not_change_the_score():
+    """Same physically plausible MC ordering as the CP2 fixture (bt >= mc50
+    >= mc95 for a higher-is-better metric). While SPP_ADJUSTMENT_ENABLED is
+    False, presence/absence of SPP data must produce IDENTICAL scores and
+    empty spp_adjustments both ways -- SPP no longer influences any verdict
+    or score (F1)."""
     reference_data = {
         "date_added": "2020-01-01",
         "backtest": {
-            "win_rate": 55, "profit_factor": 1.8, "expectancy": 20.0, "payout_ratio": 1.5,
+            "win_rate": 55, "profit_factor": 1.8, "expectancy": 20.0, "payout_ratio": 2.0,
             "ret_dd_ratio": 2.0, "max_dd_pct": 8.0, "max_consec_losses": 4, "stagnation_days": 10,
             "total_trades": 300, "bt_period": "2015.01.01 - 2020.01.01",
         },
         "mc_manipulation": {
             "confidence_95": {
                 "win_rate": 40, "profit_factor": 1.0, "expectancy": 10, "avg_trade": 10,
-                "payout_ratio": 1.45, "ret_dd_ratio": 1.0, "max_dd_pct": 12,
+                "payout_ratio": 1.0, "ret_dd_ratio": 1.0, "max_dd_pct": 12,
                 "max_consec_losses": 8, "stagnation_days": 30,
             },
             "confidence_50": {
                 "win_rate": 48, "profit_factor": 1.4, "expectancy": 15, "avg_trade": 15,
-                "payout_ratio": 1.6, "ret_dd_ratio": 1.5, "max_dd_pct": 10,
+                "payout_ratio": 1.5, "ret_dd_ratio": 1.5, "max_dd_pct": 10,
                 "max_consec_losses": 6, "stagnation_days": 20,
             },
         },
-        "spp": {"median_payout_ratio": 2.0},
+        "spp": {"median_payout_ratio": 2.8},
     }
     live_metrics = {
         "total_trades": 80,
@@ -475,9 +508,10 @@ def test_cp3_spp_blend_shifts_score_first_ever_activation():
     with_spp = evaluate_cp3(live_metrics, reference_data)
     without_spp = evaluate_cp3(live_metrics, {k: v for k, v in reference_data.items() if k != "spp"})
 
-    assert "payout_ratio" in with_spp["spp_adjustments"]
+    assert with_spp["spp_adjustments"] == []
     assert without_spp["spp_adjustments"] == []
-    assert with_spp["metrics_scores"]["payout_ratio"]["score"] != without_spp["metrics_scores"]["payout_ratio"]["score"]
+    assert with_spp["metrics_scores"]["payout_ratio"]["score"] == without_spp["metrics_scores"]["payout_ratio"]["score"]
+    assert with_spp["score"] == without_spp["score"]
 
 
 # ── 11. Zero-loss EA: payout_ratio "∞" -> OK, not FUERA ─────────────────────
@@ -556,6 +590,220 @@ def test_metric_summary_for_tooltip_cp3_none_score_no_crash():
     summary = metric_summary_for_tooltip(evaluation)
 
     assert summary == "SIN DATOS: 2 campos faltantes"
+
+
+# ── 14. validator: N/D must not reach scoring (F2 correction round) ────────
+# The design §6 claim "no scored estado can be N/D when a verdict is
+# emitted" was false: the presence-only gate let degenerate-but-present
+# values (weeks_live<=0, a reference field literally 0) fall through to a
+# confident CONTINUAR verdict with one or more estados silently "N/D".
+
+
+def test_validator_weeks_operating_zero_day_one_scalper_is_sin_datos():
+    """An EA that closes 5+ trades on its FIRST DAY has weeks_operating=0.
+    Both the DD-escalado and Frecuencia branches require weeks_live > 0;
+    with no MC fallback, both computed "N/D" while every OTHER estado
+    stayed confident -- this used to reach veredicto=CONTINUAR score=74.2
+    missing=[]. Must now be SIN DATOS."""
+    live = dict(_VALIDATOR_LIVE)
+    live["weeks_operating"] = 0
+
+    result = calculate_validator_score(
+        bt=_VALIDATOR_BT_FULL, mc_retest={}, mc_trades={}, spp={"expectancy_median": 10.0}, live=live
+    )
+
+    assert result["veredicto"] == "SIN DATOS"
+    assert result["score"] is None
+    assert result["sin_datos"] is True
+    assert "dd_estado" in result["missing"]
+    assert "freq_estado" in result["missing"]
+    assert "live.weeks_operating" in result["missing"]
+
+
+def test_validator_worst_dd_1m_zero_no_mc_fallback_is_sin_datos():
+    """bt.worst_dd_1m present but literally 0.0 (degenerate, not missing)
+    with no MC reference to fall back on: dd_estado computed "N/D" while
+    freq_estado stayed confident (weeks_live > 0) -- this used to reach
+    veredicto=CONTINUAR score=78.0 missing=[]. Must now be SIN DATOS."""
+    bt = dict(_VALIDATOR_BT_FULL)
+    bt["worst_dd_1m"] = 0.0
+
+    result = calculate_validator_score(
+        bt=bt, mc_retest={}, mc_trades={}, spp={"expectancy_median": 10.0}, live=_VALIDATOR_LIVE
+    )
+
+    assert result["veredicto"] == "SIN DATOS"
+    assert result["score"] is None
+    assert "dd_estado" in result["missing"]
+    assert "bt.worst_dd_1m" in result["missing"]
+    assert "freq_estado" not in result["missing"]  # frequency stayed usable
+
+
+def test_validator_spp_expect_median_zero_is_sin_datos():
+    """spp.expectancy_median present but literally 0 (degenerate, not
+    missing per the presence gate) makes edge_estado's percentage-erosion
+    computation ill-defined -> N/D. Must be SIN DATOS, not a confident
+    verdict that silently ignores the edge dimension."""
+    result = calculate_validator_score(
+        bt=_VALIDATOR_BT_FULL, mc_retest={"max_dd": 12}, mc_trades={"max_dd": 14},
+        spp={"expectancy_median": 0.0}, live=_VALIDATOR_LIVE,
+    )
+
+    assert result["veredicto"] == "SIN DATOS"
+    assert result["score"] is None
+    assert "edge_estado" in result["missing"]
+    assert "spp.expectancy_median" in result["missing"]
+
+
+# ── 15. incubation CP3: zero-drawdown ret_dd (F3 correction round) ─────────
+
+_CP3_FULL_REFERENCE = {
+    "date_added": "2020-01-01",
+    "backtest": {
+        "win_rate": 55, "profit_factor": 1.8, "expectancy": 20.0, "payout_ratio": 1.5,
+        "ret_dd_ratio": 2.0, "max_dd_pct": 8.0, "max_consec_losses": 4, "stagnation_days": 10,
+        "total_trades": 300, "bt_period": "2015.01.01 - 2020.01.01",
+    },
+    "mc_manipulation": {
+        "confidence_95": {
+            "win_rate": 40, "profit_factor": 1.0, "expectancy": 10, "avg_trade": 10,
+            "payout_ratio": 1.0, "ret_dd_ratio": 1.0, "max_dd_pct": 12,
+            "max_consec_losses": 8, "stagnation_days": 30,
+        },
+        "confidence_50": {
+            "win_rate": 48, "profit_factor": 1.4, "expectancy": 15, "avg_trade": 15,
+            "payout_ratio": 1.2, "ret_dd_ratio": 1.5, "max_dd_pct": 10,
+            "max_consec_losses": 6, "stagnation_days": 20,
+        },
+    },
+}
+
+
+def test_cp3_zero_drawdown_ea_with_trades_is_scored_not_sin_datos():
+    """`metrics.py` sets `ret_dd=None` whenever `max_dd_dollar <= 0`. A
+    flawless EA with 40+ trades and zero drawdown was SIN DATOS forever,
+    naming `live.ret_dd` -- a field no form can supply. Zero drawdown means
+    ret/dd is mathematically INFINITE (maximally good), not missing."""
+    live_metrics = {
+        "total_trades": 80,
+        "win_rate": 55, "profit_factor": 1.8, "expectancy": 20.0, "payout_ratio": 1.5,
+        # "ret_dd" intentionally absent -- metrics.py yields None here
+        "max_dd_pct": 0.0, "max_consec_losses": 4, "stagnation_days": 10,
+    }
+
+    result = evaluate_cp3(live_metrics, _CP3_FULL_REFERENCE)
+
+    assert result["verdict"] != "SIN DATOS"
+    assert result["score"] is not None
+    assert result["metrics_scores"]["ret_dd_ratio"]["score"] == pytest.approx(100.0)
+
+
+def test_cp3_ret_dd_none_with_nonzero_drawdown_is_still_sin_datos():
+    """ret_dd=None for any OTHER reason (non-zero drawdown) must stay
+    missing -- only the zero-drawdown case is reinterpreted as infinite."""
+    live_metrics = {
+        "total_trades": 80,
+        "win_rate": 55, "profit_factor": 1.8, "expectancy": 20.0, "payout_ratio": 1.5,
+        # "ret_dd" intentionally absent, but max_dd_pct is non-zero
+        "max_dd_pct": 8.0, "max_consec_losses": 4, "stagnation_days": 10,
+    }
+
+    result = evaluate_cp3(live_metrics, _CP3_FULL_REFERENCE)
+
+    assert result["verdict"] == "SIN DATOS"
+    assert "live.ret_dd" in result["missing"]
+
+
+# ── 16. dashboard: SIN DATOS row must not show a stale score (F5) ──────────
+
+
+def _cp3_trades(ea_name, count):
+    from datetime import datetime
+
+    return [
+        {
+            "position_id": i, "symbol": "EURUSD", "direction": "buy", "volume": 0.1,
+            "open_time": datetime(2026, 1, 1, 10, 0, 0),
+            "close_time": datetime(2026, 1, 1 + (i % 27), 12, 0, 0),
+            "open_price": 1.1, "close_price": 1.101, "sl": None, "tp": None,
+            "commission": -1.0, "swap": 0.0, "profit": 11.0, "net_pnl": 10.0,
+            "duration_hours": 2.0, "comment": ea_name,
+        }
+        for i in range(count)
+    ]
+
+
+def test_dashboard_sin_datos_row_does_not_render_a_stale_score():
+    """Reproduces the F5 bug: a checkpoint slot (cp3) still holds a numeric
+    score from an earlier CONFIDENT evaluation. The CURRENT evaluation is
+    SIN DATOS (a backtest field went missing), which is never persisted
+    into the cp3 slot (design §1) -- so `current_result_from_entry` used to
+    fall back to the stale cp3 result and unconditionally overwrite
+    score_display, rendering "SIN DATOS" next to a stale "72.50"."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": _cp3_trades("IncEA", 40)}
+    entry = {
+        "date_added": "2020-01-01",
+        "backtest": {
+            "win_rate": 55, "expectancy": 20.0, "payout_ratio": 1.5,
+            "ret_dd_ratio": 2.0, "max_dd_pct": 8.0, "max_consec_losses": 4, "stagnation_days": 10,
+            "total_trades": 300, "bt_period": "2015.01.01 - 2020.01.01",
+            # profit_factor intentionally absent -> CP3 SIN DATOS this run
+        },
+        "mc_manipulation": {
+            "confidence_95": {
+                "win_rate": 40, "profit_factor": 1.0, "expectancy": 10, "avg_trade": 10,
+                "payout_ratio": 1.0, "ret_dd_ratio": 1.0, "max_dd_pct": 12,
+                "max_consec_losses": 8, "stagnation_days": 30,
+            },
+            "confidence_50": {
+                "win_rate": 48, "profit_factor": 1.4, "expectancy": 15, "avg_trade": 15,
+                "payout_ratio": 1.2, "ret_dd_ratio": 1.5, "max_dd_pct": 10,
+                "max_consec_losses": 6, "stagnation_days": 20,
+            },
+        },
+        # Stale cp3 slot from an earlier, complete-reference evaluation.
+        "checkpoints": {
+            "cp1": None,
+            "cp2": None,
+            "cp3": {"checkpoint": "CP3", "verdict": "APROBAR", "score": 72.5},
+        },
+    }
+    store = {"IncEA": entry}
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["verdict"] == "SIN DATOS"
+    assert row["score"] != "72.50"
+    assert dashboard["sin_datos_count"] == 1
+
+
+# ── 17. incubation CP1: max_consec_losses="∞" is graceful, not a crash (F7) ─
+
+
+def test_cp1_max_consec_losses_infinity_string_is_sin_datos_not_typeerror():
+    """The completeness gate used to accept "∞" for mc95.max_consec_losses
+    (its `_safe_float` check maps "∞" -> a finite sentinel), but the
+    consumer (`_hard_gates`) reads the same field via `_safe_int`, which
+    returns None for "∞" -- `live_value <= None` then raised TypeError.
+    The gate now parses this field the same way its consumer does."""
+    reference_data = _cp1_reference({"max_dd_pct": 12.0, "max_consec_losses": "∞"})
+    live_metrics = {"total_trades": 8, "max_dd_pct": 3.0, "max_consec_losses": 2, "win_rate": 62.5}
+
+    result = evaluate_cp1(live_metrics, reference_data)  # must not raise TypeError
+
+    assert result["verdict"] == "SIN DATOS"
+    assert "mc95.max_consec_losses" in result["missing"]
 
 
 # ── MUST-NOT-CHANGE pins (design §9) ────────────────────────────────────────
