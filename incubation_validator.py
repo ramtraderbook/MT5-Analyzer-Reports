@@ -646,7 +646,9 @@ def evaluate_cp2(live_metrics, reference_data):
     failing_count = 0
 
     for output_key, live_key, mc_key, higher_is_better in metric_specs:
-        live_value = _safe_float(live_metrics.get(live_key), 0.0)
+        # No 0.0 coercion (design C6): the completeness gate above already
+        # guarantees every one of these live values is present.
+        live_value = _safe_float(live_metrics.get(live_key))
 
         mc50 = _safe_float(mc50_bundle["worst"].get(mc_key))
         mc95 = _safe_float(mc95_bundle["worst"].get(mc_key))
