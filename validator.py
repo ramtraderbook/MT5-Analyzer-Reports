@@ -433,8 +433,17 @@ def calculate_validator_score(
         bt_freq_per_month = bt_trades / bt_months
         live_freq_per_month = trades_live / (weeks_live / 4.33)
         freq_pct = (live_freq_per_month / bt_freq_per_month) * 100
+        # Two-sided, like wr_estado and bars_estado: trading far ABOVE backtest
+        # pace is a deviation too. A one-sided check read 413% of BT pace as
+        # "OK", so an EA whose character changed (grid/martingale degradation,
+        # a broker feeding duplicate signals) went unflagged -- and, since
+        # dd_limit scales on sqrt(trades), that extra pace also bought it a
+        # proportionally larger drawdown allowance with nothing to object.
+        # The under-trading boundaries are unchanged: a deviation of 30 is the
+        # old freq_pct >= 70 and a deviation of 50 is the old freq_pct >= 50.
+        freq_dev = abs(freq_pct - 100)
         freq_estado = (
-            "OK" if freq_pct >= 70 else ("ALERTA" if freq_pct >= 50 else "FUERA")
+            "OK" if freq_dev <= 30 else ("ALERTA" if freq_dev <= 50 else "FUERA")
         )
     else:
         freq_pct = None

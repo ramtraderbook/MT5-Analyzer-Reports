@@ -155,7 +155,18 @@ _VALIDATOR_BT_FULL = {
 }
 
 
-def test_validator_full_reference_preserves_monitorear_63_1():
+def test_validator_full_reference_preserves_monitorear():
+    """The full-reference fixture must keep reaching a confident MONITOREAR.
+
+    The score moved 63.1 -> 54.9 when freq_estado became two-sided. This
+    fixture trades 60 trades in 20 weeks against a backtest pace of 300/48 =
+    6.25 per month, i.e. 12.99/month = 207.8% of backtest pace. The old
+    one-sided check (`OK if freq_pct >= 70`) read that 2x over-trading as OK;
+    the two-sided check reads deviation 107.8 as FUERA, which also raises
+    detcount to 3 and flags DESV. The lower boundaries are unchanged, so this
+    is purely the newly-visible over-trading. The VERDICT is unaffected --
+    that is what this test guards.
+    """
     result = calculate_validator_score(
         bt=_VALIDATOR_BT_FULL,
         mc_retest={"max_dd": 12},
@@ -164,9 +175,12 @@ def test_validator_full_reference_preserves_monitorear_63_1():
         live=_VALIDATOR_LIVE,
     )
 
-    assert result["score"] == 63.1
+    assert result["score"] == 54.9
     assert result["veredicto"] == "MONITOREAR"
     assert result["sin_datos"] is False
+    # The fixture over-trades 2x; that must now be visible, not silent.
+    assert result["freq_estado"] == "FUERA"
+    assert result["freq_pct"] == pytest.approx(207.8, abs=0.1)
 
 
 def test_validator_missing_dd_and_spp_reference_is_sin_datos_not_eliminar():
