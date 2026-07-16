@@ -65,6 +65,16 @@ def _make_trades(n, comment, start=None):
     return trades
 
 
+def _make_winning_trades(n, comment, start=None):
+    """n winning trades, zero losses -> gross_loss == 0, so metrics.py's
+    fmt_pf() returns the string "∞" for profit_factor/payout_ratio."""
+    start = start or datetime(2026, 1, 1, 10, 0, 0)
+    trades = []
+    for i in range(n):
+        trades.append(_make_trade(3000 + i, comment, start + timedelta(days=i), 10.0, "buy"))
+    return trades
+
+
 @pytest.fixture
 def incubation_config():
     return {
@@ -237,6 +247,49 @@ class TestBuildComparisonRows:
         for row in rows:
             assert "state" in row
             assert "score_band" in row
+
+    def test_zero_loss_ea_with_reference_data_does_not_crash(
+        self, incubation_config, reference_entry_ready
+    ):
+        """
+        Regression test: metrics.calculate_ea_metrics pre-formats an
+        infinite profit_factor/payout_ratio (zero losing trades) to the
+        string "∞". With MC reference data present, build_comparison_rows
+        used to crash inside _incubation_metric_band_state with:
+            TypeError: '>=' not supported between instances of 'str' and 'float'
+        because the "∞" string was compared directly against numeric MC
+        bounds. Verified to FAIL with that TypeError against the pre-fix
+        code.
+        """
+        parsed_data = {"closed_trades": _make_winning_trades(3, "IncEA")}
+        bundle = evaluate_ea("IncEA", parsed_data, incubation_config, reference_entry_ready)
+
+        rows = build_comparison_rows(bundle["metrics"], bundle["entry"])
+
+        pf_row = next(row for row in rows if row["metric"] == "Profit Factor")
+        assert pf_row["live"] == "∞"
+        assert pf_row["state"]["score_band"] == "above_mc50"
+        assert pf_row["state"]["class"] == "cmp-green"
+
+    def test_zero_loss_ea_without_reference_data_does_not_crash(self, incubation_config):
+        """
+        Same "∞" profit_factor, but with no MC reference data at all (empty
+        entry). _incubation_metric_band_state short-circuits on None MC
+        values, so this path never reaches the comparison above -- it
+        crashes instead inside _incubation_format_metric with:
+            ValueError: Unknown format code 'f' for object of type 'str'
+        because the existing `value == float("inf")` guard never matches
+        the string "∞". Verified to FAIL with that ValueError against the
+        pre-fix code.
+        """
+        parsed_data = {"closed_trades": _make_winning_trades(3, "IncEA")}
+        bundle = evaluate_ea("IncEA", parsed_data, incubation_config, {})
+
+        rows = build_comparison_rows(bundle["metrics"], {})
+
+        pf_row = next(row for row in rows if row["metric"] == "Profit Factor")
+        assert pf_row["live"] == "∞"
+        assert pf_row["state"]["score_band"] is None
 
 
 # ── build_timeline_from_entry ────────────────────────────────────────────

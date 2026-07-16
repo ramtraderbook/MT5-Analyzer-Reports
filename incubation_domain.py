@@ -15,7 +15,7 @@ ea_analyzer.py, which calls into this module with the data it needs.
 from collections import defaultdict
 from datetime import date, datetime
 
-from incubation_validator import get_worst_case_mc
+from incubation_validator import _safe_float, get_worst_case_mc
 from trade_matching import trade_matches_ea
 
 INCUBATION_BACKTEST_FIELDS = [
@@ -672,6 +672,11 @@ def build_comparison_rows(metrics, entry):
                 "SQN Score": "sqn",
             }.get(metric, ref_key if metric != "Expectancy" else "expectancy")
         )
+        # calculate_ea_metrics pre-formats infinite ratios (profit_factor,
+        # payout_ratio) as the string "∞" for display. Coerce it back to a
+        # real float here so comparisons/formatting below don't crash; the
+        # "∞" display is restored by _incubation_format_metric.
+        live_value = _safe_float(live_value, live_value)
         bt_value = bt.get(ref_key if metric != "Ret/DD" else "ret_dd_ratio")
         if metric == "Expectancy":
             bt_value = bt.get("expectancy")
