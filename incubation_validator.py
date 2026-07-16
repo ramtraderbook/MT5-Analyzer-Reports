@@ -9,14 +9,6 @@ import math
 import re
 from datetime import date, datetime
 
-try:
-    from scipy.stats import binom
-
-    _HAS_SCIPY = True
-except Exception:  # pragma: no cover - optional dependency
-    binom = None
-    _HAS_SCIPY = False
-
 
 def _safe_float(value, default=None):
     if value is None or value == "":
@@ -127,15 +119,17 @@ def _dual_mc_sections(reference_data):
 
 
 def _mc_section_values(mc_section, confidence_level):
+    """Return the values stored at `confidence_level`, or {} if absent.
+
+    No cross-confidence aliasing: requesting confidence_50 when only
+    confidence_95 is populated returns {} (design C2). Missing keys then
+    surface through the required-set as explicit mc50.*/mc95.* SIN DATOS
+    entries instead of silently borrowing the other level's values.
+    """
     if not isinstance(mc_section, dict):
         return {}
     values = mc_section.get(confidence_level, {})
-    if isinstance(values, dict) and values:
-        return values
-
-    fallback_level = "confidence_50" if confidence_level == "confidence_95" else "confidence_95"
-    fallback = mc_section.get(fallback_level, {})
-    return fallback if isinstance(fallback, dict) else {}
+    return values if isinstance(values, dict) else {}
 
 
 def _mc_source_bundle(reference_data, confidence_level):
@@ -206,39 +200,56 @@ def get_worst_case_mc(mc_manipulation, mc_retest, confidence_level="confidence_9
 
 
 def _binomial_p_value(wins, n, p):
+    """Exact left-tail binomial CDF: P(X <= wins) for X ~ Binomial(n, p).
+
+    Computed in pure Python via math.comb -- there is no scipy dependency
+    and no normal-approximation fallback. This is the single deterministic
+    code path (docs/design/decision-engine-no-data-contract.md, C1).
+    """
     if n <= 0:
         return 1.0
+    n = int(n)
     p = max(0.0, min(1.0, p))
-    wins = max(0, min(int(wins), int(n)))
+    wins = max(0, min(int(wins), n))
 
-    if _HAS_SCIPY:
-        return float(binom.cdf(wins, n, p))
+    return sum(
+        math.comb(n, k) * (p ** k) * ((1 - p) ** (n - k))
+        for k in range(wins + 1)
+    )
 
-    variance = n * p * (1 - p)
-    if variance <= 0:
-        return 1.0 if wins >= n * p else 0.0
 
-    z = (wins - n * p) / math.sqrt(variance)
-    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+_BT_PERIOD_RE = re.compile(
+    r"(\d{4})[./-](\d{2})[./-](\d{2})\s*-\s*(\d{4})[./-](\d{2})[./-](\d{2})"
+)
 
 
 def calculate_monthly_frequency(total_trades, bt_period_str):
+    """Parse `bt_period_str` ("YYYY.MM.DD - YYYY.MM.DD", also accepting "-"
+    and "/" separators) and return the backtest's average trades/month.
+
+    Returns None (never a silent 0.0) when the period is absent or
+    unparseable, including invalid calendar dates such as month 13 --
+    callers surface that as `backtest.bt_period` in the SIN DATOS missing
+    list instead of crashing or silently defaulting (design C10).
+    """
     if not bt_period_str:
-        return 0.0
+        return None
 
-    match = re.search(
-        r"(\d{4}\.\d{2}\.\d{2})\s*-\s*(\d{4}\.\d{2}\.\d{2})",
-        str(bt_period_str).strip(),
-    )
+    match = _BT_PERIOD_RE.search(str(bt_period_str).strip())
     if not match:
-        return 0.0
+        return None
 
-    start = datetime.strptime(match.group(1), "%Y.%m.%d").date()
-    end = datetime.strptime(match.group(2), "%Y.%m.%d").date()
+    y1, m1, d1, y2, m2, d2 = match.groups()
+    try:
+        start = date(int(y1), int(m1), int(d1))
+        end = date(int(y2), int(m2), int(d2))
+    except ValueError:
+        return None
+
     days = max((end - start).days, 1)
     months = days / 30.44
     if months <= 0:
-        return 0.0
+        return None
     return float(total_trades) / months
 
 
