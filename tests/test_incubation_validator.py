@@ -208,12 +208,17 @@ def test_evaluate_cp3_below_mc95_direction_logic_lower_is_better():
     assert result["verdict"] == "OBSERVAR"
 
 
-def test_evaluate_cp3_below_mc95_none_value_is_skipped():
+def test_evaluate_cp3_mc50_absent_for_one_metric_is_sin_datos_not_silently_skipped():
     """
-    Priority 3: when mc50 is None for a metric (missing from the reference
-    data), the below_mc95 check is skipped entirely for that metric — even
-    though live (1.5) is below the overridden mc95 (2.0) and would otherwise
-    trigger the gate.
+    SUPERSEDES the old "below_mc95 skips metrics with mc50=None" pin.
+
+    Per docs/design/decision-engine-no-data-contract.md §1/§2 (the SIN DATOS
+    contract): MC50 sections are form-optional but verdict-mandatory for
+    CP2/CP3. Deleting confidence_50.payout_ratio here used to make the
+    below_mc95 gate silently skip that one metric and still return a
+    confident APROBAR verdict -- exactly the silent-default behavior the
+    contract forbids. It must now surface as an explicit SIN DATOS result
+    naming the missing field, never a scored verdict (design §8, test 2).
     """
     reference_data = _cp3_reference_data()
     reference_data["mc_manipulation"]["confidence_95"]["payout_ratio"] = 2.0
@@ -221,7 +226,10 @@ def test_evaluate_cp3_below_mc95_none_value_is_skipped():
 
     result = evaluate_cp3(_cp3_live_metrics(), reference_data)
 
-    assert result["verdict"] == "APROBAR"
+    assert result["verdict"] == "SIN DATOS"
+    assert result["score"] is None
+    assert result["sin_datos"] is True
+    assert "mc50.payout_ratio" in result["missing"]
 
 
 # ── Priority 4: CP2 -> CP3 escalation through evaluate_cp3 ──────────────────
