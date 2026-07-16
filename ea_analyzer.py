@@ -217,6 +217,17 @@ def migrate_incubation_store():
         if "monte_carlo" not in data:
             data["monte_carlo"] = None
 
+        # Defensive backfill (design §2, F4 correction): every entry should
+        # carry a `date_added` -- the authoritative incubation clock start
+        # (`_incubation_start_date` in incubation_validator.py). Not
+        # currently reachable (existing stores have no entries lacking it,
+        # since ea_analyzer.py stamps it on every save), but a migration
+        # must not leave an entry without a clock start if one is ever
+        # loaded from an older/foreign store.
+        if not data.get("date_added"):
+            data["date_added"] = str(date.today())
+            modified = True
+
     if modified:
         save_incubation_store(store)
 
@@ -464,6 +475,7 @@ def _build_incubation_dashboard():
     observar_count = 0
     continuar_count = 0
     pending_count = 0
+    sin_datos_count = 0
     active_mappings = config.get("mappings", {})
     store_dirty = False
 
@@ -503,7 +515,14 @@ def _build_incubation_dashboard():
                 url = url_for("incubation_strategy", ea_name=ea_name)
                 cp = evaluation.get("current_checkpoint", "")
                 details = evaluation.get("details", {})
-                if cp == "PRE_CP1":
+                if verdict == "SIN DATOS":
+                    # Missing required reference/live data (design §1): never
+                    # borrow a checkpoint-specific status label built for a
+                    # confident verdict.
+                    missing = evaluation.get("missing") or []
+                    status_label = f"SIN DATOS ({len(missing)})" if missing else "SIN DATOS"
+                    status_class = "verdict-no-data"
+                elif cp == "PRE_CP1":
                     status_label = "Esperando trades"
                     status_class = "verdict-pending"
                 elif cp == "CP1":
@@ -537,8 +556,18 @@ def _build_incubation_dashboard():
                     continuar_count += 1
                 elif verdict == "PENDING":
                     pending_count += 1
+                elif verdict == "SIN DATOS":
+                    sin_datos_count += 1
 
-            if evaluation:
+            # F5 correction: SIN DATOS is deliberately never persisted into a
+            # cp1/cp2/cp3 slot (design §1), so `current_result_from_entry`
+            # would fall back to whatever CONFIDENT result is still sitting
+            # in a stale slot and overwrite score_display with a numeric
+            # score that no longer applies -- a row would render
+            # "SIN DATOS" next to a stale "72.50". Skip the stale-slot
+            # lookup entirely when the current verdict is SIN DATOS so the
+            # placeholder set above ("--") survives.
+            if evaluation and verdict != "SIN DATOS":
                 checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
                 if checkpoint_record:
                     score_display = (
@@ -567,6 +596,7 @@ def _build_incubation_dashboard():
                         "ELIMINAR": "verdict-eliminate",
                         "PENDING": "verdict-pending",
                         "NO DATA": "verdict-no-data",
+                        "SIN DATOS": "verdict-no-data",
                     }.get(verdict, "verdict-pending"),
                     "has_reference": has_reference,
                     "url": url,
@@ -587,6 +617,7 @@ def _build_incubation_dashboard():
         "observar_count": observar_count,
         "continuar_count": continuar_count,
         "pending_count": pending_count,
+        "sin_datos_count": sin_datos_count,
     }
 
 
@@ -1349,6 +1380,7 @@ def incubation_dashboard():
         pending_bt_mc=dashboard_data["pending_bt_mc"],
         eliminar_count=dashboard_data["eliminar_count"],
         aprobar_count=dashboard_data["aprobar_count"],
+        sin_datos_count=dashboard_data["sin_datos_count"],
         show_sidebar=True,
         active_page="incubation_dashboard",
         filename=session.get("filename", ""),

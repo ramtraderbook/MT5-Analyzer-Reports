@@ -152,12 +152,13 @@ def calculate_validator_score(
     min_trades = CONFIG["min_trades"]
     max_wait_weeks = CONFIG["min_weeks"]
 
-    def _nd_result(veredicto, accion):
+    def _nd_result(veredicto, accion, missing=None):
         result["veredicto"] = veredicto
         result["accion"] = accion
         result["sin_datos"] = True
         result["score"] = None
         result["desv_flag"] = "-"
+        result["missing"] = missing or []
         for key in (
             "wr_delta", "wr_live", "wr_bt", "wr_estado",
             "pf_live", "pf_bt", "pf_estado",
@@ -197,6 +198,59 @@ def calculate_validator_score(
                 f"Solo {tl} trade(s) en {weeks_live:.1f} sem — "
                 f"frecuencia insuficiente vs BT tras {max_wait_weeks:.0f} sem.",
             )
+
+    # ── Completeness gate: SIN DATOS contract ──────────────────────────────
+    # Missing required reference/live data must never produce a confident
+    # verdict from a silent default
+    # (docs/design/decision-engine-no-data-contract.md §1/§2).
+    missing = []
+    if wr_live is None:
+        missing.append("live.win_rate")
+    if pf_live is None:
+        missing.append("live.profit_factor")
+    if payout_live is None:
+        missing.append("live.payout_ratio")
+    if expect_live is None:
+        missing.append("live.expectancy")
+    if max_dd_live is None:
+        missing.append("live.max_dd_pct")
+    if consec_losses_live is None:
+        missing.append("live.max_consec_losses")
+    if stagnation_live is None:
+        missing.append("live.stagnation_days")
+    if avg_bars_live is None:
+        missing.append("live.avg_bars_live")
+    if bt_wr is None:
+        missing.append("bt.win_rate")
+    if bt_pf is None:
+        missing.append("bt.profit_factor")
+    if bt_payout is None:
+        missing.append("bt.payout_ratio")
+    if bt_avg_bars is None:
+        missing.append("bt.avg_bars")
+    if bt_max_consec is None:
+        missing.append("bt.max_consec_losses")
+    if bt_trades is None:
+        missing.append("bt.trades_total")
+    if bt_months is None:
+        missing.append("bt.months")
+    # DD reference: either the BT worst-1m-DD path or BOTH MC DD values.
+    if bt_worst_dd_1m is None and not (mc_r_dd is not None and mc_t_dd is not None):
+        if bt_worst_dd_1m is None:
+            missing.append("bt.worst_dd_1m")
+        if mc_r_dd is None:
+            missing.append("mc_retest.max_dd")
+        if mc_t_dd is None:
+            missing.append("mc_trades.max_dd")
+    if spp_expect_median is None:
+        missing.append("spp.expectancy_median")
+
+    if missing:
+        return _nd_result(
+            "SIN DATOS",
+            "Completar datos de referencia: " + ", ".join(missing),
+            missing=missing,
+        )
 
     # ── Win Rate ───────────────────────────────────────────────────────────
     if wr_live is not None and bt_wr is not None:
@@ -240,7 +294,14 @@ def calculate_validator_score(
     result["pf_estado"] = pf_estado
 
     # ── Payout Ratio ───────────────────────────────────────────────────────
-    if payout_live is not None and bt_payout is not None and bt_payout != 0:
+    if payout_live is not None and payout_live >= 1e9:
+        # Zero losing trades: metrics.fmt_pf() reports payout_ratio as "∞",
+        # _safe_float maps it to a large finite sentinel (1e9). An infinite
+        # payout ratio cannot represent a deviation from BT -- treat as OK
+        # instead of letting the percentage-variance check read it as FUERA.
+        payout_var = None
+        payout_estado = "OK"
+    elif payout_live is not None and bt_payout is not None and bt_payout != 0:
         payout_var = (payout_live - bt_payout) / bt_payout * 100
         abs_pv = abs(payout_var)
         if tl < 30:
@@ -393,6 +454,57 @@ def calculate_validator_score(
     result["stagn_label"] = stagn_label
     result["stagn_estado"] = stagn_estado
 
+    # ── Completeness gate #2: no SCORED estado may reach scoring as N/D ────
+    # (docs/design/decision-engine-no-data-contract.md, F2 correction round).
+    # The presence-only gate above catches None/absent required fields, but
+    # it does not catch degenerate-but-present values -- weeks_live <= 0
+    # (e.g. an EA closing 5+ trades on its first day) or a reference field
+    # that is literally 0 (bt_worst_dd_1m, bt_payout, bt_avg_bars,
+    # spp_expect_median) -- that still leave an estado computed as "N/D"
+    # below. Enforce the actual invariant here, structurally, for every
+    # SCORED estado. `wfe_status` is informational and is deliberately
+    # excluded -- it must never trigger SIN DATOS.
+    scored_estados = {
+        "dd_estado": dd_estado,
+        "consec_estado": consec_estado,
+        "stagn_estado": stagn_estado,
+        "wr_estado": wr_estado,
+        "pf_estado": pf_estado,
+        "payout_estado": payout_estado,
+        "bars_estado": bars_estado,
+        "freq_estado": freq_estado,
+        "edge_estado": edge_estado,
+    }
+    nd_estados = [name for name, estado in scored_estados.items() if estado == "N/D"]
+    if nd_estados:
+        causes = []
+
+        def _add_cause(name):
+            if name not in causes:
+                causes.append(name)
+
+        if "dd_estado" in nd_estados:
+            if weeks_live <= 0:
+                _add_cause("live.weeks_operating")
+            if bt_worst_dd_1m is None or bt_worst_dd_1m <= 0:
+                _add_cause("bt.worst_dd_1m")
+        if "freq_estado" in nd_estados:
+            if weeks_live <= 0:
+                _add_cause("live.weeks_operating")
+            if not bt_trades:
+                _add_cause("bt.trades_total")
+        if "payout_estado" in nd_estados and bt_payout == 0:
+            _add_cause("bt.payout_ratio")
+        if "bars_estado" in nd_estados and bt_avg_bars == 0:
+            _add_cause("bt.avg_bars")
+        if "edge_estado" in nd_estados and spp_expect_median == 0:
+            _add_cause("spp.expectancy_median")
+
+        reason = "Estados no evaluables para score: " + ", ".join(nd_estados)
+        if causes:
+            reason += " (causa: " + ", ".join(causes) + ")"
+        return _nd_result("SIN DATOS", reason, missing=nd_estados + causes)
+
     # ── Category Scores ────────────────────────────────────────────────────
     s_riesgo = (
         _pts(dd_estado) * CONFIG["w_dd_escalado"] / 100
@@ -523,6 +635,7 @@ def calculate_validator_score(
 
     result["accion"] = accion
     result["sin_datos"] = False
+    result["missing"] = []
 
     return result
 

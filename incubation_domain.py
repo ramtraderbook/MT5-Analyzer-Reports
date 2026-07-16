@@ -207,37 +207,44 @@ def parse_reference_form(form):
     warnings = []
     int_fields = {"total_trades", "max_consec_losses", "avg_bars_trade", "stagnation_days", "simulations"}
 
-    def read_field(section_key, field_key, field_label, required, numeric=True):
-        raw = _normalize_decimal_text(form.get(f"{section_key}_{field_key}", ""))
-        if not raw:
-            if required and section_key == "backtest":
-                errors[f"{section_key}.{field_key}"] = f"{field_label} es obligatorio."
-            return None
-        if numeric:
-            parsed = _parse_numeric_input(raw)
-            if parsed is None:
-                errors[f"{section_key}.{field_key}"] = f"{field_label} debe ser un número válido."
-            elif field_key in int_fields:
-                return int(round(parsed))
-            return parsed
-        return raw
+    def read_raw(section_key, field_key):
+        return _normalize_decimal_text(form.get(f"{section_key}_{field_key}", ""))
 
     for section in INCUBATION_REFERENCE_SECTIONS:
         target_root = data[section["group"]]
         target_conf = target_root.get(section["confidence_key"], {}) if section.get("confidence_key") else target_root
+
+        # All-or-nothing per required section (root-cause fix for the
+        # read_field bug that only ever validated "backtest" as required,
+        # docs/design/decision-engine-no-data-contract.md §4): if a
+        # required:True section has ANY value entered, every empty field in
+        # it becomes a form error; a fully empty section stays allowed (the
+        # section-level "at least one MC95" rule below still applies).
+        section_raws = {field["key"]: read_raw(section["key"], field["key"]) for field in section["fields"]}
+        section_has_any_value = any(section_raws.values())
+
         for field in section["fields"]:
-            value = read_field(
-                section["key"],
-                field["key"],
-                field["label"],
-                section["required"],
-                numeric=field["key"] not in {"bt_period", "timeframe", "method"},
-            )
-            if value is not None:
-                if field.get("store_at") == "group":
-                    target_root[field["key"]] = value
-                else:
-                    target_conf[field["key"]] = value
+            raw = section_raws[field["key"]]
+            numeric = field["key"] not in {"bt_period", "timeframe", "method"}
+
+            if not raw:
+                if section["required"] and section_has_any_value:
+                    errors[f"{section['key']}.{field['key']}"] = f"{field['label']} es obligatorio."
+                continue
+
+            if numeric:
+                parsed = _parse_numeric_input(raw)
+                if parsed is None:
+                    errors[f"{section['key']}.{field['key']}"] = f"{field['label']} debe ser un número válido."
+                    continue
+                value = int(round(parsed)) if field["key"] in int_fields else parsed
+            else:
+                value = raw
+
+            if field.get("store_at") == "group":
+                target_root[field["key"]] = value
+            else:
+                target_conf[field["key"]] = value
 
         if section.get("confidence_key"):
             target_root[section["confidence_key"]] = target_conf
@@ -559,8 +566,15 @@ def metric_summary_for_tooltip(evaluation):
         failing = details.get("failing_count", 0)
         return f"Failing metrics: {failing}/7"
     if checkpoint == "CP3":
-        cats = details.get("category_scores", {})
         score = evaluation.get("score")
+        if score is None:
+            # Pre-existing crash fix: a CP3 SIN DATOS result carries
+            # score=None (evaluate_cp3 hard-gate failure or, since the SIN
+            # DATOS contract, a missing required input) and `f"{None:.2f}"`
+            # raised TypeError before this guard existed.
+            missing = evaluation.get("missing") or details.get("missing") or []
+            return f"SIN DATOS: {len(missing)} campos faltantes"
+        cats = details.get("category_scores", {})
         return (
             f"Score: {score:.2f}/100 | "
             f"Deviation: {cats.get('deviation', {}).get('score', 0):.2f} | "
@@ -574,7 +588,12 @@ def metric_summary_for_tooltip(evaluation):
 def _incubation_sync_checkpoint_store(entry, evaluation):
     checkpoints = entry.get("checkpoints") or {"cp1": None, "cp2": None, "cp3": None}
     slot = _incubation_checkpoint_slot(evaluation.get("current_checkpoint"))
-    if slot:
+    # SIN DATOS evaluations never get persisted into a checkpoint slot: they
+    # carry no verdict/score to trust, and writing one there would let the
+    # CP2->CP3 anti-limbo rule consume a SIN DATOS as if it were a real CP2
+    # result. Only `last_evaluation` is updated so the UI can still show why
+    # data is missing (design §1).
+    if slot and not evaluation.get("sin_datos"):
         checkpoints[slot] = evaluation
         entry["checkpoints"] = checkpoints
     entry["last_evaluation"] = evaluation
@@ -781,12 +800,14 @@ def build_verdict_card(evaluation):
     checkpoint = evaluation.get("current_checkpoint", "PENDING")
     verdict = evaluation.get("verdict", "PENDING")
     days_incubating = evaluation.get("days_incubating", 0) or 0
+    missing = evaluation.get("missing") or details.get("missing") or []
     verdict_class = {
         "APROBAR": "verdict-approve",
         "CONTINUAR": "verdict-continue",
         "OBSERVAR": "verdict-observe",
         "ELIMINAR": "verdict-eliminate",
         "PENDING": "verdict-pending",
+        "SIN DATOS": "verdict-no-data",
     }.get(verdict, "verdict-pending")
 
     hard_gates = []
@@ -839,6 +860,8 @@ def build_verdict_card(evaluation):
         reason = "Checkpoint approved"
     elif verdict == "CONTINUAR":
         reason = "Hard gates passed"
+    elif verdict == "SIN DATOS":
+        reason = "Missing: " + ", ".join(missing) if missing else "Missing reference data"
     else:
         reason = "Pending evaluation"
 
@@ -934,6 +957,15 @@ def _incubation_verdict_reading(evaluation, hard_gates, failing_metrics):
         base["message"] = "El resultado quedó por debajo del mínimo esperado para esta etapa."
         return base
 
+    if verdict == "SIN DATOS":
+        base.update({"icon": "ℹ", "title": "Datos incompletos", "tone": "neutral"})
+        missing = evaluation.get("missing") or details.get("missing") or [] if evaluation else []
+        if missing:
+            base["message"] = "Completar datos de referencia: " + ", ".join(missing)
+        else:
+            base["message"] = "Faltan datos de referencia para emitir un veredicto."
+        return base
+
     if verdict == "OBSERVAR":
         base.update({"icon": "⚠", "title": "Motivo principal de observación", "tone": "warning"})
         if failing_metrics:
@@ -1003,6 +1035,7 @@ def build_timeline_from_entry(entry):
                         "OBSERVAR": "verdict-observe",
                         "ELIMINAR": "verdict-eliminate",
                         "PENDING": "verdict-pending",
+                        "SIN DATOS": "verdict-no-data",
                     }.get(cp.get("verdict", "PENDING"), "verdict-pending"),
                     "details": details.get("reason")
                     or details.get("summary")
