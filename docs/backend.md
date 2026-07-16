@@ -22,6 +22,8 @@ parser.py               ← Parseo de .xlsx MT5
 metrics.py              ← Cálculo de métricas (P&L, DD, SQN, etc.)
 validator.py            ← Motor de scoring Live Validator
 incubation_validator.py ← Motor de scoring Incubación (CP1/CP2/CP3)
+incubation_domain.py    ← Lógica pura de incubación: checkpoints, verdicts, comparación, timeline (sin Flask)
+trade_matching.py       ← Normalización y matching trade.comment ↔ magic/alias/key
 
 config.json             ← Mapeos EA live (magic, alias, capital, active) + loaded_files_live
 validator_store.json    ← Datos BT/MC/SPP ingresados por el usuario (vía /validator/edit)
@@ -269,10 +271,23 @@ Si un `position_id` no tiene entrada en el `order_map`, el trade queda con `comm
 | `get_parsed_data()` | Carga cache live de sesión, retorna ParsedData o `{}` |
 | `get_incubation_parsed_data()` | Ídem para incubación |
 | `_get_metrics_cached(parsed_data, config)` | Wrapper con cache TTL 120s sobre `calculate_all_metrics()` |
-| `_incubation_verdict_card(evaluation)` | Construye el dict del card Estado Actual |
-| `_trade_matches_ea(trade, ea_name, config)` | Normaliza y compara trade.comment con magic/alias/key |
 
-### _trade_matches_ea
+## Funciones de dominio en incubation_domain.py
+
+| Función | Descripción |
+|---|---|
+| `build_verdict_card(evaluation)` | Construye el dict del card Estado Actual |
+| `evaluate_ea(ea_name, parsed_data, config, entry)` | Calcula métricas + evalúa checkpoint para un EA |
+| `build_comparison_rows(metrics, entry)` | Filas de comparación Live vs BT/MC/SPP |
+| `build_timeline_from_entry(entry)` | Timeline CP1/CP2/CP3 para la vista de estrategia |
+
+## trade_matching.py
+
+| Función | Descripción |
+|---|---|
+| `trade_matches_ea(trade, ea_name, config=None)` | Normaliza y compara trade.comment con magic/alias/key |
+
+### trade_matches_ea
 Normaliza ambos lados (quita no-alfanuméricos, minúsculas) y compara 3 variantes:
 1. Clave del config (`"Strategy_1_23_192"`)
 2. Alias (`"GDAXI 22212"`)

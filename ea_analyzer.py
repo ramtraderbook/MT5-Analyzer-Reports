@@ -467,115 +467,116 @@ def _build_incubation_dashboard():
     active_mappings = config.get("mappings", {})
     store_dirty = False
 
-    for ea_name, mapping in active_mappings.items():
-        if not mapping.get("active", True):
-            continue
+    try:
+        for ea_name, mapping in active_mappings.items():
+            if not mapping.get("active", True):
+                continue
 
-        entry = store.get(ea_name, {})
-        evaluation_bundle = evaluate_ea(ea_name, parsed_data, config, entry)
-        if evaluation_bundle and evaluation_bundle["reference_ready"]:
-            store[ea_name] = evaluation_bundle["entry"]
-            store_dirty = True
-        metrics = evaluation_bundle["metrics"] if evaluation_bundle else None
-        evaluation = evaluation_bundle["evaluation"] if evaluation_bundle else None
-        total_trades = int(metrics.get("total_trades") or 0) if metrics else 0
-        days = days_since_first_trade(evaluation_bundle["trades"] if evaluation_bundle else [])
-        checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
+            entry = store.get(ea_name, {})
+            evaluation_bundle = evaluate_ea(ea_name, parsed_data, config, entry)
+            if evaluation_bundle and evaluation_bundle["reference_ready"]:
+                store[ea_name] = evaluation_bundle["entry"]
+                store_dirty = True
+            metrics = evaluation_bundle["metrics"] if evaluation_bundle else None
+            evaluation = evaluation_bundle["evaluation"] if evaluation_bundle else None
+            total_trades = int(metrics.get("total_trades") or 0) if metrics else 0
+            days = days_since_first_trade(evaluation_bundle["trades"] if evaluation_bundle else [])
+            checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
 
-        has_reference = evaluation_bundle["reference_ready"] if evaluation_bundle else False
-        if not has_reference:
-            pending_bt_mc += 1
-            pending_count += 1
-
-        verdict = "NO DATA"
-        score_display = "—"
-        tooltip = "Cargar datos de referencia BT/MC/SPP"
-        status_label = "NO DATA"
-        status_class = "verdict-no-data"
-        url = url_for("incubation_reference_data")
-        if has_reference and evaluation:
-            verdict = evaluation.get("verdict", "PENDING")
-            score = evaluation.get("score")
-            if score is not None:
-                score_display = f"{score:.2f}" if isinstance(score, (int, float)) else str(score)
-            tooltip = metric_summary_for_tooltip(evaluation)
-            url = url_for("incubation_strategy", ea_name=ea_name)
-            cp = evaluation.get("current_checkpoint", "")
-            details = evaluation.get("details", {})
-            if cp == "PRE_CP1":
-                status_label = "Esperando trades"
-                status_class = "verdict-pending"
-            elif cp == "CP1":
-                hg = details.get("gates", {})
-                gate_keys = ["dd_extreme", "win_rate_binomial", "max_consec_losses", "frequency"]
-                passed = sum(1 for k in gate_keys if hg.get(k, {}).get("passed"))
-                status_label = f"Gates {passed}/{len(gate_keys)}"
-                status_class = "verdict-continue" if verdict == "CONTINUAR" else "verdict-eliminate"
-            elif cp == "CP2":
-                failing_count = details.get("failing_count") or 0
-                status_label = f"{failing_count} métricas fuera" if failing_count else "Bandas MC OK"
-                status_class = "verdict-observe" if verdict == "OBSERVAR" else ("verdict-eliminate" if verdict == "ELIMINAR" else "verdict-continue")
-            elif cp == "CP3":
-                status_label = f"Score {score_display}"
-                status_class = {
-                    "APROBAR": "verdict-approve",
-                    "OBSERVAR": "verdict-observe",
-                    "ELIMINAR": "verdict-eliminate",
-                }.get(verdict, "verdict-pending")
-            else:
-                status_label = "Evaluado"
-                status_class = "verdict-pending"
-
-            if verdict == "ELIMINAR":
-                eliminar_count += 1
-            elif verdict == "APROBAR":
-                aprobar_count += 1
-            elif verdict == "OBSERVAR":
-                observar_count += 1
-            elif verdict == "CONTINUAR":
-                continuar_count += 1
-            elif verdict == "PENDING":
+            has_reference = evaluation_bundle["reference_ready"] if evaluation_bundle else False
+            if not has_reference:
+                pending_bt_mc += 1
                 pending_count += 1
 
-        if evaluation:
-            checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
-            if checkpoint_record:
-                score_display = (
-                    f"{checkpoint_record.get('score'):.2f}"
-                    if isinstance(checkpoint_record.get("score"), (int, float))
-                    else score_display
-                )
+            verdict = "NO DATA"
+            score_display = "—"
+            tooltip = "Cargar datos de referencia BT/MC/SPP"
+            status_label = "NO DATA"
+            status_class = "verdict-no-data"
+            url = url_for("incubation_reference_data")
+            if has_reference and evaluation:
+                verdict = evaluation.get("verdict", "PENDING")
+                score = evaluation.get("score")
+                if score is not None:
+                    score_display = f"{score:.2f}" if isinstance(score, (int, float)) else str(score)
+                tooltip = metric_summary_for_tooltip(evaluation)
+                url = url_for("incubation_strategy", ea_name=ea_name)
+                cp = evaluation.get("current_checkpoint", "")
+                details = evaluation.get("details", {})
+                if cp == "PRE_CP1":
+                    status_label = "Esperando trades"
+                    status_class = "verdict-pending"
+                elif cp == "CP1":
+                    hg = details.get("gates", {})
+                    gate_keys = ["dd_extreme", "win_rate_binomial", "max_consec_losses", "frequency"]
+                    passed = sum(1 for k in gate_keys if hg.get(k, {}).get("passed"))
+                    status_label = f"Gates {passed}/{len(gate_keys)}"
+                    status_class = "verdict-continue" if verdict == "CONTINUAR" else "verdict-eliminate"
+                elif cp == "CP2":
+                    failing_count = details.get("failing_count") or 0
+                    status_label = f"{failing_count} métricas fuera" if failing_count else "Bandas MC OK"
+                    status_class = "verdict-observe" if verdict == "OBSERVAR" else ("verdict-eliminate" if verdict == "ELIMINAR" else "verdict-continue")
+                elif cp == "CP3":
+                    status_label = f"Score {score_display}"
+                    status_class = {
+                        "APROBAR": "verdict-approve",
+                        "OBSERVAR": "verdict-observe",
+                        "ELIMINAR": "verdict-eliminate",
+                    }.get(verdict, "verdict-pending")
+                else:
+                    status_label = "Evaluado"
+                    status_class = "verdict-pending"
 
-        rows.append(
-            {
-                "name": ea_name,
-                "label": mapping.get("alias", "") or ea_name,
-                "trades": total_trades,
-                "days": days,
-                "checkpoint_key": checkpoint_key,
-                "checkpoint_label": checkpoint_label,
-                "checkpoint_class": checkpoint_class,
-                "status_class": status_class,
-                "status_label": status_label,
-                "score": score_display,
-                "verdict": verdict,
-                "verdict_class": {
-                    "APROBAR": "verdict-approve",
-                    "CONTINUAR": "verdict-continue",
-                    "OBSERVAR": "verdict-observe",
-                    "ELIMINAR": "verdict-eliminate",
-                    "PENDING": "verdict-pending",
-                    "NO DATA": "verdict-no-data",
-                }.get(verdict, "verdict-pending"),
-                "has_reference": has_reference,
-                "url": url,
-                "tooltip": tooltip,
-                "no_data": not has_reference,
-            }
-        )
+                if verdict == "ELIMINAR":
+                    eliminar_count += 1
+                elif verdict == "APROBAR":
+                    aprobar_count += 1
+                elif verdict == "OBSERVAR":
+                    observar_count += 1
+                elif verdict == "CONTINUAR":
+                    continuar_count += 1
+                elif verdict == "PENDING":
+                    pending_count += 1
 
-    if store_dirty:
-        save_incubation_store(store)
+            if evaluation:
+                checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
+                if checkpoint_record:
+                    score_display = (
+                        f"{checkpoint_record.get('score'):.2f}"
+                        if isinstance(checkpoint_record.get("score"), (int, float))
+                        else score_display
+                    )
+
+            rows.append(
+                {
+                    "name": ea_name,
+                    "label": mapping.get("alias", "") or ea_name,
+                    "trades": total_trades,
+                    "days": days,
+                    "checkpoint_key": checkpoint_key,
+                    "checkpoint_label": checkpoint_label,
+                    "checkpoint_class": checkpoint_class,
+                    "status_class": status_class,
+                    "status_label": status_label,
+                    "score": score_display,
+                    "verdict": verdict,
+                    "verdict_class": {
+                        "APROBAR": "verdict-approve",
+                        "CONTINUAR": "verdict-continue",
+                        "OBSERVAR": "verdict-observe",
+                        "ELIMINAR": "verdict-eliminate",
+                        "PENDING": "verdict-pending",
+                        "NO DATA": "verdict-no-data",
+                    }.get(verdict, "verdict-pending"),
+                    "has_reference": has_reference,
+                    "url": url,
+                    "tooltip": tooltip,
+                    "no_data": not has_reference,
+                }
+            )
+    finally:
+        if store_dirty:
+            save_incubation_store(store)
 
     return {
         "rows": rows,
@@ -2146,7 +2147,7 @@ def validator_edit(magic):
         ea_trades = [
             t
             for t in parsed_data.get("closed_trades", [])
-            if t.get("comment") == ea_name
+            if trade_matches_ea(t, ea_name, config)
         ]
         if ea_trades:
             from metrics import calculate_ea_metrics

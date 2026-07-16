@@ -370,7 +370,7 @@ def days_since_first_trade(trades):
 
 def _incubation_load_ea_metrics(ea_name, parsed_data, config):
     if not parsed_data:
-        return None, None, None
+        return None, None
 
     ea_trades = [
         t
@@ -379,12 +379,12 @@ def _incubation_load_ea_metrics(ea_name, parsed_data, config):
     ]
 
     if not ea_trades:
-        return None, config, []
+        return None, []
 
     from metrics import calculate_ea_metrics
 
     metrics = calculate_ea_metrics(ea_name, ea_trades, config)
-    return metrics, config, ea_trades
+    return metrics, ea_trades
 
 
 def _incubation_format_metric(value, kind):
@@ -581,14 +581,14 @@ def _incubation_sync_checkpoint_store(entry, evaluation):
     return entry
 
 
-def evaluate_ea(ea_name, parsed_data, config, entry, force=False):
-    metrics, config, ea_trades = _incubation_load_ea_metrics(ea_name, parsed_data, config)
+def evaluate_ea(ea_name, parsed_data, config, entry):
+    metrics, ea_trades = _incubation_load_ea_metrics(ea_name, parsed_data, config)
     if metrics is None:
         return None
 
-    reference_ready = reference_ready(entry)
+    is_reference_ready = reference_ready(entry)
 
-    if not reference_ready:
+    if not is_reference_ready:
         return {
             "ea_name": ea_name,
             "metrics": metrics,
