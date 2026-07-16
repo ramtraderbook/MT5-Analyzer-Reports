@@ -37,6 +37,7 @@ from validator import (
     timeframe_to_hours,
 )
 from local_json import load_local_json, save_local_json
+from trade_matching import trade_matches_ea
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Setup
@@ -347,26 +348,6 @@ def get_display_label(ea_name, config):
     return f"{magic} - {alias}" if magic else alias
 
 
-def _normalize_trade_key(value):
-    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
-
-
-def _trade_matches_ea(trade, ea_name, config=None):
-    comment = trade.get("comment", "")
-    if _normalize_trade_key(comment) == _normalize_trade_key(ea_name):
-        return True
-
-    if config:
-        mapping = config.get("mappings", {}).get(ea_name, {})
-        alias = mapping.get("alias", "")
-        magic = mapping.get("magic")
-        if alias and _normalize_trade_key(comment) == _normalize_trade_key(alias):
-            return True
-        if magic is not None and _normalize_trade_key(comment) == _normalize_trade_key(magic):
-            return True
-    return False
-
-
 def build_sidebar_eas(parsed_data, config, active_ea=None):
     sidebar_eas = []
     mappings = config.get("mappings", {})
@@ -402,7 +383,7 @@ def build_mapping_rows(parsed_data, config):
     rows = []
 
     for ea_name in parsed_data.get("ea_names", []):
-        ea_trades = [t for t in trades if _trade_matches_ea(t, ea_name, config)]
+        ea_trades = [t for t in trades if trade_matches_ea(t, ea_name, config)]
         existing = config.get("mappings", {}).get(ea_name, {})
 
         symbols = list(set(t["symbol"] for t in ea_trades if t.get("symbol")))
@@ -943,7 +924,7 @@ def _incubation_load_ea_metrics(ea_name):
     ea_trades = [
         t
         for t in parsed_data.get("closed_trades", [])
-        if _trade_matches_ea(t, ea_name, config)
+        if trade_matches_ea(t, ea_name, config)
     ]
 
     if not ea_trades:
@@ -2920,7 +2901,7 @@ def api_incubation_ea_equity(name):
     ea_trades = [
         t
         for t in parsed_data.get("closed_trades", [])
-        if _trade_matches_ea(t, ea_name, config)
+        if trade_matches_ea(t, ea_name, config)
     ]
 
     from metrics import calculate_ea_metrics
@@ -2956,7 +2937,7 @@ def api_incubation_ea_pnl_data(name):
     ea_trades = [
         t
         for t in parsed_data.get("closed_trades", [])
-        if _trade_matches_ea(t, ea_name, config)
+        if trade_matches_ea(t, ea_name, config)
     ]
 
     from metrics import calculate_ea_metrics

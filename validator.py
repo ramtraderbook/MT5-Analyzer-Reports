@@ -9,6 +9,7 @@ import os
 
 from local_json import load_local_json, save_local_json
 from metrics import calculate_ea_metrics
+from trade_matching import trade_matches_ea
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VALIDATOR_STORE_PATH = os.path.join(APP_DIR, "validator_store.json")
@@ -574,7 +575,7 @@ def get_all_validator_results(parsed_data: dict, config: dict, store: dict) -> l
         ea_trades = [
             t
             for t in parsed_data.get("closed_trades", [])
-            if t.get("comment") == ea_name
+            if trade_matches_ea(t, ea_name, config)
         ]
 
         if not ea_trades:

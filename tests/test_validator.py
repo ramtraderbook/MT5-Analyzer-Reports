@@ -150,21 +150,21 @@ def test_get_all_validator_results_matches_exact_comment_equality():
     assert results[0]["live"]["total_trades"] == 2
 
 
-def test_get_all_validator_results_exact_equality_matching_is_currently_broken():
+def test_get_all_validator_results_normalized_comment_now_matches():
     """
-    NOTE: PINS A KNOWN BUG. `get_all_validator_results` (validator.py:574-578)
-    filters trades with `t.get("comment") == ea_name` — plain exact string
-    equality, no normalization. A trade whose comment is "USDJPY 1104"
-    (a real MT5-style comment with a space) does NOT match a mapping keyed
-    "USDJPY_1104" (underscore), even though they refer to the same EA.
+    REGRESSION GUARD for the matcher fix (docs/design/domain-extraction.md D8).
 
-    Today this yields ZERO matched trades for that EA — a strategy that IS
-    trading shows up with total_trades=0 in the validator table.
+    `get_all_validator_results` used to filter trades with
+    `t.get("comment") == ea_name` — plain exact string equality, no
+    normalization. A trade whose comment is "USDJPY 1104" (a real MT5-style
+    comment with a space) did NOT match a mapping keyed "USDJPY_1104"
+    (underscore), even though they refer to the same EA, yielding ZERO
+    matched trades for a strategy that IS trading.
 
-    Slice 2 of docs/design/domain-extraction.md (D8) replaces this equality
-    check with `trade_matches_ea(t, ea_name, config)` from the new
-    trade_matching.py module. When that fix lands, THIS TEST MUST BE
-    INVERTED to assert total_trades == 1 instead of 0.
+    The fix has landed: `get_all_validator_results` now filters with
+    `trade_matches_ea(t, ea_name, config)` from trade_matching.py, the same
+    normalized comment/alias/magic matcher the dashboard already used. This
+    test pins the FIXED behavior — do not revert it to asserting 0.
     """
     parsed_data = {
         "closed_trades": [
@@ -176,8 +176,65 @@ def test_get_all_validator_results_exact_equality_matching_is_currently_broken()
     results = get_all_validator_results(parsed_data, config, store={})
 
     assert len(results) == 1
-    # BUG, pinned on purpose: this "should" be 1, not 0. See docstring above.
-    assert results[0]["live"]["total_trades"] == 0
+    assert results[0]["live"]["total_trades"] == 1
+
+
+def test_get_all_validator_results_matches_via_alias():
+    """A trade whose comment equals the mapping's alias (not the EA key) now matches."""
+    parsed_data = {
+        "closed_trades": [
+            make_trade(1, "USDJPY EA", net_pnl=10.0, close_date=2),
+        ]
+    }
+    config = {"mappings": {"USDJPY_1104": {"magic": "1104", "alias": "USDJPY EA", "active": True}}}
+
+    results = get_all_validator_results(parsed_data, config, store={})
+
+    assert len(results) == 1
+    assert results[0]["live"]["total_trades"] == 1
+
+
+def test_get_all_validator_results_matches_via_magic():
+    """A trade whose comment is just the magic number now matches."""
+    parsed_data = {
+        "closed_trades": [
+            make_trade(1, "1104", net_pnl=10.0, close_date=2),
+        ]
+    }
+    config = {"mappings": {"USDJPY_1104": {"magic": "1104", "alias": "USDJPY EA", "active": True}}}
+
+    results = get_all_validator_results(parsed_data, config, store={})
+
+    assert len(results) == 1
+    assert results[0]["live"]["total_trades"] == 1
+
+
+def test_get_all_validator_results_accepted_tradeoff_merges_identically_normalized_ea_names():
+    """
+    ACCEPTED TRADEOFF (docs/design/domain-extraction.md, Risks): widening the
+    validator to dashboard matching semantics means two EAs whose names
+    normalize to the same key ("USDJPY 1104" vs "USDJPY_1104") now merge
+    trades if both mappings are active magic-having entries and a trade's
+    comment matches the shared normalized key. This is intentional -
+    one truth beats two - and pinned here so it is never "fixed" by
+    surprise.
+    """
+    parsed_data = {
+        "closed_trades": [
+            make_trade(1, "USDJPY 1104", net_pnl=10.0, close_date=2),
+        ]
+    }
+    config = {
+        "mappings": {
+            "USDJPY 1104": {"magic": "1104", "active": True},
+            "USDJPY_1104": {"magic": "1105", "active": True},
+        }
+    }
+
+    results = get_all_validator_results(parsed_data, config, store={})
+
+    by_name = {r["ea_name"]: r["live"]["total_trades"] for r in results}
+    assert by_name == {"USDJPY 1104": 1, "USDJPY_1104": 1}
 
 
 def test_get_all_validator_results_skips_inactive_mappings():
