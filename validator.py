@@ -454,6 +454,57 @@ def calculate_validator_score(
     result["stagn_label"] = stagn_label
     result["stagn_estado"] = stagn_estado
 
+    # ── Completeness gate #2: no SCORED estado may reach scoring as N/D ────
+    # (docs/design/decision-engine-no-data-contract.md, F2 correction round).
+    # The presence-only gate above catches None/absent required fields, but
+    # it does not catch degenerate-but-present values -- weeks_live <= 0
+    # (e.g. an EA closing 5+ trades on its first day) or a reference field
+    # that is literally 0 (bt_worst_dd_1m, bt_payout, bt_avg_bars,
+    # spp_expect_median) -- that still leave an estado computed as "N/D"
+    # below. Enforce the actual invariant here, structurally, for every
+    # SCORED estado. `wfe_status` is informational and is deliberately
+    # excluded -- it must never trigger SIN DATOS.
+    scored_estados = {
+        "dd_estado": dd_estado,
+        "consec_estado": consec_estado,
+        "stagn_estado": stagn_estado,
+        "wr_estado": wr_estado,
+        "pf_estado": pf_estado,
+        "payout_estado": payout_estado,
+        "bars_estado": bars_estado,
+        "freq_estado": freq_estado,
+        "edge_estado": edge_estado,
+    }
+    nd_estados = [name for name, estado in scored_estados.items() if estado == "N/D"]
+    if nd_estados:
+        causes = []
+
+        def _add_cause(name):
+            if name not in causes:
+                causes.append(name)
+
+        if "dd_estado" in nd_estados:
+            if weeks_live <= 0:
+                _add_cause("live.weeks_operating")
+            if bt_worst_dd_1m is None or bt_worst_dd_1m <= 0:
+                _add_cause("bt.worst_dd_1m")
+        if "freq_estado" in nd_estados:
+            if weeks_live <= 0:
+                _add_cause("live.weeks_operating")
+            if not bt_trades:
+                _add_cause("bt.trades_total")
+        if "payout_estado" in nd_estados and bt_payout == 0:
+            _add_cause("bt.payout_ratio")
+        if "bars_estado" in nd_estados and bt_avg_bars == 0:
+            _add_cause("bt.avg_bars")
+        if "edge_estado" in nd_estados and spp_expect_median == 0:
+            _add_cause("spp.expectancy_median")
+
+        reason = "Estados no evaluables para score: " + ", ".join(nd_estados)
+        if causes:
+            reason += " (causa: " + ", ".join(causes) + ")"
+        return _nd_result("SIN DATOS", reason, missing=nd_estados + causes)
+
     # ── Category Scores ────────────────────────────────────────────────────
     s_riesgo = (
         _pts(dd_estado) * CONFIG["w_dd_escalado"] / 100
