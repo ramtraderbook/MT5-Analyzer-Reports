@@ -12,6 +12,7 @@ g, app). Session-backed data loading and URL building live in
 ea_analyzer.py, which calls into this module with the data it needs.
 """
 
+from collections import defaultdict
 from datetime import date, datetime
 
 from incubation_validator import get_worst_case_mc
@@ -475,8 +476,6 @@ def build_distribution_payload(metrics):
 
 
 def build_monthly_performance(trades):
-    from collections import defaultdict
-
     monthly_data = defaultdict(lambda: defaultdict(float))
     monthly_has_data = defaultdict(set)
 
