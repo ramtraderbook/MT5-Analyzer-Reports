@@ -62,12 +62,28 @@ def test_dd_estado_bt_worst_dd_path_boundaries(live_dd, expected_estado):
     BT worst-DD path: dd_limit = worst_dd_1m * sqrt(weeks_live / 4.33).
     weeks_live=4.33 makes the sqrt factor exactly 1.0, so dd_limit ==
     worst_dd_1m == 10.0 and the 1.5x ALERTA boundary is exactly 15.0.
+
+    All other required fields (docs/design/decision-engine-no-data-contract.md
+    §2) are filled with neutral values so the completeness gate passes and
+    this stays a focused pin of dd_estado alone.
     """
-    live = {"total_trades": 50, "weeks_operating": 4.33, "max_dd_pct": live_dd}
-    bt = {"worst_dd_1m": 10.0}
+    live = {
+        "total_trades": 50, "weeks_operating": 4.33, "max_dd_pct": live_dd,
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "expectancy": 10.0, "max_consec_losses": 3, "stagnation_days": 10,
+        "avg_bars_live": 10.0,
+    }
+    bt = {
+        "worst_dd_1m": 10.0,
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "avg_bars": 10.0, "max_consec_losses": 3, "trades_total": 200, "months": 24,
+    }
 
-    result = calculate_validator_score(bt=bt, mc_retest={}, mc_trades={}, spp={}, live=live)
+    result = calculate_validator_score(
+        bt=bt, mc_retest={}, mc_trades={}, spp={"expectancy_median": 10.0}, live=live
+    )
 
+    assert result["sin_datos"] is False
     assert result["dd_estado"] == expected_estado
     assert result["dd_method"] == "sqrt(4.3sem/4.33) x 10.0%"
 
@@ -77,8 +93,11 @@ def test_dd_estado_is_nd_when_only_one_mc_source_present_and_no_bt_dd():
     NOTE: this contradicts docs/decision-logic.md's claimed fallback, which
     describes the MC DD fallback as usable from a single MC source. The
     code (validator.py:278) requires `mc_r_dd is not None and mc_t_dd is
-    not None` — with only mc_retest present and no BT worst_dd_1m, the
-    result is "N/D", not a partial/single-source fallback.
+    not None` — with only mc_retest present and no BT worst_dd_1m, the DD
+    reference path is incomplete. This now trips the SIN DATOS completeness
+    gate (docs/design/decision-engine-no-data-contract.md §2) before the
+    dd_estado branch logic ever runs -- the "N/D" here is the SIN DATOS
+    default, not a partial/single-source fallback.
     """
     live = {"total_trades": 50, "weeks_operating": 10, "max_dd_pct": 20.0}
     bt = {}  # no worst_dd_1m -> BT path not taken
@@ -87,12 +106,14 @@ def test_dd_estado_is_nd_when_only_one_mc_source_present_and_no_bt_dd():
 
     result = calculate_validator_score(bt=bt, mc_retest=mc_retest, mc_trades=mc_trades, spp={}, live=live)
 
+    assert result["sin_datos"] is True
     assert result["dd_estado"] == "N/D"
     assert result["dd_method"] == "N/D"
 
 
 def test_dd_estado_is_nd_when_only_mc_trades_present_and_no_bt_dd():
-    """Symmetric case: only mc_trades present, mc_retest missing -> still N/D."""
+    """Symmetric case: only mc_trades present, mc_retest missing -> still N/D
+    via the SIN DATOS completeness gate (see test above)."""
     live = {"total_trades": 50, "weeks_operating": 10, "max_dd_pct": 20.0}
     bt = {}
     mc_retest = {}
@@ -100,6 +121,7 @@ def test_dd_estado_is_nd_when_only_mc_trades_present_and_no_bt_dd():
 
     result = calculate_validator_score(bt=bt, mc_retest=mc_retest, mc_trades=mc_trades, spp={}, live=live)
 
+    assert result["sin_datos"] is True
     assert result["dd_estado"] == "N/D"
     assert result["dd_method"] == "N/D"
 
@@ -118,14 +140,30 @@ def test_dd_estado_both_mc_present_fallback_boundaries(live_dd, expected_estado)
     Both MC sources present, no BT worst_dd_1m -> the MC fallback IS used:
     dd_limit_used = min(mc_r_dd, mc_t_dd) is the OK boundary, and
     max(mc_r_dd, mc_t_dd) is the ALERTA/FUERA boundary.
+
+    All other required fields (docs/design/decision-engine-no-data-contract.md
+    §2) are filled with neutral values so the completeness gate passes and
+    this stays a focused pin of dd_estado alone.
     """
-    live = {"total_trades": 50, "weeks_operating": 10, "max_dd_pct": live_dd}
-    bt = {}
+    live = {
+        "total_trades": 50, "weeks_operating": 10, "max_dd_pct": live_dd,
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "expectancy": 10.0, "max_consec_losses": 3, "stagnation_days": 10,
+        "avg_bars_live": 10.0,
+    }
+    bt = {
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "avg_bars": 10.0, "max_consec_losses": 3, "trades_total": 200, "months": 24,
+    }
     mc_retest = {"max_dd": 10.0}
     mc_trades = {"max_dd": 14.0}
 
-    result = calculate_validator_score(bt=bt, mc_retest=mc_retest, mc_trades=mc_trades, spp={}, live=live)
+    result = calculate_validator_score(
+        bt=bt, mc_retest=mc_retest, mc_trades=mc_trades,
+        spp={"expectancy_median": 10.0}, live=live,
+    )
 
+    assert result["sin_datos"] is False
     assert result["dd_estado"] == expected_estado
     assert result["dd_method"] == "MC min(Retest,Trades) 95% (fallback)"
 
