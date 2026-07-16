@@ -58,7 +58,7 @@ El `peor_DD_1mes_BT` es el peor drawdown en cualquier ventana de 1 mes del backt
 | ALERTA | `DD_live ≤ DD_limite × 1.5` |
 | FUERA | `DD_live > DD_limite × 1.5` |
 
-**Fallback**: si no hay `peor_DD_1mes_BT`, se usa el MC Retest 95% como límite.
+**Fallback**: si no hay `peor_DD_1mes_BT`, se requieren **ambos** `MC Retest 95%` y `MC Trades 95%` (si falta alguno, `dd_estado = N/D`). El límite OK es `min(MC Retest 95%, MC Trades 95%)` y el límite ALERTA es `max(MC Retest 95%, MC Trades 95%)`.
 
 **Si DD_estado = FUERA → veredicto inmediato ELIMINAR** (override de score).
 

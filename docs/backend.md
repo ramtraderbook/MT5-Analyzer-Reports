@@ -268,8 +268,8 @@ Si un `position_id` no tiene entrada en el `order_map`, el trade queda con `comm
 |---|---|
 | `get_parsed_data()` | Carga cache live de sesión, retorna ParsedData o `{}` |
 | `get_incubation_parsed_data()` | Ídem para incubación |
-| `get_metrics()` | Wrapper con cache TTL 120s sobre `calculate_all_metrics()` |
-| `_incubation_verdict_card(ea_name, live_m, store_data)` | Construye el dict del card Estado Actual |
+| `_get_metrics_cached(parsed_data, config)` | Wrapper con cache TTL 120s sobre `calculate_all_metrics()` |
+| `_incubation_verdict_card(evaluation)` | Construye el dict del card Estado Actual |
 | `_trade_matches_ea(trade, ea_name, config)` | Normaliza y compara trade.comment con magic/alias/key |
 
 ### _trade_matches_ea
