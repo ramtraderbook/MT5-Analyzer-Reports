@@ -39,21 +39,21 @@ from validator import (
 from local_json import load_local_json, save_local_json
 from trade_matching import trade_matches_ea
 from incubation_domain import (
-    _build_monthly_performance,
-    _build_reference_form_values,
-    _compute_spp_ratios,
-    _incubation_build_comparison_rows,
-    _incubation_checkpoint_for_trades,
-    _incubation_current_result_from_entry,
-    _incubation_days_since_first_trade,
-    _incubation_distribution_payload,
-    _incubation_evaluate_ea,
-    _incubation_metric_summary_for_tooltip,
-    _incubation_reference_sections_for_render,
-    _incubation_reference_ready,
-    _incubation_timeline_from_entry,
-    _incubation_verdict_card,
-    _parse_reference_form,
+    build_comparison_rows,
+    build_distribution_payload,
+    build_monthly_performance,
+    build_reference_form_values,
+    build_timeline_from_entry,
+    build_verdict_card,
+    checkpoint_for_trades,
+    compute_spp_ratios,
+    current_result_from_entry,
+    days_since_first_trade,
+    evaluate_ea,
+    metric_summary_for_tooltip,
+    parse_reference_form,
+    reference_ready,
+    reference_sections_for_render,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -472,15 +472,15 @@ def _build_incubation_dashboard():
             continue
 
         entry = store.get(ea_name, {})
-        evaluation_bundle = _incubation_evaluate_ea(ea_name, parsed_data, config, entry)
+        evaluation_bundle = evaluate_ea(ea_name, parsed_data, config, entry)
         if evaluation_bundle and evaluation_bundle["reference_ready"]:
             store[ea_name] = evaluation_bundle["entry"]
             store_dirty = True
         metrics = evaluation_bundle["metrics"] if evaluation_bundle else None
         evaluation = evaluation_bundle["evaluation"] if evaluation_bundle else None
         total_trades = int(metrics.get("total_trades") or 0) if metrics else 0
-        days = _incubation_days_since_first_trade(evaluation_bundle["trades"] if evaluation_bundle else [])
-        checkpoint_key, checkpoint_label, checkpoint_class = _incubation_checkpoint_for_trades(total_trades)
+        days = days_since_first_trade(evaluation_bundle["trades"] if evaluation_bundle else [])
+        checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
 
         has_reference = evaluation_bundle["reference_ready"] if evaluation_bundle else False
         if not has_reference:
@@ -498,7 +498,7 @@ def _build_incubation_dashboard():
             score = evaluation.get("score")
             if score is not None:
                 score_display = f"{score:.2f}" if isinstance(score, (int, float)) else str(score)
-            tooltip = _incubation_metric_summary_for_tooltip(evaluation)
+            tooltip = metric_summary_for_tooltip(evaluation)
             url = url_for("incubation_strategy", ea_name=ea_name)
             cp = evaluation.get("current_checkpoint", "")
             details = evaluation.get("details", {})
@@ -538,7 +538,7 @@ def _build_incubation_dashboard():
                 pending_count += 1
 
         if evaluation:
-            checkpoint_record = _incubation_current_result_from_entry(evaluation_bundle["entry"])
+            checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
             if checkpoint_record:
                 score_display = (
                     f"{checkpoint_record.get('score'):.2f}"
@@ -1062,8 +1062,8 @@ def incubation_reference_edit(ea_name):
 
     store = load_incubation_store()
     entry = store.get(ea_name, {})
-    form_values = _build_reference_form_values(entry=entry)
-    spp_ratios = _compute_spp_ratios(entry.get("backtest", {}), entry.get("spp", {}))
+    form_values = build_reference_form_values(entry=entry)
+    spp_ratios = compute_spp_ratios(entry.get("backtest", {}), entry.get("spp", {}))
 
     warnings = []
     mc_manipulation = entry.get("mc_manipulation") or entry.get("monte_carlo") or {}
@@ -1085,7 +1085,7 @@ def incubation_reference_edit(ea_name):
         mapping=mapping,
         entry=entry,
         form_values=form_values,
-        sections=_incubation_reference_sections_for_render(entry),
+        sections=reference_sections_for_render(entry),
         spp_ratios=spp_ratios,
         warnings=warnings,
         errors={},
@@ -1108,17 +1108,17 @@ def incubation_reference_save(ea_name):
         flash("La estrategia no existe en Incubation Config", "warn")
         return redirect(url_for("incubation_reference_data"))
 
-    payload, errors, warnings = _parse_reference_form(request.form)
+    payload, errors, warnings = parse_reference_form(request.form)
     if errors:
-        form_values = _build_reference_form_values(form=request.form)
-        spp_ratios = _compute_spp_ratios(form_values.get("backtest", {}), form_values.get("spp", {}))
+        form_values = build_reference_form_values(form=request.form)
+        spp_ratios = compute_spp_ratios(form_values.get("backtest", {}), form_values.get("spp", {}))
         return render_template(
             "incubation_reference_edit.html",
             ea_name=ea_name,
             mapping=mapping,
             entry=payload,
             form_values=form_values,
-            sections=_incubation_reference_sections_for_render(payload),
+            sections=reference_sections_for_render(payload),
             spp_ratios=spp_ratios,
             warnings=warnings,
             errors=errors,
@@ -1228,7 +1228,7 @@ def incubation_strategy(ea_name):
     config = load_incubation_config()
     store = load_incubation_store()
     entry = store.get(ea_name, {})
-    bundle = _incubation_evaluate_ea(ea_name, parsed_data, config, entry)
+    bundle = evaluate_ea(ea_name, parsed_data, config, entry)
     if bundle is None:
         flash("No hay trades de incubación para esa estrategia.", "warn")
         return redirect(url_for("incubation_dashboard"))
@@ -1245,12 +1245,12 @@ def incubation_strategy(ea_name):
     mapping = config.get("mappings", {}).get(ea_name, {})
 
     total_trades = int(metrics.get("total_trades") or 0)
-    days = _incubation_days_since_first_trade(ea_trades)
-    checkpoint_key, checkpoint_label, checkpoint_class = _incubation_checkpoint_for_trades(total_trades)
-    has_reference = _incubation_reference_ready(entry)
-    display_rows = _incubation_build_comparison_rows(metrics, entry)
-    verdict_card = _incubation_verdict_card(evaluation)
-    checkpoint_timeline = _incubation_timeline_from_entry(entry)
+    days = days_since_first_trade(ea_trades)
+    checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
+    has_reference = reference_ready(entry)
+    display_rows = build_comparison_rows(metrics, entry)
+    verdict_card = build_verdict_card(evaluation)
+    checkpoint_timeline = build_timeline_from_entry(entry)
     current_checkpoint = (
         evaluation.get("current_checkpoint")
         if evaluation
@@ -1289,7 +1289,7 @@ def incubation_strategy(ea_name):
             }
         )
 
-    monthly_perf = _build_monthly_performance(metrics["trades"])
+    monthly_perf = build_monthly_performance(metrics["trades"])
     chart_label = metrics.get("label") or mapping.get("alias") or ea_name
     inc_equity_series = {
         "equity": metrics.get("equity_curve", []),
@@ -1297,7 +1297,7 @@ def incubation_strategy(ea_name):
         "label": chart_label,
         "color": "#4FC3F7",
     }
-    inc_distribution = _incubation_distribution_payload(metrics)
+    inc_distribution = build_distribution_payload(metrics)
 
     instrument = metrics.get("instrument") or mapping.get("instrument") or "—"
     timeframe = entry.get("timeframe") or entry.get("backtest", {}).get("timeframe") or "—"
@@ -1365,7 +1365,7 @@ def incubation_force_evaluate(ea_name):
     config = load_incubation_config()
     store = load_incubation_store()
     entry = store.get(ea_name, {})
-    bundle = _incubation_evaluate_ea(ea_name, parsed_data, config, entry)
+    bundle = evaluate_ea(ea_name, parsed_data, config, entry)
     if bundle is None:
         flash("No hay trades de incubación para reevaluar.", "warn")
         return redirect(url_for("incubation_dashboard"))
@@ -1491,7 +1491,7 @@ def dashboard():
             period_start = fmt_dt(times_sorted[0])
             period_end = fmt_dt(times_sorted[-1])
 
-    portfolio_monthly_perf = _build_monthly_performance(portfolio.get("trades", []))
+    portfolio_monthly_perf = build_monthly_performance(portfolio.get("trades", []))
 
     return render_template(
         "dashboard.html",
@@ -1573,7 +1573,7 @@ def strategy(name):
             }
         )
 
-    monthly_perf = _build_monthly_performance(m["trades"])
+    monthly_perf = build_monthly_performance(m["trades"])
 
     return render_template(
         "strategy.html",
@@ -1971,7 +1971,7 @@ def api_incubation_ea_pnl_data(name):
     from metrics import calculate_ea_metrics
 
     m = calculate_ea_metrics(ea_name, ea_trades, config)
-    payload = _incubation_distribution_payload(m)
+    payload = build_distribution_payload(m)
     return jsonify(payload)
 
 

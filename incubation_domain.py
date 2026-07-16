@@ -194,7 +194,7 @@ def _format_numeric_value(value):
     return ("%.4f" % num).rstrip("0").rstrip(".")
 
 
-def _parse_reference_form(form):
+def parse_reference_form(form):
     data = {
         "backtest": {},
         "mc_manipulation": {"confidence_95": {}, "confidence_50": {}, "simulations": None, "method": ""},
@@ -263,7 +263,7 @@ def _parse_reference_form(form):
     return data, errors, warnings
 
 
-def _build_reference_form_values(entry=None, form=None):
+def build_reference_form_values(entry=None, form=None):
     form_values = {}
     for section in INCUBATION_REFERENCE_SECTIONS:
         section_values = {}
@@ -281,7 +281,7 @@ def _build_reference_form_values(entry=None, form=None):
     return form_values
 
 
-def _incubation_reference_sections_for_render(entry=None):
+def reference_sections_for_render(entry=None):
     rendered = []
     for section in INCUBATION_REFERENCE_SECTIONS:
         source = _incubation_reference_section_payload(entry or {}, section)
@@ -297,7 +297,7 @@ def _incubation_reference_sections_for_render(entry=None):
     return rendered
 
 
-def _compute_spp_ratios(bt_data, spp_data):
+def compute_spp_ratios(bt_data, spp_data):
     mapping = {
         "median_net_profit": "net_profit",
         "median_max_dd_pct": "max_dd_pct",
@@ -342,7 +342,7 @@ def _incubation_reference_has_values(source):
     return False
 
 
-def _incubation_checkpoint_for_trades(total_trades):
+def checkpoint_for_trades(total_trades):
     if total_trades < 5:
         return "pre_cp1", "Pre-CP1", "pre"
     if total_trades < 20:
@@ -352,7 +352,7 @@ def _incubation_checkpoint_for_trades(total_trades):
     return "cp3", "CP3 (40+)", "cp3"
 
 
-def _incubation_days_since_first_trade(trades):
+def days_since_first_trade(trades):
     first_dt = None
     for trade in trades:
         ct = trade.get("close_time")
@@ -405,7 +405,7 @@ def _incubation_format_metric(value, kind):
     return str(value)
 
 
-def _incubation_distribution_payload(metrics):
+def build_distribution_payload(metrics):
     trades = metrics.get("trades", [])
     pnl_list = [t.get("net_pnl", 0) for t in trades]
     streak_data = []
@@ -474,7 +474,7 @@ def _incubation_distribution_payload(metrics):
     }
 
 
-def _build_monthly_performance(trades):
+def build_monthly_performance(trades):
     from collections import defaultdict
 
     monthly_data = defaultdict(lambda: defaultdict(float))
@@ -503,7 +503,7 @@ def _build_monthly_performance(trades):
     return monthly_perf
 
 
-def _incubation_reference_ready(entry):
+def reference_ready(entry):
     mc_manipulation = entry.get("mc_manipulation") or entry.get("monte_carlo") or {}
     mc_retest = entry.get("mc_retest") or {}
     has_mc95 = bool(mc_manipulation.get("confidence_95")) or bool(mc_retest.get("confidence_95"))
@@ -535,7 +535,7 @@ def _incubation_metric_band_state(live_value, mc95_value, mc50_value, inverse=Fa
     return {"label": "🔴", "class": "cmp-red", "score_band": "below_mc95"}
 
 
-def _incubation_metric_summary_for_tooltip(evaluation):
+def metric_summary_for_tooltip(evaluation):
     if not evaluation:
         return "NO DATA"
 
@@ -582,12 +582,12 @@ def _incubation_sync_checkpoint_store(entry, evaluation):
     return entry
 
 
-def _incubation_evaluate_ea(ea_name, parsed_data, config, entry, force=False):
+def evaluate_ea(ea_name, parsed_data, config, entry, force=False):
     metrics, config, ea_trades = _incubation_load_ea_metrics(ea_name, parsed_data, config)
     if metrics is None:
         return None
 
-    reference_ready = _incubation_reference_ready(entry)
+    reference_ready = reference_ready(entry)
 
     if not reference_ready:
         return {
@@ -623,7 +623,7 @@ def _incubation_evaluate_ea(ea_name, parsed_data, config, entry, force=False):
     }
 
 
-def _incubation_current_result_from_entry(entry):
+def current_result_from_entry(entry):
     checkpoints = entry.get("checkpoints") or {}
     for slot in ("cp3", "cp2", "cp1"):
         result = checkpoints.get(slot)
@@ -632,7 +632,7 @@ def _incubation_current_result_from_entry(entry):
     return entry.get("last_evaluation")
 
 
-def _incubation_build_comparison_rows(metrics, entry):
+def build_comparison_rows(metrics, entry):
     if not metrics:
         return []
 
@@ -648,7 +648,7 @@ def _incubation_build_comparison_rows(metrics, entry):
 
     worst95 = get_worst_case_mc(mc_manipulation, mc_retest, "confidence_95")
     worst50 = get_worst_case_mc(mc_manipulation, mc_retest, "confidence_50")
-    current_result = _incubation_current_result_from_entry(entry) or {}
+    current_result = current_result_from_entry(entry) or {}
     mc_source = current_result.get("mc_source", {}) or {}
     dominant_95 = mc_source.get("dominant_metrics", {}) or {}
     dominant_50 = mc_source.get("dominant_metrics_50", {}) or {}
@@ -754,7 +754,7 @@ def _incubation_build_comparison_rows(metrics, entry):
     return rows
 
 
-def _incubation_verdict_card(evaluation):
+def build_verdict_card(evaluation):
     if not evaluation:
         return {
             "checkpoint": "PRE_CP1",
@@ -862,7 +862,7 @@ def _incubation_verdict_card(evaluation):
         "score": evaluation.get("score"),
         "verdict": verdict,
         "verdict_class": verdict_class,
-        "summary": _incubation_metric_summary_for_tooltip(evaluation),
+        "summary": metric_summary_for_tooltip(evaluation),
         "hard_gates": hard_gates,
         "reason": reason,
         "verdict_reading": verdict_reading,
@@ -978,7 +978,7 @@ def _incubation_metric_reason_message(metric_key, eliminated=False):
     return messages.get(metric_key, f"Una métrica clave quedó {severity}.")
 
 
-def _incubation_timeline_from_entry(entry):
+def build_timeline_from_entry(entry):
     checkpoints = entry.get("checkpoints") or {}
     timeline = []
     for key, label in [("cp1", "CP1"), ("cp2", "CP2"), ("cp3", "CP3")]:
