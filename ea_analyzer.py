@@ -798,13 +798,17 @@ def _build_incubation_dashboard():
     continuar_count = 0
     pending_count = 0
     active_mappings = config.get("mappings", {})
+    store_dirty = False
 
     for ea_name, mapping in active_mappings.items():
         if not mapping.get("active", True):
             continue
 
         entry = store.get(ea_name, {})
-        evaluation_bundle = _incubation_evaluate_ea(ea_name)
+        evaluation_bundle = _incubation_evaluate_ea(ea_name, parsed_data, entry)
+        if evaluation_bundle and evaluation_bundle["reference_ready"]:
+            store[ea_name] = evaluation_bundle["entry"]
+            store_dirty = True
         metrics = evaluation_bundle["metrics"] if evaluation_bundle else None
         evaluation = evaluation_bundle["evaluation"] if evaluation_bundle else None
         total_trades = int(metrics.get("total_trades") or 0) if metrics else 0
@@ -903,6 +907,9 @@ def _build_incubation_dashboard():
             }
         )
 
+    if store_dirty:
+        save_incubation_store(store)
+
     return {
         "rows": rows,
         "total_active": len(rows),
@@ -915,8 +922,7 @@ def _build_incubation_dashboard():
     }
 
 
-def _incubation_load_ea_metrics(ea_name):
-    parsed_data = get_incubation_parsed_data()
+def _incubation_load_ea_metrics(ea_name, parsed_data):
     if not parsed_data:
         return None, None, None
 
@@ -1132,13 +1138,11 @@ def _incubation_sync_checkpoint_store(entry, evaluation):
     return entry
 
 
-def _incubation_evaluate_ea(ea_name, force=False):
-    metrics, config, ea_trades = _incubation_load_ea_metrics(ea_name)
+def _incubation_evaluate_ea(ea_name, parsed_data, entry, force=False):
+    metrics, config, ea_trades = _incubation_load_ea_metrics(ea_name, parsed_data)
     if metrics is None:
         return None
 
-    store = load_incubation_store()
-    entry = store.get(ea_name, {})
     reference_ready = _incubation_reference_ready(entry)
 
     if not reference_ready:
@@ -1163,8 +1167,6 @@ def _incubation_evaluate_ea(ea_name, force=False):
     )
 
     entry = _incubation_sync_checkpoint_store(entry, evaluation)
-    store[ea_name] = entry
-    save_incubation_store(store)
 
     return {
         "ea_name": ea_name,
@@ -2212,10 +2214,17 @@ def incubation_strategy(ea_name):
         return guard
 
     ea_name = unquote(ea_name)
-    bundle = _incubation_evaluate_ea(ea_name)
+    parsed_data = get_incubation_parsed_data()
+    store = load_incubation_store()
+    entry = store.get(ea_name, {})
+    bundle = _incubation_evaluate_ea(ea_name, parsed_data, entry)
     if bundle is None:
         flash("No hay trades de incubación para esa estrategia.", "warn")
         return redirect(url_for("incubation_dashboard"))
+
+    if bundle["reference_ready"]:
+        store[ea_name] = bundle["entry"]
+        save_incubation_store(store)
 
     metrics = bundle["metrics"]
     config = bundle["config"]
@@ -2341,10 +2350,17 @@ def incubation_force_evaluate(ea_name):
         return guard
 
     ea_name = unquote(ea_name)
-    bundle = _incubation_evaluate_ea(ea_name)
+    parsed_data = get_incubation_parsed_data()
+    store = load_incubation_store()
+    entry = store.get(ea_name, {})
+    bundle = _incubation_evaluate_ea(ea_name, parsed_data, entry)
     if bundle is None:
         flash("No hay trades de incubación para reevaluar.", "warn")
         return redirect(url_for("incubation_dashboard"))
+
+    if bundle["reference_ready"]:
+        store[ea_name] = bundle["entry"]
+        save_incubation_store(store)
 
     flash("Incubation reevaluado", "success")
     return redirect(url_for("incubation_strategy", ea_name=ea_name))
