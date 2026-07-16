@@ -207,37 +207,44 @@ def parse_reference_form(form):
     warnings = []
     int_fields = {"total_trades", "max_consec_losses", "avg_bars_trade", "stagnation_days", "simulations"}
 
-    def read_field(section_key, field_key, field_label, required, numeric=True):
-        raw = _normalize_decimal_text(form.get(f"{section_key}_{field_key}", ""))
-        if not raw:
-            if required and section_key == "backtest":
-                errors[f"{section_key}.{field_key}"] = f"{field_label} es obligatorio."
-            return None
-        if numeric:
-            parsed = _parse_numeric_input(raw)
-            if parsed is None:
-                errors[f"{section_key}.{field_key}"] = f"{field_label} debe ser un número válido."
-            elif field_key in int_fields:
-                return int(round(parsed))
-            return parsed
-        return raw
+    def read_raw(section_key, field_key):
+        return _normalize_decimal_text(form.get(f"{section_key}_{field_key}", ""))
 
     for section in INCUBATION_REFERENCE_SECTIONS:
         target_root = data[section["group"]]
         target_conf = target_root.get(section["confidence_key"], {}) if section.get("confidence_key") else target_root
+
+        # All-or-nothing per required section (root-cause fix for the
+        # read_field bug that only ever validated "backtest" as required,
+        # docs/design/decision-engine-no-data-contract.md §4): if a
+        # required:True section has ANY value entered, every empty field in
+        # it becomes a form error; a fully empty section stays allowed (the
+        # section-level "at least one MC95" rule below still applies).
+        section_raws = {field["key"]: read_raw(section["key"], field["key"]) for field in section["fields"]}
+        section_has_any_value = any(section_raws.values())
+
         for field in section["fields"]:
-            value = read_field(
-                section["key"],
-                field["key"],
-                field["label"],
-                section["required"],
-                numeric=field["key"] not in {"bt_period", "timeframe", "method"},
-            )
-            if value is not None:
-                if field.get("store_at") == "group":
-                    target_root[field["key"]] = value
-                else:
-                    target_conf[field["key"]] = value
+            raw = section_raws[field["key"]]
+            numeric = field["key"] not in {"bt_period", "timeframe", "method"}
+
+            if not raw:
+                if section["required"] and section_has_any_value:
+                    errors[f"{section['key']}.{field['key']}"] = f"{field['label']} es obligatorio."
+                continue
+
+            if numeric:
+                parsed = _parse_numeric_input(raw)
+                if parsed is None:
+                    errors[f"{section['key']}.{field['key']}"] = f"{field['label']} debe ser un número válido."
+                    continue
+                value = int(round(parsed)) if field["key"] in int_fields else parsed
+            else:
+                value = raw
+
+            if field.get("store_at") == "group":
+                target_root[field["key"]] = value
+            else:
+                target_conf[field["key"]] = value
 
         if section.get("confidence_key"):
             target_root[section["confidence_key"]] = target_conf
