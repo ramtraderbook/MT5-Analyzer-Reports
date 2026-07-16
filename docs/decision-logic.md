@@ -299,6 +299,13 @@ Si lower_is_better:
 #### Ajuste SPP en CP2
 Si una métrica está en estado `failing` pero el SPP tiene confianza > 1.3 (la mediana SPP es ≥ 130% de la original) Y el valor live está dentro de la mediana SPP, el estado se mejora a `acceptable`.
 
+**Orientación de `spp_confidence` (dependiente de la dirección de la métrica):**
+```
+Si higher_is_better: spp_confidence = mediana_SPP / original_BT
+Si lower_is_better:  spp_confidence = original_BT / mediana_SPP
+```
+Con esta orientación, `spp_confidence > 1.3` significa uniformemente "la permutación típica es ≥30% mejor que la corrida original" sin importar si la métrica es higher- o lower-is-better — la mediana SPP mide robustez del parámetro: una mediana muy por debajo (o, invertido, muy por encima en métricas lower-is-better) de la original sugiere que la corrida original fue un outlier con overfitting. `spp_confidence` se calcula directamente desde las claves planas `spp.median_*` y `backtest.*` almacenadas — no desde `compute_spp_ratios`, que sigue siendo solo para presentación (su etiqueta ya se lee como "original vs mediana", orientación inversa a la usada aquí).
+
 #### Veredicto CP2
 ```
 failing_count ≤ 1 → CONTINUAR
