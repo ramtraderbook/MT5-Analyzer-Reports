@@ -65,6 +65,39 @@ def _first_trade_date(live_metrics):
     return min(dates) if dates else None
 
 
+def _parse_date_only(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _incubation_start_date(reference_data, live_metrics):
+    """Resolve the incubation clock start date.
+
+    Priority: entry["date_added"] (stamped at reference save time -- the
+    authoritative clock, design C7) -> first trade's close date (legacy
+    fallback, used only when date_added is absent/unparseable) -> None.
+    A zero-trade EA still ages against the PRE_CP1 frequency deadline as
+    long as date_added is present.
+    """
+    date_added = reference_data.get("date_added") if isinstance(reference_data, dict) else None
+    parsed = _parse_date_only(date_added)
+    if parsed:
+        return parsed
+
+    first_dt = _first_trade_date(live_metrics)
+    return first_dt.date() if first_dt else None
+
+
 def _wins_from_metrics(live_metrics):
     wins = live_metrics.get("winning_trades")
     if wins is not None:
@@ -264,22 +297,30 @@ def get_checkpoint_for_trades(n_trades):
 
 
 def _hard_gates(live_metrics, reference_data):
+    """Compute the CP1 hard gates.
+
+    PRECONDITION: callers (evaluate_cp1/cp2/cp3) MUST run
+    `_completeness_missing()` first and only call this once it returns an
+    empty list. live dd/mcl/wr, backtest.win_rate, and mc95 dd/mcl are all
+    required inputs by that point, so no `or 0` coercion survives on them
+    here -- a gap that slips through would fail loudly (design C3/C4).
+    """
     total_trades = _safe_int(live_metrics.get("total_trades"), 0) or 0
     wins = _wins_from_metrics(live_metrics)
 
-    live_dd = _safe_float(live_metrics.get("max_dd_pct"), 0.0) or 0.0
-    live_mcl = _safe_int(live_metrics.get("max_consec_losses"), 0) or 0
-    live_wr = _safe_float(live_metrics.get("win_rate"), 0.0) or 0.0
+    live_dd = _safe_float(live_metrics.get("max_dd_pct"))
+    live_mcl = _safe_int(live_metrics.get("max_consec_losses"))
+    live_wr = _safe_float(live_metrics.get("win_rate"))
 
-    bt_wr = _safe_float(_get_reference_value(reference_data, ("backtest", "win_rate")), 0.0) or 0.0
+    bt_wr = _safe_float(_get_reference_value(reference_data, ("backtest", "win_rate")))
     bt_total = _safe_int(_get_reference_value(reference_data, ("backtest", "total_trades")), 0) or total_trades
     bt_period = _get_reference_value(reference_data, ("backtest", "bt_period"), "")
     bt_monthly = _safe_float(_get_reference_value(reference_data, ("backtest", "monthly_frequency")))
     expected_monthly = bt_monthly if bt_monthly is not None else calculate_monthly_frequency(bt_total, bt_period)
 
     mc95_bundle = _mc_source_bundle(reference_data, "confidence_95")
-    mc95_dd = _safe_float(mc95_bundle["worst"].get("max_dd_pct"), 0.0) or 0.0
-    mc95_mcl = _safe_int(mc95_bundle["worst"].get("max_consec_losses"), 0) or 0
+    mc95_dd = _safe_float(mc95_bundle["worst"].get("max_dd_pct"))
+    mc95_mcl = _safe_int(mc95_bundle["worst"].get("max_consec_losses"))
 
     dd_threshold = mc95_dd * 1.5
     dd_passed = live_dd <= dd_threshold
@@ -290,15 +331,20 @@ def _hard_gates(live_metrics, reference_data):
     mcl_passed = live_mcl <= mc95_mcl
 
     actual_monthly = 0.0
-    first_dt = _first_trade_date(live_metrics)
-    if first_dt:
-        days_incubating = max((date.today() - first_dt.date()).days, 1)
+    start_date = _incubation_start_date(reference_data, live_metrics)
+    if start_date:
+        days_incubating = max((date.today() - start_date).days, 1)
         actual_monthly = total_trades / (days_incubating / 30.44)
     else:
         days_incubating = 0
 
+    # Frequency is a WARNING, not a gate: an unparseable/absent BT period
+    # surfaces as an explicit SIN DATOS status, never a silent "OK" or a
+    # crash on a None comparison.
     freq_warning = "OK"
-    if expected_monthly > 0:
+    if expected_monthly is None:
+        freq_warning = "SIN DATOS"
+    elif expected_monthly > 0:
         ratio = actual_monthly / expected_monthly
         if ratio < 0.25 or ratio > 3.0:
             freq_warning = "WARNING"
@@ -329,13 +375,139 @@ def _hard_gates(live_metrics, reference_data):
         },
         "frequency": {
             "status": freq_warning,
-            "expected": round(expected_monthly, 4),
+            "expected": round(expected_monthly, 4) if expected_monthly is not None else None,
             "actual": round(actual_monthly, 4),
         },
     }
 
 
+# Per-metric spec used to build the CP2/CP3 required-set: (output_key,
+# live_key, mc_key, bt_key). live_key is the field read from live_metrics;
+# mc_key is the key used inside the MC worst-case bundle; bt_key is the
+# backtest field name (CP3 only -- CP2 does not require per-metric bt.<k>).
+_CP2_METRIC_KEYS = [
+    ("win_rate", "win_rate", "win_rate"),
+    ("profit_factor", "profit_factor", "profit_factor"),
+    ("expectancy", "expectancy", "expectancy"),
+    ("max_dd_pct", "max_dd_pct", "max_dd_pct"),
+    ("max_consec_losses", "max_consec_losses", "max_consec_losses"),
+    ("payout_ratio", "payout_ratio", "payout_ratio"),
+    ("avg_trade", "expectancy", "avg_trade"),
+]
+
+_CP3_METRIC_KEYS = [
+    ("win_rate", "win_rate", "win_rate", "win_rate"),
+    ("profit_factor", "profit_factor", "profit_factor", "profit_factor"),
+    ("expectancy", "expectancy", "expectancy", "expectancy"),
+    ("avg_trade", "expectancy", "avg_trade", "expectancy"),
+    ("payout_ratio", "payout_ratio", "payout_ratio", "payout_ratio"),
+    ("ret_dd_ratio", "ret_dd", "ret_dd_ratio", "ret_dd_ratio"),
+    ("max_dd_pct", "max_dd_pct", "max_dd_pct", "max_dd_pct"),
+    ("max_consec_losses", "max_consec_losses", "max_consec_losses", "max_consec_losses"),
+    ("stagnation_days", "stagnation_days", "stagnation_days", "stagnation_days"),
+]
+
+
+def _sd_result(checkpoint, missing):
+    """Build the SIN DATOS shape shared by CP1/CP2/CP3 (design §1)."""
+    return {
+        "checkpoint": checkpoint,
+        "verdict": "SIN DATOS",
+        "score": None,
+        "sin_datos": True,
+        "missing": missing,
+        "gates": {},
+        "hard_gate_failures": [],
+        "metrics_evaluation": {},
+        "metrics_scores": {},
+        "category_scores": {},
+        "spp_adjustments": [],
+        "escalation_from_cp2": False,
+        "mc_source": {"has_manipulation": False, "has_retest": False, "dominant_metrics": {}},
+    }
+
+
+def _completeness_missing(checkpoint, live_metrics, reference_data):
+    """Collect missing required inputs for `checkpoint` ("CP1"/"CP2"/"CP3").
+
+    Order: live -> backtest -> mc95 -> mc50 -> spp -> start_date (stable,
+    deterministic -- docs/design/decision-engine-no-data-contract.md §2/§3).
+    A field is required iff its absence would otherwise alter the verdict
+    through a silent default.
+    """
+    missing = []
+
+    def _add(name):
+        if name not in missing:
+            missing.append(name)
+
+    # CP1 hard-gate required set: backtest.win_rate; mc95.max_dd_pct;
+    # mc95.max_consec_losses; live dd/mcl/wr/wins (total_trades covers the
+    # "wins" derivation when winning_trades isn't tracked separately).
+    if _safe_float(live_metrics.get("max_dd_pct")) is None:
+        _add("live.max_dd_pct")
+    if _safe_float(live_metrics.get("max_consec_losses")) is None:
+        _add("live.max_consec_losses")
+    if _safe_float(live_metrics.get("win_rate")) is None:
+        _add("live.win_rate")
+    if _safe_float(live_metrics.get("total_trades")) is None:
+        _add("live.total_trades")
+    if _safe_float(_get_reference_value(reference_data, ("backtest", "win_rate"))) is None:
+        _add("backtest.win_rate")
+
+    mc95_bundle = _mc_source_bundle(reference_data, "confidence_95")
+    if _safe_float(mc95_bundle["worst"].get("max_dd_pct")) is None:
+        _add("mc95.max_dd_pct")
+    if _safe_float(mc95_bundle["worst"].get("max_consec_losses")) is None:
+        _add("mc95.max_consec_losses")
+
+    if checkpoint == "CP1":
+        return missing
+
+    # CP2 (and CP3, which extends it): per-metric mc95.<k> AND mc50.<k> for
+    # the 7 metrics + the corresponding live values. MC50 sections are
+    # form-optional but verdict-mandatory: absent MC50 -> SIN DATOS naming
+    # the mc50.* keys.
+    mc50_bundle = _mc_source_bundle(reference_data, "confidence_50")
+    for _output_key, live_key, mc_key in _CP2_METRIC_KEYS:
+        if _safe_float(live_metrics.get(live_key)) is None:
+            _add(f"live.{live_key}")
+        if _safe_float(mc95_bundle["worst"].get(mc_key)) is None:
+            _add(f"mc95.{mc_key}")
+        if _safe_float(mc50_bundle["worst"].get(mc_key)) is None:
+            _add(f"mc50.{mc_key}")
+
+    if checkpoint == "CP2":
+        return missing
+
+    # CP3: the CP2 set extended to the 9 scored metrics, + bt.<k> per
+    # metric, + coherence inputs (backtest.total_trades, parseable bt_period)
+    # -- coherence carries 15% weight, so it cannot silently score 10.
+    bt = reference_data.get("backtest", {}) if isinstance(reference_data, dict) else {}
+    for _output_key, live_key, mc_key, bt_key in _CP3_METRIC_KEYS:
+        if _safe_float(live_metrics.get(live_key)) is None:
+            _add(f"live.{live_key}")
+        if _safe_float(mc95_bundle["worst"].get(mc_key)) is None:
+            _add(f"mc95.{mc_key}")
+        if _safe_float(mc50_bundle["worst"].get(mc_key)) is None:
+            _add(f"mc50.{mc_key}")
+        if _safe_float(bt.get(bt_key)) is None:
+            _add(f"backtest.{bt_key}")
+
+    bt_total = _safe_int(bt.get("total_trades"))
+    if bt_total is None:
+        _add("backtest.total_trades")
+    elif calculate_monthly_frequency(bt_total, bt.get("bt_period", "")) is None:
+        _add("backtest.bt_period")
+
+    return missing
+
+
 def evaluate_cp1(live_metrics, reference_data):
+    missing = _completeness_missing("CP1", live_metrics, reference_data)
+    if missing:
+        return _sd_result("CP1", missing)
+
     gates = _hard_gates(live_metrics, reference_data)
 
     hard_gate_failures = []
@@ -375,11 +547,52 @@ def _metric_status(value, mc50, mc95, higher_is_better=True):
     return "failing"
 
 
-def _spp_confidence(reference_data, key):
-    spp = reference_data.get("spp", {}) if isinstance(reference_data, dict) else {}
-    ratios = spp.get("orig_vs_median_pct", {}) if isinstance(spp, dict) else {}
-    raw = _safe_float(ratios.get(key))
-    return (raw / 100.0) if raw is not None else None
+# SPP median keys and their corresponding original-backtest field, per
+# output_key. Metrics absent from this map (win_rate, profit_factor,
+# max_consec_losses) have no SPP median tracked in the reference form, so
+# their confidence is always None -- consistent with the pre-existing form
+# schema (INCUBATION_REFERENCE_SECTIONS in incubation_domain.py).
+_SPP_MEDIAN_KEY_MAP = {
+    "max_dd_pct": "median_max_dd_pct",
+    "payout_ratio": "median_payout_ratio",
+    "avg_trade": "median_avg_trade",
+    "expectancy": "median_avg_trade",
+    "ret_dd_ratio": "median_ret_dd_ratio",
+    "stagnation_days": "median_stagnation_days",
+}
+
+_SPP_ORIGINAL_KEY_MAP = {
+    "max_dd_pct": "max_dd_pct",
+    "payout_ratio": "payout_ratio",
+    "avg_trade": "expectancy",
+    "expectancy": "expectancy",
+    "ret_dd_ratio": "ret_dd_ratio",
+    "stagnation_days": "stagnation_days",
+}
+
+
+def _spp_confidence(reference_data, metric_key, higher_is_better=True):
+    """Confidence ratio between the SPP median permutation and the
+    original backtest value for `metric_key`.
+
+    conf > 1.3 means the typical permutation performs >=30% better than the
+    original run (docs/decision-logic.md). Orientation is direction-aware
+    so the single documented threshold survives regardless of metric type:
+    - higher-is-better metrics: conf = median / original
+    - lower-is-better metrics:  conf = original / median
+    (design §5 -- this revives the CP2 rescue / CP3 blend, dead until now.)
+    """
+    spp_key = _SPP_MEDIAN_KEY_MAP.get(metric_key)
+    if not spp_key:
+        return None
+    median = _spp_median(reference_data, spp_key)
+    if median is None:
+        return None
+    bt = reference_data.get("backtest", {}) if isinstance(reference_data, dict) else {}
+    original = _safe_float(bt.get(_SPP_ORIGINAL_KEY_MAP.get(metric_key, metric_key)))
+    if original is None or original == 0:
+        return None
+    return (median / original) if higher_is_better else (original / median)
 
 
 def _spp_median(reference_data, key):
@@ -388,6 +601,10 @@ def _spp_median(reference_data, key):
 
 
 def evaluate_cp2(live_metrics, reference_data):
+    missing = _completeness_missing("CP2", live_metrics, reference_data)
+    if missing:
+        return _sd_result("CP2", missing)
+
     gates = _hard_gates(live_metrics, reference_data)
     hard_gate_failures = [
         gate for gate in ("dd_extreme", "win_rate_binomial", "max_consec_losses") if not gates[gate]["passed"]
@@ -437,34 +654,14 @@ def evaluate_cp2(live_metrics, reference_data):
         mc50_retest = mc50_bundle["mc_retest"].get(mc_key)
         mc95_manip = mc95_bundle["mc_manipulation"].get(mc_key)
         mc95_retest = mc95_bundle["mc_retest"].get(mc_key)
-        spp_median = None
-        spp_key_map = {
-            "max_dd_pct": "median_max_dd_pct",
-            "max_consec_losses": None,
-            "payout_ratio": "median_payout_ratio",
-            "avg_trade": "median_avg_trade",
-            "expectancy": "median_avg_trade",
-            "win_rate": None,
-            "profit_factor": None,
-        }
-        spp_key = spp_key_map.get(output_key)
-        if spp_key:
-            spp_median = _spp_median(reference_data, spp_key)
+        spp_key = _SPP_MEDIAN_KEY_MAP.get(output_key)
+        spp_median = _spp_median(reference_data, spp_key) if spp_key else None
 
         status = _metric_status(live_value, mc50, mc95, higher_is_better=higher_is_better)
         spp_conf = None
 
         if spp_median is not None:
-            spp_conf = _spp_confidence(
-                reference_data,
-                {
-                    "max_dd_pct": "max_dd_pct",
-                    "max_consec_losses": "max_consec_losses",
-                    "payout_ratio": "payout_ratio",
-                    "avg_trade": "avg_trade",
-                    "expectancy": "avg_trade",
-                }.get(output_key, ""),
-            )
+            spp_conf = _spp_confidence(reference_data, output_key, higher_is_better=higher_is_better)
             if spp_conf and spp_conf > 1.3 and status == "failing":
                 spp_status = "good" if (
                     (higher_is_better and live_value >= spp_median)
@@ -516,10 +713,18 @@ def evaluate_cp2(live_metrics, reference_data):
 
 
 def _score_metric(live_value, mc95_value, mc50_value, bt_value, higher_is_better=True):
-    live_value = _safe_float(live_value, 0.0) or 0.0
-    mc95_value = _safe_float(mc95_value, 0.0) or 0.0
-    mc50_value = _safe_float(mc50_value, 0.0) or 0.0
-    bt_value = _safe_float(bt_value, 0.0) or 0.0
+    """Piecewise interpolation between MC95/MC50/BT reference bands.
+
+    PRECONDITION: the CP3 completeness gate guarantees non-None live/mc95/
+    mc50/bt inputs for every metric this is called with. No `or 0.0`
+    coercion survives here (design C5) -- a None slipping through raises a
+    TypeError instead of silently scoring 100 (the old `0 >= 0` bug for an
+    all-missing reference).
+    """
+    live_value = _safe_float(live_value)
+    mc95_value = _safe_float(mc95_value)
+    mc50_value = _safe_float(mc50_value)
+    bt_value = _safe_float(bt_value)
 
     if higher_is_better:
         if live_value >= bt_value:
@@ -569,6 +774,10 @@ def _resolve_cp3_verdict(score, below_mc95, cp2_verdict=None):
 
 
 def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
+    missing = _completeness_missing("CP3", live_metrics, reference_data)
+    if missing:
+        return _sd_result("CP3", missing)
+
     gates = _hard_gates(live_metrics, reference_data)
     hard_gate_failures = [
         gate for gate in ("dd_extreme", "win_rate_binomial", "max_consec_losses") if not gates[gate]["passed"]
@@ -624,7 +833,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("win_rate"),
             "dominant_50": mc50_bundle["dominant"].get("win_rate"),
             "spp": _spp_median(reference_data, "median_win_rate"),
-            "spp_conf": _spp_confidence(reference_data, "win_rate"),
+            "spp_conf": _spp_confidence(reference_data, "win_rate", higher_is_better=True),
             "higher": True,
         },
         "profit_factor": {
@@ -639,7 +848,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("profit_factor"),
             "dominant_50": mc50_bundle["dominant"].get("profit_factor"),
             "spp": _spp_median(reference_data, "median_profit_factor"),
-            "spp_conf": _spp_confidence(reference_data, "profit_factor"),
+            "spp_conf": _spp_confidence(reference_data, "profit_factor", higher_is_better=True),
             "higher": True,
         },
         "expectancy": {
@@ -654,7 +863,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("expectancy"),
             "dominant_50": mc50_bundle["dominant"].get("expectancy"),
             "spp": _spp_median(reference_data, "median_avg_trade"),
-            "spp_conf": _spp_confidence(reference_data, "avg_trade"),
+            "spp_conf": _spp_confidence(reference_data, "expectancy", higher_is_better=True),
             "higher": True,
         },
         "avg_trade": {
@@ -669,7 +878,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("avg_trade"),
             "dominant_50": mc50_bundle["dominant"].get("avg_trade"),
             "spp": _spp_median(reference_data, "median_avg_trade"),
-            "spp_conf": _spp_confidence(reference_data, "avg_trade"),
+            "spp_conf": _spp_confidence(reference_data, "avg_trade", higher_is_better=True),
             "higher": True,
         },
         "payout_ratio": {
@@ -684,7 +893,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("payout_ratio"),
             "dominant_50": mc50_bundle["dominant"].get("payout_ratio"),
             "spp": _spp_median(reference_data, "median_payout_ratio"),
-            "spp_conf": _spp_confidence(reference_data, "payout_ratio"),
+            "spp_conf": _spp_confidence(reference_data, "payout_ratio", higher_is_better=True),
             "higher": True,
         },
         "ret_dd_ratio": {
@@ -699,7 +908,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("ret_dd_ratio"),
             "dominant_50": mc50_bundle["dominant"].get("ret_dd_ratio"),
             "spp": _spp_median(reference_data, "median_ret_dd_ratio"),
-            "spp_conf": _spp_confidence(reference_data, "ret_dd_ratio"),
+            "spp_conf": _spp_confidence(reference_data, "ret_dd_ratio", higher_is_better=True),
             "higher": True,
         },
         "max_dd_pct": {
@@ -714,7 +923,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("max_dd_pct"),
             "dominant_50": mc50_bundle["dominant"].get("max_dd_pct"),
             "spp": _spp_median(reference_data, "median_max_dd_pct"),
-            "spp_conf": _spp_confidence(reference_data, "max_dd_pct"),
+            "spp_conf": _spp_confidence(reference_data, "max_dd_pct", higher_is_better=False),
             "higher": False,
         },
         "max_consec_losses": {
@@ -744,7 +953,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "dominant_95": mc95_bundle["dominant"].get("stagnation_days"),
             "dominant_50": mc50_bundle["dominant"].get("stagnation_days"),
             "spp": _safe_float(_get_reference_value(reference_data, ("spp", "median_stagnation_days"))),
-            "spp_conf": _spp_confidence(reference_data, "stagnation"),
+            "spp_conf": _spp_confidence(reference_data, "stagnation_days", higher_is_better=False),
             "higher": False,
         },
     }
@@ -802,11 +1011,11 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
 
     actual_monthly = _safe_float(live_metrics.get("monthly_frequency"))
     if actual_monthly is None:
-        first_dt = _first_trade_date(live_metrics)
-        total_trades = _safe_int(live_metrics.get("total_trades"), 0) or 0
-        if first_dt:
-            days_incubating = max((date.today() - first_dt.date()).days, 1)
-            actual_monthly = total_trades / (days_incubating / 30.44)
+        total_trades_for_freq = _safe_int(live_metrics.get("total_trades"), 0) or 0
+        start_date = _incubation_start_date(reference_data, live_metrics)
+        if start_date:
+            days_incubating_freq = max((date.today() - start_date).days, 1)
+            actual_monthly = total_trades_for_freq / (days_incubating_freq / 30.44)
         else:
             actual_monthly = 0.0
 
@@ -814,7 +1023,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
         _safe_int(bt.get("total_trades"), 0) or 0,
         bt.get("bt_period", ""),
     )
-    ratio = (actual_monthly / expected_monthly) if expected_monthly > 0 else 0.0
+    ratio = (actual_monthly / expected_monthly) if expected_monthly and expected_monthly > 0 else 0.0
     if 0.5 <= ratio <= 2.0:
         coherence_score = 100.0
     elif 0.25 <= ratio < 0.5 or 2.0 < ratio <= 3.0:
@@ -849,12 +1058,16 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
     # Detect metrics below MC95 threshold.
     # "avg_trade" and "expectancy" share the same live source — deduplicate by
     # skipping "avg_trade" here to avoid counting the same value twice.
+    # NOTE (design C8): the blocker only needs live + mc95 -- mc50 is NOT
+    # required here (it is still required upstream by the completeness
+    # gate for the score itself, but the below_mc95 gate must not be
+    # skipped just because mc50 happens to be absent for one metric).
     below_mc95 = []
     for key, spec in metric_sources.items():
         if key == "avg_trade":
             continue  # same live value as "expectancy", would double-count
         live_value = spec["live"]
-        if live_value is None or spec["mc95"] is None or spec["mc50"] is None:
+        if live_value is None or spec["mc95"] is None:
             continue
         if spec["higher"] and live_value < spec["mc95"]:
             below_mc95.append(key)
@@ -863,7 +1076,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
 
     metrics_scores["frequency"] = {
         "live": round(actual_monthly, 4),
-        "bt": round(expected_monthly, 4),
+        "bt": round(expected_monthly, 4) if expected_monthly is not None else None,
         "mc95": None,
         "mc50": None,
         "score": round(coherence_score, 2),
@@ -901,9 +1114,9 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
 def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_result=None):
     total_trades = _safe_int(live_metrics.get("total_trades"), 0) or 0
     days_incubating = 0
-    first_dt = _first_trade_date(live_metrics)
-    if first_dt:
-        days_incubating = max((date.today() - first_dt.date()).days, 0)
+    start_date = _incubation_start_date(reference_data, live_metrics)
+    if start_date:
+        days_incubating = max((date.today() - start_date).days, 0)
 
     checkpoint = get_checkpoint_for_trades(total_trades)
 
@@ -911,23 +1124,46 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
         # Frequency-based deadline: if BT tells us X trades/month, reaching 5 trades
         # should take ~(5 / bt_monthly * 30.44) days. Give 3× tolerance.
         # If that deadline passes with < 5 trades → frequency/edge is lost → ELIMINAR.
-        bt_total = _safe_int(_get_reference_value(reference_data, ("backtest", "total_trades")), 0) or 0
+        # The clock is `date_added` (design C7), not first-trade date, so a
+        # zero-trade EA ages too instead of staying PENDING forever.
+        bt_total = _safe_int(_get_reference_value(reference_data, ("backtest", "total_trades")))
         bt_period = _get_reference_value(reference_data, ("backtest", "bt_period"), "")
         bt_monthly = _safe_float(_get_reference_value(reference_data, ("backtest", "monthly_frequency")))
         if bt_monthly is None:
-            bt_monthly = calculate_monthly_frequency(bt_total, bt_period)
+            bt_monthly = calculate_monthly_frequency(bt_total or 0, bt_period)
 
-        freq_deadline_days = None
+        missing = []
+        if bt_total is None:
+            missing.append("backtest.total_trades")
+        if bt_monthly is None or bt_monthly <= 0:
+            missing.append("backtest.bt_period")
+
+        if missing:
+            return {
+                "ea_name": ea_name,
+                "total_trades": total_trades,
+                "days_incubating": days_incubating,
+                "current_checkpoint": checkpoint,
+                "verdict": "SIN DATOS",
+                "score": None,
+                "sin_datos": True,
+                "missing": missing,
+                "details": {
+                    "checkpoint": "PRE_CP1",
+                    "missing": missing,
+                },
+                "hard_gate_failures": [],
+                "mc_source": {},
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        days_expected_for_5 = (5.0 / bt_monthly) * 30.44
+        freq_deadline_days = round(days_expected_for_5 * 3)
         actual_monthly = 0.0
-        if bt_monthly and bt_monthly > 0:
-            days_expected_for_5 = (5.0 / bt_monthly) * 30.44
-            freq_deadline_days = round(days_expected_for_5 * 3)
-            if days_incubating > 0:
-                actual_monthly = round(total_trades / (days_incubating / 30.44), 2)
+        if days_incubating > 0:
+            actual_monthly = round(total_trades / (days_incubating / 30.44), 2)
 
-        deadline_exceeded = (
-            freq_deadline_days is not None and days_incubating >= freq_deadline_days
-        )
+        deadline_exceeded = days_incubating >= freq_deadline_days
 
         if deadline_exceeded:
             return {
@@ -937,11 +1173,13 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
                 "current_checkpoint": checkpoint,
                 "verdict": "ELIMINAR",
                 "score": None,
+                "sin_datos": False,
+                "missing": [],
                 "details": {
                     "checkpoint": "PRE_CP1",
                     "freq_deadline": True,
                     "deadline_days": freq_deadline_days,
-                    "bt_monthly": round(bt_monthly, 2) if bt_monthly else None,
+                    "bt_monthly": round(bt_monthly, 2),
                     "actual_monthly": actual_monthly,
                 },
                 "hard_gate_failures": ["freq_deadline"],
@@ -955,11 +1193,13 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
             "current_checkpoint": checkpoint,
             "verdict": "PENDING",
             "score": None,
+            "sin_datos": False,
+            "missing": [],
             "details": {
                 "checkpoint": "PRE_CP1",
                 "freq_deadline": False,
                 "deadline_days": freq_deadline_days,
-                "bt_monthly": round(bt_monthly, 2) if bt_monthly else None,
+                "bt_monthly": round(bt_monthly, 2),
                 "actual_monthly": actual_monthly,
             },
             "hard_gate_failures": [],
@@ -982,6 +1222,8 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
         "current_checkpoint": checkpoint,
         "verdict": result.get("verdict", "PENDING"),
         "score": result.get("score"),
+        "sin_datos": result.get("sin_datos", False),
+        "missing": result.get("missing", []),
         "details": result,
         "hard_gate_failures": hard_gate_failures,
         "mc_source": result.get("mc_source", {}),
