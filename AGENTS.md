@@ -10,7 +10,7 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 |---|---|
 | [`docs/backend.md`](docs/backend.md) | Arquitectura Flask, parseo xlsx, rutas, sesión/cache, flujo de datos |
 | [`docs/frontend.md`](docs/frontend.md) | Templates Jinja2, CSS, Chart.js, APIs de gráficas, gotchas |
-| [`docs/metrics-formulas.md`](docs/metrics-formulas.md) | Todas las fórmulas: P&L, DD, SQN, Sharpe, RoR, correlación, etc. |
+| [`docs/metrics-formulas.md`](docs/metrics-formulas.md) | Todas las fórmulas: P&L, DD, SQN, Sharpe, correlación, etc. |
 | [`docs/decision-logic.md`](docs/decision-logic.md) | Scoring Live Validator + Incubation CP1/CP2/CP3, pesos, veredictos, anti-limbo |
 
 ---
@@ -98,7 +98,6 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 | `_calc_sharpe(net_pnl_list)` | Sharpe simplificado |
 | `_calc_streaks(net_pnl_list)` | Rachas max y promedio wins/losses |
 | `_calc_stagnation(last_peak_date)` | Días desde último pico equity |
-| `_calc_risk_of_ruin(net_pnl_list, capital)` | Monte Carlo RoR (5000 sims) |
 | `_calc_rolling_metrics(trades, window)` | Métricas rodantes sobre ventana N trades |
 | `_weeks_operating(trades_sorted)` | Semanas desde primer a último trade |
 

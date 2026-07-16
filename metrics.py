@@ -8,7 +8,15 @@ from datetime import date, datetime, timedelta
 
 import numpy as np
 
-TODAY = date.today()  # kept for backwards-compat imports; prefer date.today() inline
+# A per-trade P&L series whose standard deviation is below this fraction of its
+# mean is a fixed payout (e.g. a scalper with a constant take-profit and no
+# losses yet), not a real distribution — SQN/Sharpe are not estimable on it.
+MIN_COEFFICIENT_OF_VARIATION = 0.01
+
+# Minimum trades before SQN earns a quality label. Below this the sample cannot
+# support a grade at any variance, so the number is reported with the
+# "(orientativo)" note but the label is withheld. Same threshold both guards.
+MIN_TRADES_FOR_SQN_LABEL = 20
 
 
 EA_COLORS = [
@@ -130,15 +138,23 @@ def _calc_max_drawdown(equity_curve, capital):
 
     for point in equity_curve:
         pnl = point["equity"]  # net P&L
-        if pnl >= peak_pnl:
+        if pnl > peak_pnl:
             peak_pnl = pnl
             last_peak_date = point["date"]
 
         dd_dollar = peak_pnl - pnl
         if dd_dollar > max_dd_dollar:
             max_dd_dollar = dd_dollar
-            peak_abs = capital + peak_pnl
-            max_dd_pct = (dd_dollar / peak_abs * 100) if peak_abs > 0 else 0.0
+
+        # max_dd_pct is tracked independently as the maximum dd_pct over every
+        # point — it must NOT be tied to the moment of maximum dollar drawdown,
+        # since the peak_abs denominator changes between points and the worst
+        # percentage drawdown can occur at a different point than the worst
+        # dollar drawdown.
+        peak_abs = capital + peak_pnl
+        dd_pct = (dd_dollar / peak_abs * 100) if peak_abs > 0 else 0.0
+        if dd_pct > max_dd_pct:
+            max_dd_pct = dd_pct
 
     return round(max_dd_dollar, 2), round(max_dd_pct, 4), last_peak_date
 
@@ -160,10 +176,13 @@ def _calc_sharpe(net_pnl_list):
     if n < 2:
         return None
     arr = np.array(net_pnl_list, dtype=float)
+    mean_r = float(np.mean(arr))
     std_r = float(np.std(arr, ddof=1))
-    if std_r == 0:
+    # std_r <= 0 only when std_r == 0, so this also subsumes the old exact-zero
+    # check and never divides when mean_r == 0.
+    if std_r <= abs(mean_r) * MIN_COEFFICIENT_OF_VARIATION:
         return None
-    return round(float(np.mean(arr)) / std_r, 2)
+    return round(mean_r / std_r, 2)
 
 
 def _calc_sqn(net_pnl_list):
@@ -179,12 +198,23 @@ def _calc_sqn(net_pnl_list):
     mean_r = float(np.mean(arr))
     std_r = float(np.std(arr, ddof=1))
 
-    if std_r == 0:
-        return None, "(desviación cero)", "N/A"
+    # Guard on the coefficient of variation, not on an exact-zero epsilon: a
+    # per-trade P&L series varying by less than MIN_COEFFICIENT_OF_VARIATION
+    # of its mean is a fixed payout (e.g. a fixed-TP scalper with no losses
+    # yet), not a real distribution — SQN is not estimable on it. This also
+    # subsumes the old std_r == 0 check and never divides when mean_r == 0
+    # (std_r <= 0 is true only when std_r == 0).
+    if std_r <= abs(mean_r) * MIN_COEFFICIENT_OF_VARIATION:
+        note = "(desviación cero)" if std_r == 0 else "(varianza degenerada)"
+        return None, note, "N/A"
 
     sqn = math.sqrt(n) * mean_r / std_r
-    note = "(orientativo)" if n < 20 else ""
-    label = _sqn_label(sqn)
+    note = "(orientativo)" if n < MIN_TRADES_FOR_SQN_LABEL else ""
+    # Below MIN_TRADES_FOR_SQN_LABEL the sample cannot support a quality grade:
+    # sqrt(N)*mean/std is unbounded for a small N, so an EA that merely opens
+    # with a few wins scores as elite ([5.0, 6.0] -> 11.0 -> "Santo Grial").
+    # Report the number with its "(orientativo)" note, but withhold the grade.
+    label = _sqn_label(sqn) if n >= MIN_TRADES_FOR_SQN_LABEL else "N/A"
 
     return round(sqn, 2), note, label
 
@@ -224,46 +254,6 @@ def _calc_streaks(net_pnl_list):
     )
 
     return max_wins, max_losses, avg_wins, avg_losses
-
-
-def _calc_risk_of_ruin(net_pnl_list: list, capital: float) -> dict:
-    """
-    Monte Carlo Risk of Ruin (5000 simulaciones, 200 trades futuros).
-    Retorna probabilidad (%) de perder 20% y 50% del capital.
-    Usa distribución empírica de trades reales como base.
-    """
-    import random
-
-    if len(net_pnl_list) < 10:
-        return {"ror_20": None, "ror_50": None}
-
-    N_SIMS = 5000
-    N_TRADES = 200
-    ruin_20 = 0
-    ruin_50 = 0
-    thr_20 = capital * 0.20
-    thr_50 = capital * 0.50
-    rng = random.Random(42)  # semilla fija → reproducible
-
-    for _ in range(N_SIMS):
-        equity = capital
-        hit_20 = False
-        hit_50 = False
-        for _ in range(N_TRADES):
-            equity += rng.choice(net_pnl_list)
-            if not hit_20 and (capital - equity) >= thr_20:
-                hit_20 = True
-                ruin_20 += 1
-            if not hit_50 and (capital - equity) >= thr_50:
-                hit_50 = True
-                ruin_50 += 1
-            if hit_50:
-                break
-
-    return {
-        "ror_20": round(ruin_20 / N_SIMS * 100, 1),
-        "ror_50": round(ruin_50 / N_SIMS * 100, 1),
-    }
 
 
 def _calc_rolling_metrics(trades_sorted: list, window: int) -> list:
@@ -325,8 +315,11 @@ def _weeks_operating(trades_sorted):
     if first is None:
         return 0.0
     delta = datetime.combine(date.today(), datetime.min.time()) - first
-    return round(delta.total_seconds() / (7 * 86400), 1)
-    return 0.0
+    # Clamp to 0.0: a trade closing today at an intraday time (after midnight)
+    # would otherwise yield a tiny negative value, since the minuend is
+    # today at 00:00 while `first` carries an intraday close time. You cannot
+    # scale a DD limit over negative weeks — 0.0 is the correct floor.
+    return max(0.0, round(delta.total_seconds() / (7 * 86400), 1))
 
 
 def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
@@ -349,6 +342,12 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     trades_sorted = sorted(trades, key=sort_key)
 
     net_pnl_list = [t["net_pnl"] for t in trades_sorted]
+
+    # Trades with an unparseable close_time (parser.py _parse_date returns None).
+    # Their P&L is still counted in net_profit/SQN/Sharpe/streaks but they are
+    # excluded from the equity curve and therefore from max_dd/ret_dd — see
+    # docs/metrics-formulas.md section 5.
+    untimed_trades = sum(1 for t in trades_sorted if t["close_time"] is None)
 
     # P&L breakdown
     wins = [p for p in net_pnl_list if p > 0]
@@ -472,6 +471,7 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
         "max_consec_losses": max_losses,
         "avg_consec_wins": avg_wins_streak,
         "avg_consec_losses": avg_losses_streak,
+        "untimed_trades": untimed_trades,
         "equity_curve": equity_curve,
         "drawdown_curve": dd_curve,
         "trades": trades_sorted,
@@ -496,6 +496,9 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
 
     trades_sorted = sorted(all_trades, key=sort_key)
     net_pnl_list = [t["net_pnl"] for t in trades_sorted]
+
+    # See calculate_ea_metrics() for the SIN DATOS rationale of this counter.
+    untimed_trades = sum(1 for t in trades_sorted if t["close_time"] is None)
 
     wins = [p for p in net_pnl_list if p > 0]
     losses = [p for p in net_pnl_list if p <= 0]
@@ -615,6 +618,7 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         "max_consec_losses": max_losses,
         "avg_consec_wins": avg_wins_streak,
         "avg_consec_losses": avg_losses_streak,
+        "untimed_trades": untimed_trades,
         "equity_curve": equity_curve,
         "drawdown_curve": dd_curve,
         "trades": trades_sorted,
@@ -705,6 +709,7 @@ def _empty_metrics(name, config):
         "max_consec_losses": 0,
         "avg_consec_wins": 0.0,
         "avg_consec_losses": 0.0,
+        "untimed_trades": 0,
         "equity_curve": [],
         "drawdown_curve": [],
         "trades": [],
