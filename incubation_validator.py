@@ -9,6 +9,23 @@ import math
 import re
 from datetime import date, datetime
 
+# SPP adjustment is DISABLED (bounded-correction round, F1). The blend
+# semantics are unresolved: `_spp_confidence` passes `spp_median` into
+# `_score_metric`'s mc95/worst-case slot, but the blend only ever fires when
+# `spp_median > 1.3 * bt` (i.e. the "typical permutation" is >=30% better
+# than the original run). For a higher-is-better metric that means the value
+# landed in the "worst case" slot is ABOVE the backtest reference, inverting
+# the interpolation band and collapsing the score to the bottom branch
+# instead of upgrading it. Verified strict downgrade on live fixtures:
+# payout_ratio 24.14 -> 23.14, max_dd 38.33 -> 34.46 -- the opposite of
+# design §5's "SPP only ever upgrades" premise, which was the whole
+# justification for treating SPP as optional. Until the blend itself is
+# redesigned (follow-up), the adjustment stays off: `spp_adjustments` is
+# always `[]` and no SPP value influences any verdict or score. Display
+# fields (`_spp_confidence`, `_spp_median`, `metric_sources["spp"]`) keep
+# computing normally so the UI can still show SPP data.
+SPP_ADJUSTMENT_ENABLED = False
+
 
 def _safe_float(value, default=None):
     if value is None or value == "":
@@ -407,6 +424,53 @@ _CP3_METRIC_KEYS = [
     ("stagnation_days", "stagnation_days", "stagnation_days", "stagnation_days"),
 ]
 
+# Fields whose downstream consumer parses with `_safe_int` instead of
+# `_safe_float` (design F7 correction). The completeness gate must use the
+# same parser as the consumer for that field, or a value like "∞" can pass
+# the gate (accepted by `_safe_float`) and still come back None from the
+# consumer's `_safe_int`, crashing a later `<=` comparison against None.
+_INT_PARSED_KEYS = {"max_consec_losses"}
+
+
+def _effective_ret_dd(live_metrics):
+    """Resolve the live ret/dd ratio, treating a zero-drawdown EA as
+    mathematically infinite rather than missing (design F3 correction).
+
+    `metrics.py` sets `ret_dd = None` whenever `max_dd_dollar <= 0` (the
+    division is undefined), which is correct for the raw ratio but wrong for
+    the required-set gate: a EA with completed trades and literally zero
+    drawdown has an infinite ret/dd ratio -- the best possible outcome, not
+    an absence of data. `_score_metric` already treats `inf >= bt` as a
+    perfect (100) score, so mapping this case to `float("inf")` is
+    consistent with the existing `_safe_float` "∞" -> sentinel precedent
+    used elsewhere. If `ret_dd` is `None` for any OTHER reason (no trades,
+    non-zero drawdown but still missing), it stays missing -> SIN DATOS.
+    """
+    raw = live_metrics.get("ret_dd")
+    if raw is not None:
+        return _safe_float(raw)
+    max_dd_pct = _safe_float(live_metrics.get("max_dd_pct"))
+    total_trades = _safe_int(live_metrics.get("total_trades"), 0) or 0
+    if max_dd_pct == 0 and total_trades > 0:
+        return float("inf")
+    return None
+
+
+def _completeness_value(container, key):
+    """Parse `container[key]` with the same parser its downstream consumer
+    uses (design F7)."""
+    if key in _INT_PARSED_KEYS:
+        return _safe_int(container.get(key))
+    return _safe_float(container.get(key))
+
+
+def _completeness_live_value(live_metrics, live_key):
+    """Parse a live-side required value the same way its checkpoint
+    evaluation consumes it (design F3 + F7)."""
+    if live_key == "ret_dd":
+        return _effective_ret_dd(live_metrics)
+    return _completeness_value(live_metrics, live_key)
+
 
 def _sd_result(checkpoint, missing):
     """Build the SIN DATOS shape shared by CP1/CP2/CP3 (design §1)."""
@@ -446,7 +510,7 @@ def _completeness_missing(checkpoint, live_metrics, reference_data):
     # "wins" derivation when winning_trades isn't tracked separately).
     if _safe_float(live_metrics.get("max_dd_pct")) is None:
         _add("live.max_dd_pct")
-    if _safe_float(live_metrics.get("max_consec_losses")) is None:
+    if _completeness_value(live_metrics, "max_consec_losses") is None:
         _add("live.max_consec_losses")
     if _safe_float(live_metrics.get("win_rate")) is None:
         _add("live.win_rate")
@@ -458,7 +522,7 @@ def _completeness_missing(checkpoint, live_metrics, reference_data):
     mc95_bundle = _mc_source_bundle(reference_data, "confidence_95")
     if _safe_float(mc95_bundle["worst"].get("max_dd_pct")) is None:
         _add("mc95.max_dd_pct")
-    if _safe_float(mc95_bundle["worst"].get("max_consec_losses")) is None:
+    if _completeness_value(mc95_bundle["worst"], "max_consec_losses") is None:
         _add("mc95.max_consec_losses")
 
     if checkpoint == "CP1":
@@ -470,11 +534,11 @@ def _completeness_missing(checkpoint, live_metrics, reference_data):
     # the mc50.* keys.
     mc50_bundle = _mc_source_bundle(reference_data, "confidence_50")
     for _output_key, live_key, mc_key in _CP2_METRIC_KEYS:
-        if _safe_float(live_metrics.get(live_key)) is None:
+        if _completeness_live_value(live_metrics, live_key) is None:
             _add(f"live.{live_key}")
-        if _safe_float(mc95_bundle["worst"].get(mc_key)) is None:
+        if _completeness_value(mc95_bundle["worst"], mc_key) is None:
             _add(f"mc95.{mc_key}")
-        if _safe_float(mc50_bundle["worst"].get(mc_key)) is None:
+        if _completeness_value(mc50_bundle["worst"], mc_key) is None:
             _add(f"mc50.{mc_key}")
 
     if checkpoint == "CP2":
@@ -485,13 +549,13 @@ def _completeness_missing(checkpoint, live_metrics, reference_data):
     # -- coherence carries 15% weight, so it cannot silently score 10.
     bt = reference_data.get("backtest", {}) if isinstance(reference_data, dict) else {}
     for _output_key, live_key, mc_key, bt_key in _CP3_METRIC_KEYS:
-        if _safe_float(live_metrics.get(live_key)) is None:
+        if _completeness_live_value(live_metrics, live_key) is None:
             _add(f"live.{live_key}")
-        if _safe_float(mc95_bundle["worst"].get(mc_key)) is None:
+        if _completeness_value(mc95_bundle["worst"], mc_key) is None:
             _add(f"mc95.{mc_key}")
-        if _safe_float(mc50_bundle["worst"].get(mc_key)) is None:
+        if _completeness_value(mc50_bundle["worst"], mc_key) is None:
             _add(f"mc50.{mc_key}")
-        if _safe_float(bt.get(bt_key)) is None:
+        if _completeness_value(bt, bt_key) is None:
             _add(f"backtest.{bt_key}")
 
     bt_total = _safe_int(bt.get("total_trades"))
@@ -586,7 +650,10 @@ def _spp_confidence(reference_data, metric_key, higher_is_better=True):
     if not spp_key:
         return None
     median = _spp_median(reference_data, spp_key)
-    if median is None:
+    # Defense in depth (F1 correction): guard the zero-median division even
+    # though the adjustment itself is currently disabled -- this function
+    # must not crash if the adjustment is ever re-enabled.
+    if median is None or median == 0:
         return None
     bt = reference_data.get("backtest", {}) if isinstance(reference_data, dict) else {}
     original = _safe_float(bt.get(_SPP_ORIGINAL_KEY_MAP.get(metric_key, metric_key)))
@@ -664,7 +731,7 @@ def evaluate_cp2(live_metrics, reference_data):
 
         if spp_median is not None:
             spp_conf = _spp_confidence(reference_data, output_key, higher_is_better=higher_is_better)
-            if spp_conf and spp_conf > 1.3 and status == "failing":
+            if SPP_ADJUSTMENT_ENABLED and spp_conf and spp_conf > 1.3 and status == "failing":
                 spp_status = "good" if (
                     (higher_is_better and live_value >= spp_median)
                     or (not higher_is_better and live_value <= spp_median)
@@ -899,7 +966,10 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             "higher": True,
         },
         "ret_dd_ratio": {
-            "live": _safe_float(live_metrics.get("ret_dd")),
+            # Zero-drawdown EAs are treated as an infinite (maximal) ratio,
+            # not missing data (design F3 correction) -- see
+            # `_effective_ret_dd`.
+            "live": _effective_ret_dd(live_metrics),
             "bt": _safe_float(bt.get("ret_dd_ratio")),
             "mc95": _safe_float(mc95.get("ret_dd_ratio")),
             "mc50": _safe_float(mc50.get("ret_dd_ratio")),
@@ -981,7 +1051,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
     for key, weight in deviation_weights.items():
         spec = metric_sources[key]
         score = _score_metric(spec["live"], spec["mc95"], spec["mc50"], spec["bt"], higher_is_better=spec["higher"])
-        if spec["spp"] is not None and spec["spp_conf"] and spec["spp_conf"] > 1.3:
+        if SPP_ADJUSTMENT_ENABLED and spec["spp"] is not None and spec["spp_conf"] and spec["spp_conf"] > 1.3:
             spp_score = _score_metric(spec["live"], spec["spp"], spec["mc50"], spec["bt"], higher_is_better=spec["higher"])
             score = score * 0.85 + spp_score * 0.15
             spp_adjustments.append(key)
@@ -998,7 +1068,7 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
     for key, weight in risk_weights.items():
         spec = metric_sources[key]
         score = _score_metric(spec["live"], spec["mc95"], spec["mc50"], spec["bt"], higher_is_better=spec["higher"])
-        if spec["spp"] is not None and spec["spp_conf"] and spec["spp_conf"] > 1.3:
+        if SPP_ADJUSTMENT_ENABLED and spec["spp"] is not None and spec["spp_conf"] and spec["spp_conf"] > 1.3:
             spp_score = _score_metric(spec["live"], spec["spp"], spec["mc50"], spec["bt"], higher_is_better=spec["higher"])
             score = score * 0.85 + spp_score * 0.15
             spp_adjustments.append(key)

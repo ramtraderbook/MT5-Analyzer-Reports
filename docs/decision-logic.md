@@ -296,8 +296,10 @@ Si lower_is_better:
     failing    → live > MC95
 ```
 
-#### Ajuste SPP en CP2
-Si una métrica está en estado `failing` pero el SPP tiene confianza > 1.3 (la mediana SPP es ≥ 130% de la original) Y el valor live está dentro de la mediana SPP, el estado se mejora a `acceptable`.
+#### Ajuste SPP en CP2 — **actualmente DESHABILITADO**
+> **`SPP_ADJUSTMENT_ENABLED = False` en `incubation_validator.py`.** El ajuste SPP NO afecta ningún veredicto ni score hoy. `spp_adjustments` siempre es `[]`. Motivo: el blend usa `spp_median` en el slot de "peor caso" (MC95) de `_score_metric`, pero ese blend solo se dispara cuando `spp_median > 1.3 × BT` — es decir, cuando la mediana típica es MEJOR que el propio backtest. Para una métrica higher-is-better eso coloca el "peor caso" POR ENCIMA del BT, invirtiendo la banda de interpolación y colapsando el score a la rama inferior en vez de mejorarlo. Verificado como downgrade estricto en datos reales: payout_ratio 24.14→23.14, max_dd 38.33→34.46 — lo opuesto a la premisa de diseño "SPP solo puede mejorar el score" que justificaba tratar el SPP como opcional. Hasta que el blend se rediseñe (seguimiento pendiente), el ajuste permanece apagado. Los campos de visualización (`_spp_confidence`, `_spp_median`, `metric_sources["spp"]`) se siguen calculando y mostrando normalmente — solo el AJUSTE está deshabilitado.
+
+Lógica original (documentada, no vigente): si una métrica está en estado `failing` pero el SPP tiene confianza > 1.3 (la mediana SPP es ≥ 130% de la original) Y el valor live está dentro de la mediana SPP, el estado se mejoraría a `acceptable`.
 
 **Orientación de `spp_confidence` (dependiente de la dirección de la métrica):**
 ```
@@ -341,8 +343,10 @@ Esta escala da:
 - ~25: en el límite del peor caso MC95
 - 0: peor que el peor caso MC95
 
-#### Ajuste SPP en CP3
-Si `spp_confidence > 1.3`:
+#### Ajuste SPP en CP3 — **actualmente DESHABILITADO**
+> Mismo interruptor que CP2 (`SPP_ADJUSTMENT_ENABLED = False`): el blend de 15% NUNCA se aplica hoy, así que el score CP3 nunca varía por SPP. Ver la nota de CP2 arriba para el motivo (blend de downgrade estricto, semántica sin resolver).
+
+Lógica original (documentada, no vigente): si `spp_confidence > 1.3`:
 ```
 score_final = score_mc × 0.85 + score_spp × 0.15
 ```
