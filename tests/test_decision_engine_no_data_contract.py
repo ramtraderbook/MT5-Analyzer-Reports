@@ -601,10 +601,19 @@ def test_metric_summary_for_tooltip_cp3_none_score_no_crash():
 
 def test_validator_weeks_operating_zero_day_one_scalper_is_sin_datos():
     """An EA that closes 5+ trades on its FIRST DAY has weeks_operating=0.
-    Both the DD-escalado and Frecuencia branches require weeks_live > 0;
-    with no MC fallback, both computed "N/D" while every OTHER estado
-    stayed confident -- this used to reach veredicto=CONTINUAR score=74.2
-    missing=[]. Must now be SIN DATOS."""
+
+    Frecuencia still requires weeks_live > 0 (trades per month is undefined
+    over zero weeks), so it computes "N/D" while every OTHER estado stays
+    confident -- this used to reach veredicto=CONTINUAR score=74.2
+    missing=[]. Must be SIN DATOS.
+
+    DD-escalado no longer contributes to `missing` here: it scales on the
+    TRADE clock (sqrt(trades_live / bt_freq_mes)), not on weeks_live, so 60
+    trades on day one carry enough accumulated variance to judge the
+    drawdown even though the calendar says zero weeks. That is deliberate --
+    the calendar clock made dd_limit 0.91% on day one and hard-eliminated
+    healthy newborn scalpers. The SIN DATOS verdict itself is unchanged.
+    """
     live = dict(_VALIDATOR_LIVE)
     live["weeks_operating"] = 0
 
@@ -615,9 +624,15 @@ def test_validator_weeks_operating_zero_day_one_scalper_is_sin_datos():
     assert result["veredicto"] == "SIN DATOS"
     assert result["score"] is None
     assert result["sin_datos"] is True
-    assert "dd_estado" in result["missing"]
     assert "freq_estado" in result["missing"]
     assert "live.weeks_operating" in result["missing"]
+    # DD is now evaluable from the trade clock, so it must NOT be reported
+    # as missing -- but the SIN DATOS blanking still applies to its estado.
+    assert "dd_estado" not in result["missing"]
+    assert result["dd_estado"] == "N/D"
+    # No confident threshold may survive next to an N/D estado/method.
+    assert result["dd_limit"] is None
+    assert result["dd_method"] == "N/D"
 
 
 def test_validator_worst_dd_1m_zero_no_mc_fallback_is_sin_datos():

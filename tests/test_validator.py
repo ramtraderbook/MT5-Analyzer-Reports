@@ -10,6 +10,7 @@ with a `# NOTE:` comment — it is not "fixed" here
 All fixtures are hardcoded and hand-computed. No real report data is used.
 """
 
+import math
 from datetime import datetime
 
 import pytest
@@ -59,8 +60,10 @@ def test_dd_estado_none_when_live_dd_missing():
 )
 def test_dd_estado_bt_worst_dd_path_boundaries(live_dd, expected_estado):
     """
-    BT worst-DD path: dd_limit = worst_dd_1m * sqrt(weeks_live / 4.33).
-    weeks_live=4.33 makes the sqrt factor exactly 1.0, so dd_limit ==
+    BT worst-DD path (trade clock): dd_limit = worst_dd_1m * sqrt(trades_live
+    / bt_freq_mes), where bt_freq_mes = bt_trades / bt_months is the BT's own
+    trades-per-month pace. bt trades_total=240, months=24 -> bt_freq_mes=10.0;
+    live total_trades=10 makes the sqrt factor exactly 1.0, so dd_limit ==
     worst_dd_1m == 10.0 and the 1.5x ALERTA boundary is exactly 15.0.
 
     All other required fields (docs/design/decision-engine-no-data-contract.md
@@ -68,7 +71,7 @@ def test_dd_estado_bt_worst_dd_path_boundaries(live_dd, expected_estado):
     this stays a focused pin of dd_estado alone.
     """
     live = {
-        "total_trades": 50, "weeks_operating": 4.33, "max_dd_pct": live_dd,
+        "total_trades": 10, "weeks_operating": 4.33, "max_dd_pct": live_dd,
         "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
         "expectancy": 10.0, "max_consec_losses": 3, "stagnation_days": 10,
         "avg_bars_live": 10.0,
@@ -76,7 +79,7 @@ def test_dd_estado_bt_worst_dd_path_boundaries(live_dd, expected_estado):
     bt = {
         "worst_dd_1m": 10.0,
         "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
-        "avg_bars": 10.0, "max_consec_losses": 3, "trades_total": 200, "months": 24,
+        "avg_bars": 10.0, "max_consec_losses": 3, "trades_total": 240, "months": 24,
     }
 
     result = calculate_validator_score(
@@ -85,7 +88,7 @@ def test_dd_estado_bt_worst_dd_path_boundaries(live_dd, expected_estado):
 
     assert result["sin_datos"] is False
     assert result["dd_estado"] == expected_estado
-    assert result["dd_method"] == "sqrt(4.3sem/4.33) x 10.0%"
+    assert result["dd_method"] == "sqrt(10tr/10.0tr-mes) x 10.0%"
 
 
 def test_dd_estado_is_nd_when_only_one_mc_source_present_and_no_bt_dd():
@@ -166,6 +169,132 @@ def test_dd_estado_both_mc_present_fallback_boundaries(live_dd, expected_estado)
     assert result["sin_datos"] is False
     assert result["dd_estado"] == expected_estado
     assert result["dd_method"] == "MC min(Retest,Trades) 95% (fallback)"
+
+
+# ── Priority 6b: dd_estado trade clock -- regression pins ───────────────────
+#
+# validator.py:327-355 used to scale dd_limit by CALENDAR time (weeks_live /
+# 4.33). Equity is a discrete random walk indexed by TRADES, not calendar
+# days: variance accumulates per trade and idle calendar time accumulates
+# none. Two proven defects followed from the calendar clock:
+#   (a) a dormant EA (no new trades) got FORGIVEN as weeks_live kept growing
+#       while trades_live stayed frozen -- dd_limit rose with no new data.
+#   (b) a healthy newborn EA (few trades, few days) got EXECUTED because
+#       weeks_live/4.33 was tiny, making dd_limit near zero on day one.
+# The fix replaces the calendar clock with a trade clock: dd_limit =
+# worst_dd_1m * sqrt(trades_live / bt_freq_mes), where bt_freq_mes =
+# bt_trades / bt_months is the backtest's own trades-per-month pace.
+
+
+def _full_bt(worst_dd_1m, trades_total, months):
+    return {
+        "worst_dd_1m": worst_dd_1m,
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "avg_bars": 10.0, "max_consec_losses": 3,
+        "trades_total": trades_total, "months": months,
+    }
+
+
+def _full_live(total_trades, weeks_operating, max_dd_pct):
+    return {
+        "total_trades": total_trades, "weeks_operating": weeks_operating,
+        "max_dd_pct": max_dd_pct,
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "expectancy": 10.0, "max_consec_losses": 3, "stagnation_days": 10,
+        "avg_bars_live": 10.0,
+    }
+
+
+def test_dd_limit_ignores_idle_calendar_time_anti_forgiveness_pin():
+    """A dormant EA (no new trades since it broke) must not be forgiven just
+    because calendar time passes. Same trades_live=40 (frozen), same
+    max_dd_pct=18.0 (frozen); only weeks_operating differs (4.33 vs 208,
+    i.e. ~1 month vs ~4 years idle). dd_limit/dd_estado must be IDENTICAL --
+    the trade clock ignores idle calendar time entirely.
+
+    FAILS against the old calendar-clock code: at weeks_live=4.33 the old
+    formula gives dd_limit=6.00 -> FUERA, but at weeks_live=208 it gives
+    dd_limit=~18.01 -> OK, silently forgiving a dormant, broken EA.
+    """
+    bt = _full_bt(worst_dd_1m=6.0, trades_total=500, months=48)
+    spp = {"expectancy_median": 10.0}
+
+    live_fresh = _full_live(total_trades=40, weeks_operating=4.33, max_dd_pct=18.0)
+    live_idle = _full_live(total_trades=40, weeks_operating=208, max_dd_pct=18.0)
+
+    result_fresh = calculate_validator_score(bt=bt, mc_retest={}, mc_trades={}, spp=spp, live=live_fresh)
+    result_idle = calculate_validator_score(bt=bt, mc_retest={}, mc_trades={}, spp=spp, live=live_idle)
+
+    assert result_fresh["dd_limit"] == result_idle["dd_limit"] == 11.76
+    assert result_fresh["dd_estado"] == result_idle["dd_estado"] == "FUERA"
+
+
+def test_dd_limit_does_not_execute_healthy_newborn_anti_execution_pin():
+    """A newborn EA (few trades, few days live) must not be flagged FUERA
+    just because calendar time is tiny. worst_dd_1m=6%, bt paced at
+    500 trades / 48 months (~10.42 tr/mo); live has only 6 trades and an
+    ordinary 3.0% DD.
+
+    FAILS against the old calendar-clock code: at weeks_live=0.3 the old
+    formula gives dd_limit = 6*sqrt(0.3/4.33) = 1.58%, so a normal 3.0% DD
+    reads FUERA -- executing a healthy EA on day one.
+    """
+    bt = _full_bt(worst_dd_1m=6.0, trades_total=500, months=48)
+    spp = {"expectancy_median": 10.0}
+    live = _full_live(total_trades=6, weeks_operating=0.3, max_dd_pct=3.0)
+
+    result = calculate_validator_score(bt=bt, mc_retest={}, mc_trades={}, spp=spp, live=live)
+
+    assert result["sin_datos"] is False
+    assert result["dd_estado"] != "FUERA"
+
+
+def test_dd_limit_no_op_for_ea_trading_at_backtest_pace():
+    """An EA trading at the SAME pace as the backtest (10 trades in
+    4.33 weeks, matching the BT's own 500tr/48mo = 10.42 tr/mo pace) must be
+    essentially unaffected by the trade-clock switch: the new dd_limit stays
+    within 0.2 of what the old calendar formula would have produced at the
+    same weeks_live. This pins that the fix is a no-op for healthy, actively
+    trading EAs -- only idle/newborn EAs see a different limit.
+    """
+    worst_dd_1m = 6.0
+    weeks_live = 4.33
+    bt = _full_bt(worst_dd_1m=worst_dd_1m, trades_total=500, months=48)
+    spp = {"expectancy_median": 10.0}
+    live = _full_live(total_trades=10, weeks_operating=weeks_live, max_dd_pct=5.0)
+
+    result = calculate_validator_score(bt=bt, mc_retest={}, mc_trades={}, spp=spp, live=live)
+
+    old_calendar_dd_limit = worst_dd_1m * math.sqrt(weeks_live / 4.33)
+    assert abs(result["dd_limit"] - old_calendar_dd_limit) <= 0.2
+
+
+def test_dd_estado_mc_fallback_alerta_zone_reachable_when_mc_values_equal():
+    """When mc_r_dd == mc_t_dd, the OK boundary (min) and the naive ALERTA
+    boundary (max) coincide, collapsing the ALERTA zone to empty -- the gate
+    would silently degrade from three states (OK/ALERTA/FUERA) to two
+    (OK/FUERA). The fix widens the ALERTA boundary to dd_limit_used * 1.5
+    (matching the BT path's own convention) whenever the two MC values do
+    not produce a real zone. Pin that SOME live DD value now reaches ALERTA.
+
+    FAILS against the old code: with mc_r_dd == mc_t_dd == 22.0, live DD
+    21.0 is OK and 23.0 is already FUERA -- no value is ever ALERTA.
+    """
+    bt = {
+        "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
+        "avg_bars": 10.0, "max_consec_losses": 3, "trades_total": 200, "months": 24,
+    }
+    live = _full_live(total_trades=50, weeks_operating=10, max_dd_pct=23.0)
+    mc_retest = {"max_dd": 22.0}
+    mc_trades = {"max_dd": 22.0}
+
+    result = calculate_validator_score(
+        bt=bt, mc_retest=mc_retest, mc_trades=mc_trades,
+        spp={"expectancy_median": 10.0}, live=live,
+    )
+
+    assert result["sin_datos"] is False
+    assert result["dd_estado"] == "ALERTA"
 
 
 # ── Priority 7: get_all_validator_results ───────────────────────────────────

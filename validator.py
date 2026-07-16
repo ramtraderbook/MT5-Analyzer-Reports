@@ -180,6 +180,12 @@ def calculate_validator_score(
         ):
             result[key] = "N/D"
         result["wfe_status"] = "N/D"
+        # dd_limit is numeric, so it cannot join the "N/D" blanking above, but
+        # leaving it set would display a confident threshold next to an N/D
+        # dd_method and an N/D dd_estado -- the exact silent, self-contradicting
+        # number the SIN DATOS contract exists to prevent
+        # (docs/design/decision-engine-no-data-contract.md).
+        result["dd_limit"] = None
         return result
 
     if tl < min_trades:
@@ -328,10 +334,26 @@ def calculate_validator_score(
     dd_limit_used = None
     dd_method = "N/D"
     if max_dd_live is not None:
-        if bt_worst_dd_1m is not None and bt_worst_dd_1m > 0 and weeks_live > 0:
-            dd_limit = bt_worst_dd_1m * math.sqrt(weeks_live / 4.33)
+        if (
+            bt_worst_dd_1m is not None
+            and bt_worst_dd_1m > 0
+            and bt_trades is not None
+            and bt_trades > 0
+            and bt_months is not None
+            and bt_months > 0
+            and trades_live > 0
+        ):
+            # Trade clock, not a calendar clock: equity is a discrete random
+            # walk indexed by trades, so variance accumulates per trade and
+            # idle calendar time contributes none. bt_freq_mes normalizes to
+            # "one month of BT trading pace", exactly as the old 4.33 constant
+            # normalized to "one calendar month" -- bt_worst_dd_1m keeps its
+            # meaning and the scaling factor is still 1.0 at the reference
+            # trading pace (docs/metrics-formulas.md §13).
+            bt_freq_mes = bt_trades / bt_months
+            dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / bt_freq_mes)
             dd_limit_used = round(dd_limit, 2)
-            dd_method = f"sqrt({weeks_live:.1f}sem/4.33) x {bt_worst_dd_1m}%"
+            dd_method = f"sqrt({trades_live:.0f}tr/{bt_freq_mes:.1f}tr-mes) x {bt_worst_dd_1m}%"
             dd_estado = (
                 "OK"
                 if max_dd_live <= dd_limit
@@ -340,9 +362,18 @@ def calculate_validator_score(
         elif mc_r_dd is not None and mc_t_dd is not None:
             # Use the more conservative (higher) of the two MC 95% DD values as the
             # ALERTA boundary so the zone is always reachable regardless of which
-            # MC method produces a tighter threshold.
+            # MC method produces a tighter threshold. mc_r_dd/mc_t_dd are 95% MDD
+            # figures over the FULL backtest and are NOT scaled by trade/time
+            # count -- scaling them for a young EA would reintroduce the
+            # newborn-execution defect this fallback is not exposed to.
             mc_dd_alert = max(mc_r_dd, mc_t_dd)
             dd_limit_used = min(mc_r_dd, mc_t_dd)
+            if mc_dd_alert <= dd_limit_used:
+                # The two MC values coincide (or are inverted), collapsing the
+                # ALERTA zone to empty. Widen it using the same 1.5x ALERTA
+                # convention as the BT path so the three-state gate always has
+                # a reachable middle.
+                mc_dd_alert = dd_limit_used * 1.5
             dd_method = "MC min(Retest,Trades) 95% (fallback)"
             dd_estado = (
                 "OK"
