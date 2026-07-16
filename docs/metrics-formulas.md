@@ -90,7 +90,9 @@ equity[i] = equity[i-1] + net_pnl[i]
 
 El punto inicial se coloca un día antes del primer trade para que la gráfica muestre claramente el inicio desde cero.
 
-**Importante**: Trades con `close_time = None` acumulan P&L pero no generan punto en la curva (no tienen fecha para plotear).
+**Importante**: Un trade queda con `close_time = None` cuando `parser.py::_parse_date` no logra interpretar la fecha de cierre (formato inesperado en el xlsx). Ese trade **se excluye por completo** de la curva de equity: el `continue` en `_build_equity_curve()` ocurre antes de sumar su `net_pnl`, así que su P&L nunca llega a acumularse en la curva. Sin embargo, ese mismo `net_pnl` **sí** se cuenta en `net_profit`, SQN, Sharpe y streaks, porque esas métricas se calculan sobre la lista completa de trades, no sobre la curva de equity.
+
+Esto significa que `equity_curve`, `max_dd`/`max_dd_pct` y `ret_dd` usan una **población de trades distinta** a la de `net_profit`, SQN, Sharpe y streaks — un trade con `close_time` no parseable puede sumar o restar de estas últimas sin afectar en absoluto a las primeras. Para que este descarte silencioso no oculte datos, `calculate_ea_metrics()` y `calculate_portfolio_metrics()` exponen el contador `untimed_trades` (número de trades con `close_time = None`), siguiendo el contrato SIN DATOS del repositorio: los datos faltantes deben nombrarse, nunca asumirse por defecto.
 
 ---
 
@@ -118,8 +120,10 @@ El denominador `capital + peak_pnl` es la base desde la cual se mide la caída. 
 ### Max DD
 ```
 max_dd_dollar = máximo de dd_dollar a lo largo de toda la serie
-max_dd_pct    = dd_pct en el momento en que ocurre max_dd_dollar
+max_dd_pct    = máximo de dd_pct a lo largo de toda la serie
 ```
+`max_dd_dollar` y `max_dd_pct` se rastrean **de forma independiente**, cada uno como el máximo corriente de su propia serie — NO es el `dd_pct` del punto donde ocurre `max_dd_dollar`. El denominador `peak_abs = capital + peak_pnl` cambia entre puntos, así que el peor drawdown porcentual puede darse en un punto distinto al peor drawdown en dólares. Ejemplo: con capital=5000 y trades -1000 / +6000 / -1010, el peor DD en dólares es $1010 (ocurre tras el tercer trade, con peak_pnl=5000), pero el peor DD porcentual es 20% (ocurre tras el primer trade, con peak_pnl=0 y peak_abs=5000 aún pequeño) — reportar solo el DD% del momento de peor DD$ subestimaría el riesgo real.
+
 Se calcula en `_calc_max_drawdown()`. También retorna `last_peak_date`: la fecha del pico más reciente del equity (útil para calcular stagnation).
 
 **Capital default**: $5,000 si no está configurado.
@@ -132,6 +136,8 @@ Se calcula en `_calc_max_drawdown()`. También retorna `last_peak_date`: la fech
 stagnation_days = (hoy - fecha_del_ultimo_pico_equity).days
 ```
 Mide cuántos días han pasado desde que el sistema marcó un nuevo máximo de equity. Un valor elevado indica que el sistema lleva tiempo sin generar nuevos beneficios.
+
+El "pico" solo avanza ante un **nuevo máximo estricto** (`pnl > peak_pnl`), nunca ante un empate (`pnl == peak_pnl`). `_calc_max_drawdown()` y `_build_drawdown_curve()` usan ambas la comparación estricta `>` para mantener coherencia entre `last_peak_date` y la curva de DD. Si el equity vuelve a tocar (sin superar) un pico anterior, eso NO cuenta como nuevo pico y el stagnation sigue contando desde el pico previo.
 
 - `stagnation_days = 0` si el último pico fue hoy
 - Se recalcula cada vez que se calculan métricas (usa `date.today()`)
@@ -163,6 +169,20 @@ Desarrollado por Van K. Tharp para comparar sistemas de trading independientemen
 
 **Nota**: Si N < 20, el SQN se muestra con la nota "(orientativo)" porque con pocos trades la desviación estándar no es estadísticamente robusta.
 
+### La etiqueta se retiene con muestra chica (N < 20)
+Si `N < MIN_TRADES_FOR_SQN_LABEL` (= 20), se devuelve el **valor** de SQN con su nota "(orientativo)" pero la **etiqueta pasa a "N/A"**: no se emite calificación.
+
+El motivo no es la varianza sino el tamaño de muestra: `√N × mean / std` no está acotado cuando N es chico, así que un EA que simplemente arranca con unos pocos wins puntúa como élite. `[5.00, 6.00]` — dos trades ganadores perfectamente normales — da SQN = 11.0, que en la tabla de arriba caería en "Santo Grial". Con 2, 3 o 5 trades no hay muestra que sostenga una calificación de calidad, y la nota "(orientativo)" sola no alcanza: lo que el usuario lee en el dashboard es la etiqueta.
+
+Esto afecta a toda la etapa CP1 de incubación (`get_checkpoint_for_trades` clasifica como CP1 a todo EA con menos de 20 trades), que es justamente donde más EAs nuevos se acumulan.
+
+### Guard de varianza degenerada
+El SQN no se calcula si `std(net_pnl, ddof=1) <= |mean(net_pnl)| × MIN_COEFFICIENT_OF_VARIATION` (con `MIN_COEFFICIENT_OF_VARIATION = 0.01`). Un guard que solo comprueba `std == 0` no es suficiente: un EA con take-profit fijo (p. ej. `[5.00, 5.01]`) tiene una desviación estándar minúscula pero no nula, y el SQN calculado explota a valores absurdos (>1000, etiqueta "Santo Grial") aunque la muestra sea, en la práctica, un pago fijo y no una distribución real. Comprobar el coeficiente de variación (std relativo a la media) en vez de una desviación exactamente cero detecta también estos casi-degenerados.
+
+- `std_r == 0` exacto → SQN = None, nota "(desviación cero)"
+- `0 < std_r ≤ |mean_r| × 0.01` → SQN = None, nota "(varianza degenerada)"
+- En ambos casos, `label = "N/A"`
+
 ---
 
 ## 9. Sharpe Ratio (simplificado)
@@ -172,7 +192,8 @@ Sharpe = mean(net_pnl) / std(net_pnl, ddof=1)
 ```
 Versión simplificada sin tasa libre de riesgo. Mide cuántas desviaciones estándar de beneficio se obtienen por unidad de riesgo (en términos de variabilidad de retornos). Es básicamente el SQN sin el factor √N.
 
-- `Sharpe = None` si N < 2 o `std = 0`
+- `Sharpe = None` si N < 2
+- `Sharpe = None` si `std(net_pnl, ddof=1) <= |mean(net_pnl)| × MIN_COEFFICIENT_OF_VARIATION` (mismo guard de varianza degenerada que el SQN — ver sección 8)
 - Valores positivos indican edge; cuanto mayor, más consistente el sistema
 
 ---
@@ -196,34 +217,7 @@ avg_consec_losses = promedio de todas las rachas perdedoras
 
 ---
 
-## 11. Risk of Ruin (RoR) — Monte Carlo
-
-Probabilidad de perder un % determinado del capital en los próximos 200 trades, simulada con 5000 iteraciones Monte Carlo.
-
-```python
-N_SIMS  = 5000
-N_TRADES = 200
-semilla  = 42  # determinista → reproducible
-
-Para cada simulación:
-    equity = capital
-    Para cada trade futuro:
-        equity += random.choice(net_pnl_list)  # distribución empírica
-        Si (capital - equity) ≥ capital × 0.20: ruin_20 += 1
-        Si (capital - equity) ≥ capital × 0.50: ruin_50 += 1; break
-
-RoR_20% = (ruin_20 / N_SIMS) × 100
-RoR_50% = (ruin_50 / N_SIMS) × 100
-```
-
-**Supuesto clave**: los trades futuros se muestrean de la distribución empírica histórica (con reposición). No asume distribución normal. No modela correlaciones temporales.
-
-- Requiere mínimo 10 trades para calcular
-- Con pocos trades, el RoR puede ser optimista (baja muestra)
-
----
-
-## 12. Métricas rodantes (Rolling Metrics)
+## 11. Métricas rodantes (Rolling Metrics)
 
 Calculadas sobre una ventana deslizante de `window` trades consecutivos:
 
@@ -239,7 +233,7 @@ Visualizan cómo evolucionan las métricas a lo largo del tiempo, revelando dete
 
 ---
 
-## 13. Correlación entre EAs
+## 12. Correlación entre EAs
 
 ### Método
 1. Se construye una serie diaria de P&L para cada EA (sum de `net_pnl` de ese día)
@@ -259,13 +253,17 @@ r(X, Y) = Σ[(Xi - X̄)(Yi - Ȳ)] / √[Σ(Xi - X̄)² × Σ(Yi - Ȳ)²]
 
 ---
 
-## 14. Weeks Operating
+## 13. Weeks Operating
 
 ```
-weeks_operating = (fecha_cierre_último_trade - fecha_cierre_primer_trade).days / 7
+weeks_operating = (hoy - fecha_cierre_primer_trade).days / 7
 ```
 
-Mide la duración del período de operativa analizado. Usado en el Live Validator para escalar el límite de DD:
+**El minuendo es `hoy`, no la fecha de cierre del último trade.** Esto es intencional: usar `hoy` en vez del último trade permite detectar EAs que dejaron de operar — un EA con trades antiguos y ninguna actividad reciente debe seguir mostrando un `weeks_operating` creciente, porque el Live Validator usa este valor para decidir si un EA lleva demasiado tiempo inactivo. Si se calculara con la fecha del último trade, un EA que dejó de operar hace meses aparentaría llevar operando el mismo tiempo que uno activo.
+
+El resultado se acota con `max(0.0, ...)`: como el minuendo es "hoy a las 00:00" y `fecha_cierre_primer_trade` suele llevar una hora intradía, un trade cerrado hoy mismo produciría un valor ligeramente negativo sin el clamp. No se puede escalar un límite de DD sobre semanas negativas, así que 0.0 es el piso correcto (equivalente a "recién empezó").
+
+Usado en el Live Validator para escalar el límite de DD:
 
 ```
 DD_limite = peor_DD_1mes × √(weeks_live / 4.33)
@@ -273,9 +271,11 @@ DD_limite = peor_DD_1mes × √(weeks_live / 4.33)
 
 4.33 = número promedio de semanas en un mes (52/12).
 
+**⚠️ Acoplamiento conocido a resolver por separado**: como `weeks_operating` crece con el tiempo aunque el EA esté inactivo, un EA dormido (sin trades nuevos) ve crecer su `weeks_live` indefinidamente, lo que **agranda** `DD_limite` — cuanto más tiempo lleva quieto, más laxo se vuelve su gate de DD. Esto es una consecuencia no deseada de reutilizar `weeks_operating` (pensado para detectar inactividad) como input directo de un cálculo que premia la inactividad con más margen de riesgo. Se deja señalado aquí; no se modifica `validator.py` en este cambio.
+
 ---
 
-## 15. Monthly Frequency (frecuencia mensual)
+## 14. Monthly Frequency (frecuencia mensual)
 
 ```
 monthly_frequency = total_trades / meses_transcurridos
@@ -291,7 +291,7 @@ La frecuencia es crítica para detectar si un EA está "operando menos de lo nor
 
 ---
 
-## 16. Avg Bars per Trade
+## 15. Avg Bars per Trade
 
 Aproximación del número de barras (velas) que dura cada trade en promedio:
 
@@ -316,7 +316,7 @@ Si el avg_bars_live difiere mucho del backtest, puede indicar slippage elevado o
 
 ---
 
-## 17. Walk-Forward Efficiency (WFE)
+## 16. Walk-Forward Efficiency (WFE)
 
 ```
 BT_profit_per_month  = bt_expectancy × bt_trades / bt_months
@@ -336,7 +336,7 @@ Mide qué porcentaje de la rentabilidad del backtest se está materializando en 
 
 ---
 
-## 18. Edge Erosion
+## 17. Edge Erosion
 
 ```
 edge_erosion = ((expectancy_live - spp_expectancy_median) / spp_expectancy_median) × 100
@@ -348,7 +348,7 @@ El SPP actúa como una estimación más conservadora del "edge real" del sistema
 
 ---
 
-## 19. Significancia estadística (trades live)
+## 18. Significancia estadística (trades live)
 
 | Trades | Nivel |
 |---|---|
@@ -361,7 +361,7 @@ Con menos de 30 trades, los resultados son estadísticamente poco confiables. Lo
 
 ---
 
-## 20. Test binomial para Win Rate (incubación)
+## 19. Test binomial para Win Rate (incubación)
 
 Utilizado en los hard gates de CP1/CP2/CP3 para verificar si la tasa de aciertos observada podría ser simplemente mala suerte o es estadísticamente significativa como deterioro real.
 
