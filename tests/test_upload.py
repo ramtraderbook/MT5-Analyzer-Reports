@@ -254,6 +254,7 @@ def test_incubation_mapping_and_save_flow(monkeypatch):
 
 def test_incubation_reference_list_and_edit_save(monkeypatch):
     import ea_analyzer
+    import incubation_domain
 
     captured = {}
 
@@ -299,7 +300,7 @@ def test_incubation_reference_list_and_edit_save(monkeypatch):
     assert b"BACKTEST" in response.data
 
     form_data = {}
-    for section in ea_analyzer.INCUBATION_REFERENCE_SECTIONS:
+    for section in incubation_domain.INCUBATION_REFERENCE_SECTIONS:
         for field in section["fields"]:
             key = f"{section['key']}_{field['key']}"
             if field["key"] == "bt_period":
