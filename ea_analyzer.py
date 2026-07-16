@@ -805,7 +805,7 @@ def _build_incubation_dashboard():
             continue
 
         entry = store.get(ea_name, {})
-        evaluation_bundle = _incubation_evaluate_ea(ea_name, parsed_data, entry)
+        evaluation_bundle = _incubation_evaluate_ea(ea_name, parsed_data, config, entry)
         if evaluation_bundle and evaluation_bundle["reference_ready"]:
             store[ea_name] = evaluation_bundle["entry"]
             store_dirty = True
@@ -922,11 +922,10 @@ def _build_incubation_dashboard():
     }
 
 
-def _incubation_load_ea_metrics(ea_name, parsed_data):
+def _incubation_load_ea_metrics(ea_name, parsed_data, config):
     if not parsed_data:
         return None, None, None
 
-    config = load_incubation_config()
     ea_trades = [
         t
         for t in parsed_data.get("closed_trades", [])
@@ -1138,8 +1137,8 @@ def _incubation_sync_checkpoint_store(entry, evaluation):
     return entry
 
 
-def _incubation_evaluate_ea(ea_name, parsed_data, entry, force=False):
-    metrics, config, ea_trades = _incubation_load_ea_metrics(ea_name, parsed_data)
+def _incubation_evaluate_ea(ea_name, parsed_data, config, entry, force=False):
+    metrics, config, ea_trades = _incubation_load_ea_metrics(ea_name, parsed_data, config)
     if metrics is None:
         return None
 
@@ -2215,9 +2214,10 @@ def incubation_strategy(ea_name):
 
     ea_name = unquote(ea_name)
     parsed_data = get_incubation_parsed_data()
+    config = load_incubation_config()
     store = load_incubation_store()
     entry = store.get(ea_name, {})
-    bundle = _incubation_evaluate_ea(ea_name, parsed_data, entry)
+    bundle = _incubation_evaluate_ea(ea_name, parsed_data, config, entry)
     if bundle is None:
         flash("No hay trades de incubación para esa estrategia.", "warn")
         return redirect(url_for("incubation_dashboard"))
@@ -2351,9 +2351,10 @@ def incubation_force_evaluate(ea_name):
 
     ea_name = unquote(ea_name)
     parsed_data = get_incubation_parsed_data()
+    config = load_incubation_config()
     store = load_incubation_store()
     entry = store.get(ea_name, {})
-    bundle = _incubation_evaluate_ea(ea_name, parsed_data, entry)
+    bundle = _incubation_evaluate_ea(ea_name, parsed_data, config, entry)
     if bundle is None:
         flash("No hay trades de incubación para reevaluar.", "warn")
         return redirect(url_for("incubation_dashboard"))
