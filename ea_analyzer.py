@@ -464,6 +464,7 @@ def _build_incubation_dashboard():
     observar_count = 0
     continuar_count = 0
     pending_count = 0
+    sin_datos_count = 0
     active_mappings = config.get("mappings", {})
     store_dirty = False
 
@@ -503,7 +504,14 @@ def _build_incubation_dashboard():
                 url = url_for("incubation_strategy", ea_name=ea_name)
                 cp = evaluation.get("current_checkpoint", "")
                 details = evaluation.get("details", {})
-                if cp == "PRE_CP1":
+                if verdict == "SIN DATOS":
+                    # Missing required reference/live data (design §1): never
+                    # borrow a checkpoint-specific status label built for a
+                    # confident verdict.
+                    missing = evaluation.get("missing") or []
+                    status_label = f"SIN DATOS ({len(missing)})" if missing else "SIN DATOS"
+                    status_class = "verdict-no-data"
+                elif cp == "PRE_CP1":
                     status_label = "Esperando trades"
                     status_class = "verdict-pending"
                 elif cp == "CP1":
@@ -537,6 +545,8 @@ def _build_incubation_dashboard():
                     continuar_count += 1
                 elif verdict == "PENDING":
                     pending_count += 1
+                elif verdict == "SIN DATOS":
+                    sin_datos_count += 1
 
             if evaluation:
                 checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
@@ -567,6 +577,7 @@ def _build_incubation_dashboard():
                         "ELIMINAR": "verdict-eliminate",
                         "PENDING": "verdict-pending",
                         "NO DATA": "verdict-no-data",
+                        "SIN DATOS": "verdict-no-data",
                     }.get(verdict, "verdict-pending"),
                     "has_reference": has_reference,
                     "url": url,
@@ -587,6 +598,7 @@ def _build_incubation_dashboard():
         "observar_count": observar_count,
         "continuar_count": continuar_count,
         "pending_count": pending_count,
+        "sin_datos_count": sin_datos_count,
     }
 
 
@@ -1349,6 +1361,7 @@ def incubation_dashboard():
         pending_bt_mc=dashboard_data["pending_bt_mc"],
         eliminar_count=dashboard_data["eliminar_count"],
         aprobar_count=dashboard_data["aprobar_count"],
+        sin_datos_count=dashboard_data["sin_datos_count"],
         show_sidebar=True,
         active_page="incubation_dashboard",
         filename=session.get("filename", ""),
