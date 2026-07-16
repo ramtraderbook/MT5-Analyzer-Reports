@@ -222,7 +222,7 @@ python -m pytest                # tests (si existen)
 - COHERENCIA OPERATIVA: 15% (Frecuencia mensual)
 - AJUSTE MUESTRA: 10% (penalización si < 80 trades)
 
-**Veredictos CP3:** APROBAR ≥ 65 · OBSERVAR ≥ 45 · ELIMINAR < 45
+**Veredictos CP3:** APROBAR ≥ 65 Y sin métricas below MC95 · OBSERVAR ≥ 45 · ELIMINAR < 45
 
 **Regla anti-limbo:** OBSERVAR en CP2 + OBSERVAR en CP3 → ELIMINAR
 

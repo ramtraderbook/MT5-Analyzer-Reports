@@ -254,6 +254,7 @@ def test_incubation_mapping_and_save_flow(monkeypatch):
 
 def test_incubation_reference_list_and_edit_save(monkeypatch):
     import ea_analyzer
+    import incubation_domain
 
     captured = {}
 
@@ -299,7 +300,7 @@ def test_incubation_reference_list_and_edit_save(monkeypatch):
     assert b"BACKTEST" in response.data
 
     form_data = {}
-    for section in ea_analyzer.INCUBATION_REFERENCE_SECTIONS:
+    for section in incubation_domain.INCUBATION_REFERENCE_SECTIONS:
         for field in section["fields"]:
             key = f"{section['key']}_{field['key']}"
             if field["key"] == "bt_period":
@@ -325,3 +326,253 @@ def test_incubation_reference_list_and_edit_save(monkeypatch):
     assert stored["status"] == "incubating"
     assert stored["backtest"]["net_profit"] == 1.5
     assert stored["monte_carlo"]["confidence_95"]["max_dd_pct"] == 1.5
+
+
+def test_validator_edit_uses_trade_matches_ea_for_mapping_key_comment_mismatch(monkeypatch):
+    """
+    Regression for the validator EDIT page: ea_name here is resolved from the
+    config MAPPING KEY ("USDJPY_1104"), while trade comments in the parsed
+    report use MT5's own free-text format ("USDJPY 1104"). The validator
+    TABLE (validator()) already uses trade_matches_ea() for this; the EDIT
+    route must use it too, or it will show "no live data" for an EA that the
+    table scores fine.
+    """
+    from datetime import datetime
+
+    import ea_analyzer
+
+    parsed_data = {
+        "closed_trades": [
+            {
+                "position_id": 1,
+                "symbol": "USDJPY",
+                "direction": "buy",
+                "volume": 0.1,
+                "open_time": datetime(2026, 1, 1, 10, 0, 0),
+                "close_time": datetime(2026, 1, 1, 12, 0, 0),
+                "open_price": 150.0,
+                "close_price": 150.5,
+                "sl": None,
+                "tp": None,
+                "commission": -1.0,
+                "swap": 0.0,
+                "profit": 11.0,
+                "net_pnl": 10.0,
+                "duration_hours": 2.0,
+                "comment": "USDJPY 1104",
+            }
+        ],
+        "ea_names": ["USDJPY 1104"],
+        "account": {},
+    }
+
+    monkeypatch.setattr(ea_analyzer, "get_parsed_data", lambda: parsed_data)
+    monkeypatch.setattr(
+        ea_analyzer,
+        "load_config",
+        lambda: {
+            "mappings": {
+                "USDJPY_1104": {"magic": "555", "alias": "", "active": True}
+            }
+        },
+    )
+    monkeypatch.setattr(ea_analyzer, "load_validator_store", lambda: {})
+
+    client = ea_analyzer.app.test_client()
+    response = client.get("/validator/edit/555")
+
+    assert response.status_code == 200
+    assert b"val-preview" in response.data
+
+
+def test_incubation_dashboard_smoke_with_matched_trades_returns_200(monkeypatch):
+    """
+    Route-level smoke test for FIX 1 (incubation_domain.py:589): any EA with
+    >=1 matched trade used to raise UnboundLocalError on
+    `reference_ready = reference_ready(entry)` inside evaluate_ea, turning
+    this route into an unhandled 500. Reference data is intentionally left
+    empty -- the crash happened before reference readiness was even checked.
+    """
+    from datetime import datetime
+
+    import ea_analyzer
+
+    parsed_data = {
+        "closed_trades": [
+            {
+                "position_id": 1,
+                "symbol": "EURUSD",
+                "direction": "buy",
+                "volume": 0.1,
+                "open_time": datetime(2026, 1, 1, 10, 0, 0),
+                "close_time": datetime(2026, 1, 1, 12, 0, 0),
+                "open_price": 1.1000,
+                "close_price": 1.1010,
+                "sl": None,
+                "tp": None,
+                "commission": -1.0,
+                "swap": 0.0,
+                "profit": 11.0,
+                "net_pnl": 10.0,
+                "duration_hours": 2.0,
+                "comment": "IncEA",
+            }
+        ],
+        "ea_names": ["IncEA"],
+        "account": {},
+    }
+
+    monkeypatch.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+    monkeypatch.setattr(
+        ea_analyzer,
+        "load_incubation_config",
+        lambda: {"mappings": {"IncEA": {"alias": "", "capital": 5000, "active": True}}},
+    )
+    monkeypatch.setattr(ea_analyzer, "load_incubation_store", lambda: {})
+    monkeypatch.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+
+    client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["analysis_mode"] = "incubation"
+
+    response = client.get("/incubation/dashboard")
+
+    assert response.status_code == 200
+    assert b"IncEA" in response.data
+
+
+def test_incubation_strategy_smoke_with_matched_trades_returns_200(monkeypatch):
+    """
+    Same regression as above, for the /incubation/strategy/<ea_name> route.
+
+    Uses one winning and one losing trade so profit_factor stays finite,
+    keeping this test focused on the reference_ready regression only. The
+    infinite-profit_factor ("∞" string) case -- where metrics.py's fmt_pf()
+    used to crash incubation_domain._incubation_format_metric() (no
+    reference data) or _incubation_metric_band_state() (reference data
+    present) -- is covered separately by
+    test_incubation_strategy_smoke_zero_loss_ea_returns_200 below.
+    """
+    from datetime import datetime
+
+    import ea_analyzer
+
+    parsed_data = {
+        "closed_trades": [
+            {
+                "position_id": 1,
+                "symbol": "EURUSD",
+                "direction": "buy",
+                "volume": 0.1,
+                "open_time": datetime(2026, 1, 1, 10, 0, 0),
+                "close_time": datetime(2026, 1, 1, 12, 0, 0),
+                "open_price": 1.1000,
+                "close_price": 1.1010,
+                "sl": None,
+                "tp": None,
+                "commission": -1.0,
+                "swap": 0.0,
+                "profit": 11.0,
+                "net_pnl": 10.0,
+                "duration_hours": 2.0,
+                "comment": "IncEA",
+            },
+            {
+                "position_id": 2,
+                "symbol": "EURUSD",
+                "direction": "sell",
+                "volume": 0.1,
+                "open_time": datetime(2026, 1, 2, 10, 0, 0),
+                "close_time": datetime(2026, 1, 2, 12, 0, 0),
+                "open_price": 1.1000,
+                "close_price": 1.0990,
+                "sl": None,
+                "tp": None,
+                "commission": -1.0,
+                "swap": 0.0,
+                "profit": -4.0,
+                "net_pnl": -5.0,
+                "duration_hours": 2.0,
+                "comment": "IncEA",
+            },
+        ],
+        "ea_names": ["IncEA"],
+        "account": {},
+    }
+
+    monkeypatch.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+    monkeypatch.setattr(
+        ea_analyzer,
+        "load_incubation_config",
+        lambda: {"mappings": {"IncEA": {"alias": "", "capital": 5000, "active": True}}},
+    )
+    monkeypatch.setattr(ea_analyzer, "load_incubation_store", lambda: {})
+    monkeypatch.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+
+    client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["analysis_mode"] = "incubation"
+
+    response = client.get("/incubation/strategy/IncEA")
+
+    assert response.status_code == 200
+    assert b"IncEA" in response.data
+
+
+def test_incubation_strategy_smoke_zero_loss_ea_returns_200(monkeypatch):
+    """
+    Regression test for the infinite profit_factor crash: metrics.py's
+    fmt_pf() pre-formats profit_factor/payout_ratio to the string "∞" when
+    an EA has winning trades and zero losses (division-by-zero guard).
+    Before the fix, this route 500'd for any such EA because
+    incubation_domain._incubation_format_metric() tried `f"{value:.2f}"` on
+    the string "∞" (its `value == float("inf")` guard never matches a str),
+    raising ValueError. Uses a single winning trade with no losses.
+    """
+    from datetime import datetime
+
+    import ea_analyzer
+
+    parsed_data = {
+        "closed_trades": [
+            {
+                "position_id": 1,
+                "symbol": "EURUSD",
+                "direction": "buy",
+                "volume": 0.1,
+                "open_time": datetime(2026, 1, 1, 10, 0, 0),
+                "close_time": datetime(2026, 1, 1, 12, 0, 0),
+                "open_price": 1.1000,
+                "close_price": 1.1010,
+                "sl": None,
+                "tp": None,
+                "commission": -1.0,
+                "swap": 0.0,
+                "profit": 11.0,
+                "net_pnl": 10.0,
+                "duration_hours": 2.0,
+                "comment": "IncEA",
+            }
+        ],
+        "ea_names": ["IncEA"],
+        "account": {},
+    }
+
+    monkeypatch.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+    monkeypatch.setattr(
+        ea_analyzer,
+        "load_incubation_config",
+        lambda: {"mappings": {"IncEA": {"alias": "", "capital": 5000, "active": True}}},
+    )
+    monkeypatch.setattr(ea_analyzer, "load_incubation_store", lambda: {})
+    monkeypatch.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+
+    client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["analysis_mode"] = "incubation"
+
+    response = client.get("/incubation/strategy/IncEA")
+
+    assert response.status_code == 200
+    assert b"IncEA" in response.data
+    assert "∞".encode("utf-8") in response.data

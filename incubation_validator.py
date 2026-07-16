@@ -528,6 +528,35 @@ def _score_metric(live_value, mc95_value, mc50_value, bt_value, higher_is_better
     return max(0.0, 25 * mc95_value / max(live_value, 0.001))
 
 
+def _resolve_cp3_verdict(score, below_mc95, cp2_verdict=None):
+    """
+    Resolve the final CP3 verdict and the CP2->CP3 escalation flag.
+
+    score: the CP3 final_score (float).
+    below_mc95: list of metric keys currently below the MC95 threshold. A
+        non-empty list blocks APROBAR even when score >= 65 (the gate that
+        AGENTS.md's summary omits).
+    cp2_verdict: the previous CP2 checkpoint verdict string, or None if no
+        prior CP2 result is available.
+
+    Boundaries (score, escalation aside): 65.0 -> APROBAR, 64.99 -> OBSERVAR,
+    45.0 -> OBSERVAR, 44.99 -> ELIMINAR.
+    """
+    if score >= 65 and not below_mc95:
+        verdict = "APROBAR"
+    elif score >= 45:
+        verdict = "OBSERVAR"
+    else:
+        verdict = "ELIMINAR"
+
+    escalation_from_cp2 = False
+    if cp2_verdict == "OBSERVAR" and verdict == "OBSERVAR":
+        verdict = "ELIMINAR"
+        escalation_from_cp2 = True
+
+    return verdict, escalation_from_cp2
+
+
 def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
     gates = _hard_gates(live_metrics, reference_data)
     hard_gate_failures = [
@@ -829,23 +858,15 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
         "score": round(coherence_score, 2),
     }
 
-    if final_score >= 65 and not below_mc95:
-        verdict = "APROBAR"
-    elif final_score >= 45:
-        verdict = "OBSERVAR"
-    else:
-        verdict = "ELIMINAR"
-
-    escalation_from_cp2 = False
+    cp2_verdict = None
     if previous_cp2_result is not None:
         cp2_verdict = (
             previous_cp2_result.get("verdict")
             if isinstance(previous_cp2_result, dict)
             else str(previous_cp2_result)
         )
-        if cp2_verdict == "OBSERVAR" and verdict == "OBSERVAR":
-            verdict = "ELIMINAR"
-            escalation_from_cp2 = True
+
+    verdict, escalation_from_cp2 = _resolve_cp3_verdict(final_score, below_mc95, cp2_verdict)
 
     return {
         "checkpoint": "CP3",
