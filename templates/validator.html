@@ -447,8 +447,9 @@
     <div class="val-info-card">
         <div class="val-info-title">📐 DD% Escalado</div>
         <div class="val-info-body">
-            Límite = Peor DD 1 Mes × √(semanas_live / 4.33).<br />
-            A mayor tiempo en vivo, mayor tolerancia al DD acumulado.
+            Límite = Peor DD 1 Mes × √(trades_live / trades_por_mes_BT).<br />
+            A más trades operados, mayor tolerancia al DD acumulado. El tiempo
+            parado no suma: la varianza se acumula por operación, no por día.
         </div>
     </div>
     <div class="val-info-card">

@@ -368,12 +368,15 @@ def calculate_validator_score(
             # newborn-execution defect this fallback is not exposed to.
             mc_dd_alert = max(mc_r_dd, mc_t_dd)
             dd_limit_used = min(mc_r_dd, mc_t_dd)
-            if mc_dd_alert <= dd_limit_used:
-                # The two MC values coincide (or are inverted), collapsing the
-                # ALERTA zone to empty. Widen it using the same 1.5x ALERTA
-                # convention as the BT path so the three-state gate always has
-                # a reachable middle.
-                mc_dd_alert = dd_limit_used * 1.5
+            # KNOWN QUIRK, deliberately left as-is: when mc_r_dd == mc_t_dd the
+            # ALERTA zone is empty (max() == min()), so this gate collapses to
+            # two states and an EA whose two MC methods AGREE gets a harsher
+            # gate than one whose methods disagree. Widening to the BT path's
+            # 1.5x convention was tried and rejected: it moves DD in
+            # (max(mc), 1.5*min(mc)] from FUERA -- a hard ELIMINAR veto -- to
+            # ALERTA, which is a broad loosening of the stop path and breaks the
+            # pinned boundaries in test_dd_estado_both_mc_present_fallback_
+            # boundaries. Changing it is a policy decision, not a bug fix.
             dd_method = "MC min(Retest,Trades) 95% (fallback)"
             dd_estado = (
                 "OK"
@@ -515,10 +518,16 @@ def calculate_validator_score(
                 causes.append(name)
 
         if "dd_estado" in nd_estados:
-            if weeks_live <= 0:
-                _add_cause("live.weeks_operating")
+            # The DD branch scales on the TRADE clock, so weeks_operating is no
+            # longer one of its inputs -- its causes are the trade-clock terms.
             if bt_worst_dd_1m is None or bt_worst_dd_1m <= 0:
                 _add_cause("bt.worst_dd_1m")
+            if not bt_trades or bt_trades <= 0:
+                _add_cause("bt.trades_total")
+            if not bt_months or bt_months <= 0:
+                _add_cause("bt.months")
+            if trades_live <= 0:
+                _add_cause("live.total_trades")
         if "freq_estado" in nd_estados:
             if weeks_live <= 0:
                 _add_cause("live.weeks_operating")

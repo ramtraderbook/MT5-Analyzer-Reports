@@ -269,32 +269,40 @@ def test_dd_limit_no_op_for_ea_trading_at_backtest_pace():
     assert abs(result["dd_limit"] - old_calendar_dd_limit) <= 0.2
 
 
-def test_dd_estado_mc_fallback_alerta_zone_reachable_when_mc_values_equal():
-    """When mc_r_dd == mc_t_dd, the OK boundary (min) and the naive ALERTA
-    boundary (max) coincide, collapsing the ALERTA zone to empty -- the gate
-    would silently degrade from three states (OK/ALERTA/FUERA) to two
-    (OK/FUERA). The fix widens the ALERTA boundary to dd_limit_used * 1.5
-    (matching the BT path's own convention) whenever the two MC values do
-    not produce a real zone. Pin that SOME live DD value now reaches ALERTA.
+def test_dd_estado_mc_fallback_alerta_zone_is_empty_when_mc_values_equal():
+    """Pins the KNOWN QUIRK that mc_r_dd == mc_t_dd leaves no ALERTA zone.
 
-    FAILS against the old code: with mc_r_dd == mc_t_dd == 22.0, live DD
-    21.0 is OK and 23.0 is already FUERA -- no value is ever ALERTA.
+    The OK boundary (min) and the ALERTA boundary (max) coincide, so the gate
+    degrades from three states to two and an EA whose two MC methods AGREE
+    gets a harsher gate than one whose methods disagree.
+
+    This is pinned, not fixed, on purpose. Widening the boundary to the BT
+    path's 1.5x convention was tried and rejected: it moves live DD in
+    (max(mc), 1.5*min(mc)] from FUERA -- a hard ELIMINAR veto -- to ALERTA,
+    broadly loosening the stop path and breaking the intended boundaries
+    pinned by test_dd_estado_both_mc_present_fallback_boundaries. Changing
+    this is a policy decision for a separate change, so this test records
+    today's real behavior and will fail loudly if it drifts.
     """
     bt = {
         "win_rate": 55.0, "profit_factor": 1.5, "payout_ratio": 1.2,
         "avg_bars": 10.0, "max_consec_losses": 3, "trades_total": 200, "months": 24,
     }
-    live = _full_live(total_trades=50, weeks_operating=10, max_dd_pct=23.0)
     mc_retest = {"max_dd": 22.0}
     mc_trades = {"max_dd": 22.0}
 
-    result = calculate_validator_score(
-        bt=bt, mc_retest=mc_retest, mc_trades=mc_trades,
-        spp={"expectancy_median": 10.0}, live=live,
-    )
+    def dd_estado_for(live_dd):
+        return calculate_validator_score(
+            bt=bt, mc_retest=mc_retest, mc_trades=mc_trades,
+            spp={"expectancy_median": 10.0},
+            live=_full_live(total_trades=50, weeks_operating=10, max_dd_pct=live_dd),
+        )["dd_estado"]
 
-    assert result["sin_datos"] is False
-    assert result["dd_estado"] == "ALERTA"
+    # The boundary is sharp: nothing lands in ALERTA.
+    assert dd_estado_for(21.99) == "OK"
+    assert dd_estado_for(22.0) == "OK"
+    assert dd_estado_for(22.01) == "FUERA"
+    assert dd_estado_for(30.0) == "FUERA"
 
 
 # ── Priority 7: get_all_validator_results ───────────────────────────────────

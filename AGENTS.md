@@ -127,7 +127,7 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 
 **Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45 · SIN DATOS (guard)
 
-**DD_límite:** `Peor_DD_1Mes × sqrt(semanas_live / 4.33)`
+**DD_límite:** `Peor_DD_1Mes × sqrt(trades_live / (bt_trades / bt_months))`
 
 **Datos Live:** auto-calculados desde `calculate_ea_metrics()`
 **Datos BT:** ingresados por usuario en `/validator/edit/<magic>`
