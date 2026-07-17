@@ -48,6 +48,38 @@ const PLOTLY_CONFIG = {
   toImageButtonOptions: { format: "png", scale: 2, filename: "ea_chart" },
 };
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Per-div request-generation token to discard stale async responses when
+// range-selector clicks fire concurrent requests (last to ARRIVE would
+// otherwise win regardless of click order).
+const _chartReqSeq = {};
+
+function _nextChartReq(divId) {
+  _chartReqSeq[divId] = (_chartReqSeq[divId] || 0) + 1;
+  return _chartReqSeq[divId];
+}
+
+function _isStaleChartReq(divId, token) {
+  return _chartReqSeq[divId] !== token;
+}
+
+// Plotly inserts its .plot-container as :first-child and leaves foreign
+// siblings untouched, so an empty-state message injected earlier would stay
+// visible next to a chart that now has data. Drop it before plotting.
+function _clearChartEmptyMsg(divId) {
+  const el = document.getElementById(divId);
+  if (!el) return;
+  el.querySelectorAll(".chart-empty-msg").forEach((n) => n.remove());
+}
+
 function mergeLayout(overrides) {
   return Object.assign(
     {},
@@ -65,12 +97,21 @@ function mergeLayout(overrides) {
 // ─── Dashboard Charts ───────────────────────────────────────────────────────
 
 async function renderEquityCurves(divId, days = null) {
+  const _req = _nextChartReq(divId);
   try {
     const url = days ? "/api/equity_curves?days=" + days : "/api/equity_curves";
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
-    if (!data.traces || data.traces.length === 0) return;
+    if (_isStaleChartReq(divId, _req)) return;
+    if (!data.traces || data.traces.length === 0) {
+      Plotly.purge(divId);
+      const el = document.getElementById(divId);
+      if (el)
+        el.innerHTML =
+          '<div class="chart-empty-msg">Sin datos en este rango.</div>';
+      return;
+    }
 
     const traces = data.traces.map((t) => ({
       x: t.x,
@@ -105,6 +146,7 @@ async function renderEquityCurves(divId, days = null) {
       },
     });
 
+    _clearChartEmptyMsg(divId);
     Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
   } catch (e) {
     console.error("Error rendering equity curves:", e);
@@ -112,6 +154,7 @@ async function renderEquityCurves(divId, days = null) {
 }
 
 async function renderDrawdownCurves(divId, days = null) {
+  const _req = _nextChartReq(divId);
   try {
     const url = days
       ? "/api/drawdown_curves?days=" + days
@@ -119,7 +162,15 @@ async function renderDrawdownCurves(divId, days = null) {
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
-    if (!data.traces || data.traces.length === 0) return;
+    if (_isStaleChartReq(divId, _req)) return;
+    if (!data.traces || data.traces.length === 0) {
+      Plotly.purge(divId);
+      const el = document.getElementById(divId);
+      if (el)
+        el.innerHTML =
+          '<div class="chart-empty-msg">Sin datos en este rango.</div>';
+      return;
+    }
 
     const traces = data.traces.map((t) => ({
       x: t.x,
@@ -150,6 +201,7 @@ async function renderDrawdownCurves(divId, days = null) {
       xaxis: { type: "date" },
     });
 
+    _clearChartEmptyMsg(divId);
     Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
   } catch (e) {
     console.error("Error rendering drawdown curves:", e);
@@ -206,14 +258,26 @@ async function renderContribution(divId) {
 // ─── Strategy Detail Charts ─────────────────────────────────────────────────
 
 async function _renderEAEquityFromApi(equityDivId, ddDivId, eaName, days, apiBase) {
+  const _reqKey = equityDivId + "|" + ddDivId;
+  const _req = _nextChartReq(_reqKey);
   try {
     const encoded = encodeURIComponent(eaName);
     const url = days ? apiBase + encoded + "?days=" + days : apiBase + encoded;
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
+    if (_isStaleChartReq(_reqKey, _req)) return;
 
-    if (!data.equity || data.equity.length === 0) return;
+    if (!data.equity || data.equity.length === 0) {
+      [equityDivId, ddDivId].forEach((id) => {
+        Plotly.purge(id);
+        const el = document.getElementById(id);
+        if (el)
+          el.innerHTML =
+            '<div class="chart-empty-msg">Sin datos en este rango.</div>';
+      });
+      return;
+    }
 
     const equityX = data.equity.map((p) => p.date);
     const equityY = data.equity.map((p) => p.equity);
@@ -249,6 +313,7 @@ async function _renderEAEquityFromApi(equityDivId, ddDivId, eaName, days, apiBas
       showlegend: false,
     });
 
+    _clearChartEmptyMsg(equityDivId);
     Plotly.newPlot(equityDivId, equityTraces, equityLayout, PLOTLY_CONFIG);
 
     // Drawdown chart
@@ -279,6 +344,7 @@ async function _renderEAEquityFromApi(equityDivId, ddDivId, eaName, days, apiBas
       showlegend: false,
     });
 
+    _clearChartEmptyMsg(ddDivId);
     Plotly.newPlot(ddDivId, ddTraces, ddLayout, PLOTLY_CONFIG);
   } catch (e) {
     console.error("Error rendering EA equity chart:", e);
@@ -927,6 +993,7 @@ async function renderCorrelationMatrix(divId) {
       },
     });
 
+    _clearChartEmptyMsg(divId);
     Plotly.newPlot(divId, [trace], layout, PLOTLY_CONFIG);
 
     // Renderizar alertas de alta correlación
@@ -938,9 +1005,9 @@ async function renderCorrelationMatrix(divId) {
             (p) =>
               '<span class="corr-alert-chip">' +
               "⚠ " +
-              p.ea1 +
+              escapeHtml(p.ea1) +
               " × " +
-              p.ea2 +
+              escapeHtml(p.ea2) +
               " <strong>ρ=" +
               p.corr.toFixed(2) +
               "</strong></span>",
@@ -962,6 +1029,7 @@ async function renderCorrelationMatrix(divId) {
 // ─── Rolling Metrics Chart ──────────────────────────────────────────────────
 
 async function renderRollingMetrics(divId, eaName, window) {
+  const _req = _nextChartReq(divId);
   try {
     const encoded = encodeURIComponent(eaName);
     const url =
@@ -969,6 +1037,7 @@ async function renderRollingMetrics(divId, eaName, window) {
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
+    if (_isStaleChartReq(divId, _req)) return;
 
     const el = document.getElementById(divId);
     if (!el) return;
@@ -1011,7 +1080,7 @@ async function renderRollingMetrics(divId, eaName, window) {
       },
       {
         x,
-        y: pf.map((v) => v || null),
+        y: pf.map((v) => v ?? null),
         name: "Profit Factor",
         type: "scatter",
         mode: "lines",
@@ -1066,6 +1135,7 @@ async function renderRollingMetrics(divId, eaName, window) {
       ],
     });
 
+    _clearChartEmptyMsg(divId);
     Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
   } catch (e) {
     console.error("Error rendering rolling metrics:", e);

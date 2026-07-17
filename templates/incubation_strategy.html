@@ -445,7 +445,7 @@
                 <span class="dash-meta-div">·</span>
                 <span>{{ cp.trades }} trades</span>
                 <span class="dash-meta-div">·</span>
-                <span>Score: {{ cp.score }}</span>
+                <span>Score: {{ '—' if cp.score is none else cp.score }}</span>
             </div>
             <div class="inc-timeline-details">{{ cp.details }}</div>
         </div>

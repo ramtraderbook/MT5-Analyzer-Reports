@@ -31,18 +31,12 @@
     <span class="val-estado val-fuera-chip">FUERA</span>
     <span class="val-estado val-nd-chip">N/D</span>
 </div>
+<div class="val-preview-note">DD fuera de banda o PF&lt;1 con 50+ trades fuerzan ELIMINAR sin importar el score.</div>
 
 <!-- ── Main Table ── -->
 <div class="section">
     <div class="section-header">
         <h2 class="section-title">Resultados Live vs Backtest</h2>
-        <a
-            href="{{ url_for('validator_edit', magic='nuevo') }}"
-            class="btn-primary"
-            style="text-decoration: none; padding: 6px 16px; font-size: 0.8rem"
-        >
-            + Agregar EA
-        </a>
     </div>
 
     <div class="table-wrapper val-table-wrapper">
@@ -120,7 +114,8 @@
                                 method="POST"
                                 action="{{ url_for('validator_delete', magic=row.magic) }}"
                                 style="display: inline"
-                                onsubmit="return confirm('¿Eliminar datos BT del magic {{ row.magic }}?\n\nLos datos live de MT5 se mantienen.\nSolo se borran los datos de Backtest ingresados.')"
+                                class="val-delete-bt-form"
+                                data-magic="{{ row.magic }}"
                             >
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button
@@ -488,13 +483,28 @@
 
 {% endblock %} {% block scripts %}
 <script>
-    /* Prevenir doble-submit en botones de eliminar */
-    document.querySelectorAll(".val-btn-delete").forEach(function (btn) {
-        btn.closest("form").addEventListener("submit", function () {
-            btn.disabled = true;
-            setTimeout(function () {
-                btn.disabled = false;
-            }, 3000);
+    /* Confirmación segura (magic vía data-attribute, nunca interpolado en JS)
+       + prevenir doble-submit en botones de eliminar */
+    document.querySelectorAll(".val-delete-bt-form").forEach(function (form) {
+        var btn = form.querySelector(".val-btn-delete");
+        form.addEventListener("submit", function (e) {
+            var magic = form.dataset.magic;
+            if (
+                !confirm(
+                    "¿Eliminar datos BT del magic " +
+                        magic +
+                        "?\n\nLos datos live de MT5 se mantienen.\nSolo se borran los datos de Backtest ingresados.",
+                )
+            ) {
+                e.preventDefault();
+                return;
+            }
+            if (btn) {
+                btn.disabled = true;
+                setTimeout(function () {
+                    btn.disabled = false;
+                }, 3000);
+            }
         });
     });
 </script>
