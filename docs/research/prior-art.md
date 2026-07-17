@@ -69,12 +69,12 @@ Universal, three independent primary confirmations. Drawdown is measured against
 - **QuantStats**: `(prices / prices.expanding().max()).min() - 1`
 - **vectorbt**: `dd_drawdown_nb → (valley_val - peak_val) / peak_val`
 
-**Our `metrics.py:154-155` computes `peak_abs = capital + peak_pnl` and divides by it.** Since our equity curve is `pnl` accumulated from 0, absolute equity *is* `capital + pnl`, so `capital + peak_pnl` **is the running peak of absolute equity**, and we match the universal convention. Our inline comment at `:149-153` — that `max_dd_pct` must be tracked independently because `peak_abs` moves between points — is a real subtlety the libraries handle implicitly by working in normalized-equity space.
+**Our `metrics.py:194-195` computes `peak_abs = capital + peak_pnl` and divides by it.** Since our equity curve is `pnl` accumulated from 0, absolute equity *is* `capital + pnl`, so `capital + peak_pnl` **is the running peak of absolute equity**, and we match the universal convention. Our inline comment at `:189-193` — that `max_dd_pct` must be tracked independently because `peak_abs` moves between points — is a real subtlety the libraries handle implicitly by working in normalized-equity space.
 
 **Two caveats, both raised by a judge against an earlier draft that claimed the identity held "exactly" with "no change needed".** The algebraic identity holds only **for `capital > 0`, on the filtered curve**:
 
-1. **`capital <= 0` diverges.** The guards at `metrics.py:118` and `:155` (`if peak_abs > 0 else 0.0`) **silently force DD% to 0.0**, masking real drawdown. The library convention has no such branch, because normalized-equity peaks are always positive. **Our own ledger already documents this** (`known-issues.md:177-178`: *"`capital <= 0` hace `peak_abs <= 0` y el DD% cae silenciosamente a 0.0, enmascarando el drawdown real. La config no valida capital no positivo."*).
-2. **Untimed trades are excluded from the curve** (`metrics.py:86-90`, `:344-350`), so the curve is not the account's absolute equity when they exist — while their P&L still counts toward `net_profit`, SQN and Sharpe. Deliberate and documented, but it means "absolute equity" is an approximation.
+1. **`capital <= 0` diverges.** The guards at `metrics.py:158` and `:195` (`if peak_abs > 0 else 0.0`) **silently force DD% to 0.0**, masking real drawdown. The library convention has no such branch, because normalized-equity peaks are always positive. **Our own ledger already documents this** (`known-issues.md:243-244`: *"`capital <= 0` hace `peak_abs <= 0` y el DD% cae silenciosamente a 0.0, enmascarando el drawdown real. La config no valida capital no positivo."*).
+2. **Untimed trades are excluded from the curve** (`metrics.py:126-130`, `:550-556`), so the curve is not the account's absolute equity when they exist — while their P&L still counts toward `net_profit`, SQN and Sharpe. Deliberate and documented, but it means "absolute equity" is an approximation.
 
 So: **the convention is right and needs no change; the guard behavior at `capital <= 0` is a known open defect, not something this survey clears.**
 
@@ -82,9 +82,9 @@ One trap worth knowing if we ever differential-test against QuantStats: **it pre
 
 ### 2.2 SQN — the cap is an unverified attribution, and there is a better-supported divergence we've missed ⚠️
 
-**Epistemic warning up front, because an earlier draft of this report got this wrong.** It claimed our `known-issues.md` was "factually wrong" about the Tharp cap. **A blind judge refuted that as absence-of-evidence dressed as evidence-of-absence, and the judge was right.** What follows is the corrected, weaker, defensible version. This is the softest material in the report; treat it accordingly.
+**Status: §5.5's recommendation was applied on branch `pb-followup`.** `docs/known-issues.md` §7 no longer asserts *"divergencia … contra el estándar"* — the entry now states the Tharp attribution is unverified, and the R-multiple-vs-raw-P&L divergence below has been added as its own entry. The xfail's `reason` string was updated accordingly (see `tests/oracle/test_diff_metrics.py:662-691`). This subsection's analysis is the research trail that motivated that fix; kept as-is below.
 
-`docs/known-issues.md:161-166` states that our uncapped `sqrt(N)` is a *"divergencia … contra el estándar"*, with Van Tharp's `sqrt(min(N,100))` as that standard. `tests/oracle/test_diff_metrics.py:644-669` pins it with a strict `xfail` named `test_sqn_uncapped_diverges_from_tharp_standard_for_large_n`.
+**Epistemic warning up front, because an earlier draft of this report got this wrong.** It claimed our `known-issues.md` was "factually wrong" about the Tharp cap. **A blind judge refuted that as absence-of-evidence dressed as evidence-of-absence, and the judge was right.** What follows is the corrected, weaker, defensible version. This is the softest material in the report; treat it accordingly.
 
 **Finding 1 — every SQN implementation found is uncapped. Three for three**, verified verbatim:
 - `backtrader/analyzers/sqn.py`: `sqn = math.sqrt(len(self.pnl)) * pnl_av / pnl_stddev`
@@ -107,10 +107,10 @@ A likely origin of the confusion: **Tharp's own *Market SQN*** applies the formu
 
 **SQN is defined over R-multiples — returns normalized by the initial risk per trade — not raw currency P&L.** The dig rated this **high confidence** — the strongest claim in this subsection — corroborated by the independent sources it could reach (Kinlay's derivation, and the Tharp Institute glossary text itself). ⚠️ Note the same limit applies as to the cap: **the primary source is the same 403'd site and the same paywalled book.** This is better-evidenced than the cap, not independently confirmed. Note the wording also says *"an adjustment for the number of trades"* with **no ceiling stated**.
 
-**Our `_calc_sqn` (`metrics.py:188-219`) feeds it raw `net_pnl`.** So do backtrader, backtesting.py and vectorbt. **That is a real divergence from Tharp's definition, it is far better evidenced than the cap, and neither our docs nor our test ledger mentions it.** It also matters more: R-multiples make SQN comparable across position sizes; raw P&L does not, so an EA that varies lot size has an SQN partly measuring its sizing rather than its edge.
+**Our `_calc_sqn` (`metrics.py:394-425`) feeds it raw `net_pnl`.** So do backtrader, backtesting.py and vectorbt. **That is a real divergence from Tharp's definition, it is far better evidenced than the cap, and neither our docs nor our test ledger mentions it.** It also matters more: R-multiples make SQN comparable across position sizes; raw P&L does not, so an EA that varies lot size has an SQN partly measuring its sizing rather than its edge.
 
 **Recommended action** (report-only; not applied):
-- **Amend, do not delete**, `known-issues.md:161-166`. Replace *"la divergencia es contra el estándar"* with the accurate epistemic state: *the cap at N=100 is not part of Tharp's SQN formula as stated in his accessible material and appears to be a community convention; the primary source (his book) is paywalled and this could not be settled.* **The ledger's contract is "todo lo de acá está probado" — an unverified attribution violates that contract and is exactly why this needs fixing.**
+- **Amend, do not delete**, `known-issues.md:210-224` (already applied — see status note at the top of this subsection). Replace *"la divergencia es contra el estándar"* with the accurate epistemic state: *the cap at N=100 is not part of Tharp's SQN formula as stated in his accessible material and appears to be a community convention; the primary source (his book) is paywalled and this could not be settled.* **The ledger's contract is "todo lo de acá está probado" — an unverified attribution violates that contract and is exactly why this needs fixing.**
 - **Add the R-multiple divergence** as a new, better-supported entry. This is the finding worth having.
 - **Do not rename the test to `test_sqn_uncapped_grows_unbounded_with_n`** — a judge caught that this would be *at least as inaccurate*: the test runs a **single fixed N=150 sample** and asserts nothing about growth with N. If renamed at all, something like `test_sqn_uncapped_diverges_from_community_capped_convention_at_n150` is accurate. The cleanest fix may be to leave the test alone and correct its `reason` string, which is where "el estandar de Tharp" actually appears (`:646-654`).
 - **The underlying concern remains legitimate and is ours to decide**: at N=2500, `mean/std = 0.108` gives SQN 5.42 "Sobresaliente" vs 1.08 capped. `MIN_TRADES_FOR_SQN_LABEL = 20` guards the small-N end; nothing guards the large-N end. **That is a real open decision** — just not, on this evidence, a deviation from a documented standard.
@@ -130,7 +130,7 @@ A likely origin of the confusion: **Tharp's own *Market SQN*** applies the formu
 
 There is also a **live trap**: QuantStats' `_prepare_returns` sniffs prices-vs-returns via `elif data.min() >= 0 and data.max() > 1: data = data.pct_change()`. **An all-non-negative per-trade P&L series containing any value > 1 gets silently `pct_change`'d as if it were a price series.**
 
-**Our `_calc_sharpe` (`metrics.py:173-185`) does `mean / std(ddof=1)` and stops — no annualization.** (Its docstring, *"Simplified per-trade Sharpe = mean(R) / std(R, ddof=1). No risk-free rate"*, states the formula and the missing risk-free rate but does not explicitly say annualization is omitted — worth a word, since that is the more consequential omission.) Against a library that would blindly multiply by 15.87, **not annualizing is the more defensible engineering choice** — we return a number whose stated meaning matches what we computed.
+**Our `_calc_sharpe` (`metrics.py:379-391`) does `mean / std(ddof=1)` and stops — no annualization.** (Its docstring, *"Simplified per-trade Sharpe = mean(R) / std(R, ddof=1). No risk-free rate"*, states the formula and the missing risk-free rate but does not explicitly say annualization is omitted — worth a word, since that is the more consequential omission.) Against a library that would blindly multiply by 15.87, **not annualizing is the more defensible engineering choice** — we return a number whose stated meaning matches what we computed.
 
 **The one library that does this correctly is `nautilus_trader`**, and its approach is the prior art worth studying (§5.3).
 
@@ -150,7 +150,7 @@ This is the one concept worth borrowing — see §5.4.
 
 ## 3. Monte Carlo — the ecosystem's implementations are actively defective
 
-This matters because **we have no Monte Carlo at all**: `_calc_risk_of_ruin` was deleted (pinned by `tests/test_metrics.py:393-397`), and "Monte Carlo" in this repo means numbers typed in by the operator from StrategyQuant X.
+This matters because **we have no Monte Carlo at all**: `_calc_risk_of_ruin` was deleted (pinned by `tests/test_metrics.py:397-401`), and "Monte Carlo" in this repo means numbers typed in by the operator from StrategyQuant X.
 
 **The good news: the libraries offer nothing to adopt, because what they have is broken.**
 
@@ -271,6 +271,8 @@ The realistically adoptable improvement is **PSR hand-rolled from the paper** (�
 
 ### 4.5 Walk-forward — and the fact that `validator.py` ships a "WFE" that isn't one ⚠️
 
+**Status: the Recommended action below (rename + legend fix) was applied on branch `pb-followup`** — see `known-issues.md` §7 (RESUELTO entry) and §5.6. `validator.py` no longer has a field named `wfe`; it is `live_vs_bt_profit_ratio`, `docs/metrics-formulas.md` §16 is titled "Realización BT %", and the `templates/validator.html` info card lists the four real bands instead of the invented 50% one. The analysis below is the research finding that motivated the fix and is otherwise unchanged; code excerpts referencing the old `wfe` name describe the pre-fix state.
+
 **This section exists because a blind judge caught that an earlier draft never used the word "walk-forward" at all** — despite the brief asking for it by name, and despite `validator.py` having a feature literally called Walk-Forward Efficiency. That was the report's largest miss.
 
 **The standard definition** (⚠️ **secondary sources only** — Pardo's *The Evaluation and Optimization of Trading Strategies* (2008) and *Design, Testing and Optimization of Trading Systems* (1992) are both paywalled/print-only and could not be read):
@@ -279,13 +281,13 @@ The realistically adoptable improvement is **PSR hand-rolled from the paper** (�
 - **The pass threshold usually quoted is WFE ≥ 50%.** ⚠️ **Repeated everywhere, verified nowhere in Pardo's own words** — and notably, Wikipedia's entry, the one source that *does* cite Pardo, carries **no threshold at all**. Treat "Pardo says 50%" as received wisdom.
 - **Walk-forward analysis inherently requires a SEQUENCE of optimize-then-test windows, re-optimizing at each step.** Every source agrees. **A single train/test split is not walk-forward analysis — it is holdout validation.** This is the definitional core, and it is the point on which our metric turns.
 
-**What `validator.py:654-683` actually computes:**
+**What `validator.py:654-683` actually computes** (shown with the field's pre-rename name `wfe` for continuity with the discussion below; the shipped field is now `live_vs_bt_profit_ratio`, see status note above):
 
 ```python
 bt_profit_per_month   = bt_expect * bt_trades / bt_months
 live_months           = weeks_live / 4.33
 live_profit_per_month = expect_live * trades_live / live_months
-wfe = round((live_profit_per_month / bt_profit_per_month) * 100, 1)
+wfe = round((live_profit_per_month / bt_profit_per_month) * 100, 1)  # now live_vs_bt_profit_ratio
 # >120 ALERTA | [70,120] OK | [30,70) ALERTA | <30 FUERA
 ```
 
@@ -296,7 +298,7 @@ wfe = round((live_profit_per_month / bt_profit_per_month) * 100, 1)
 - **No windows, so no aggregation.** One number over one period pair.
 - **`>120 → ALERTA` has no analog in the literature.** WFE > 100% just means OOS beat IS. The band is defensible for *live-vs-BT* (beating your own backtest live is suspicious) — which is itself a tell that this is not the literature's metric.
 
-**Repo-wide, there is no parameter optimization of any kind**, so nothing here can be walk-forward analysis in the standard sense. (`metrics.py:259` `_calc_rolling_metrics` is a rolling window over *closed live trades* recomputing descriptive stats — it re-computes, it does not re-optimize.)
+**Repo-wide, there is no parameter optimization of any kind**, so nothing here can be walk-forward analysis in the standard sense. (`metrics.py:465` `_calc_rolling_metrics` is a rolling window over *closed live trades* recomputing descriptive stats — it re-computes, it does not re-optimize.)
 
 **And it structurally cannot be.** We consume an operator-typed **aggregate** (`bt_expect`, `bt_trades`, `bt_months`) — no backtest equity curve, no trade-level backtest history, no parameter space. **A true per-window WFE is not implementable with the inputs this system has.** That constraint is decisive, and it is why this is not a shortcut.
 
@@ -307,11 +309,11 @@ wfe = round((live_profit_per_month / bt_profit_per_month) * 100, 1)
 
 **Recommended action** (report-only): rename to `live_vs_bt_profit_ratio` (display: *"Realización BT %"* — the existing tooltip at `templates/validator.html:84`, *"qué % del rendimiento BT se replica en live"*, **is already an honest description of the real computation**; only the three-letter label overclaims). Zero behavior change; removes the overclaim.
 
-**What `known-issues.md` already has, and what it misses:**
-- ✅ **C7** (`:580-581`): WFE rounds *before* banding, so 120.04 → 120.0 → OK instead of ALERTA. Verified, and deliberately pinned (`test_char_validator.py:481-498`). Cosmetic — a ±0.05pp sliver on an informational field.
-- ✅ **The phantom "50%" band** (`:460-466`): `templates/validator.html:477-479` renders *"≥70% Excelente · 50-70% Aceptable · 30-50% Degradación · <30% Posible overfitting"*. The code has **no 50% boundary** (30-70 is one undifferentiated ALERTA) and the card **omits `>120 → ALERTA` entirely**. Worse than "incomplete": labelling 50-70% *"Aceptable"* **inverts the signal** — the code raises ALERTA there.
-- ❌ **The naming problem is nowhere in the ledger**, and `docs/metrics-formulas.md:328` titles it "Walk-Forward Efficiency (WFE)" unqualified. **This is a bigger issue than C7 by a wide margin — the ledger currently catches the two cosmetic defects and misses the substantive one.**
-- ❌ **`metrics-formulas.md:338-344` splits 50-70 and 30-50 into separate rows** that both say ALERTA. Not wrong in outcome, but **this vestigial 50% boundary is very likely where the template's invented "50%" came from.** Fixing the card without fixing this row leaves the seed in place.
+**What `known-issues.md` had at the time of this report, and what it missed (state as found; see the status note above for what changed since):**
+- ✅ **C7** (`validator.py:681-684`): WFE rounds *before* banding, so 120.04 → 120.0 → OK instead of ALERTA. Verified, and deliberately pinned (`test_char_validator.py:481-498`). Cosmetic — a ±0.05pp sliver on an informational field. Still open; not part of the naming/legend fix.
+- ✅ **The phantom "50%" band**: `templates/validator.html` rendered *"≥70% Excelente · 50-70% Aceptable · 30-50% Degradación · <30% Posible overfitting"*. The code had **no 50% boundary** (30-70 was one undifferentiated ALERTA) and the card **omitted `>120 → ALERTA` entirely**. Worse than "incomplete": labelling 50-70% *"Aceptable"* **inverted the signal** — the code raised ALERTA there. **Now fixed** — `known-issues.md` §7 records this as RESUELTO and the card lists the four real bands.
+- ❌→✅ **The naming problem was nowhere in the ledger**, and `docs/metrics-formulas.md:328` titled it "Walk-Forward Efficiency (WFE)" unqualified. **Now fixed**: the ledger's RESUELTO entry covers the rename, and `metrics-formulas.md:328` reads *"## 16. Realización BT % (`live_vs_bt_profit_ratio`)"* with an explicit naming note.
+- ❌→✅ **`metrics-formulas.md:338-344` split 50-70 and 30-50 into separate rows** that both said ALERTA. Not wrong in outcome, but **this vestigial 50% boundary was very likely where the template's invented "50%" came from.** **Now fixed** — the row was removed; `metrics-formulas.md` §16 has a single 30-70% ALERTA row.
 - ❌ **Month-unit mismatch**: `live_months = weeks_live / 4.33` ≈ 30.31 days/month vs `bt_months` as operator-supplied calendar months (~30.44) — ~0.4% systematic bias. **Immaterial** next to the metric's noise floor; noted for completeness, not action.
 
 **Library support**: `skfolio` ships `model_selection.WalkForward` (sklearn-style splitter with purging) and `vectorbt` ships `rolling_split()` / `Splitter` / `@vbt.cv_split()` plus an official walk-forward notebook. **Both are actively maintained. But neither — nor anything else found — ships a WFE metric**; they ship the *splitters* and leave the ratio to you. There is no maintained standalone WFE package. **Irrelevant to us regardless: splitters need a parameter space to re-optimize, and we have none.**
@@ -366,11 +368,15 @@ Two ideas, both directly relevant, neither requiring the 110-183 MB install:
 
 ### 5.5 Amend the SQN entry in `known-issues.md`, and add the R-multiple finding ⭐ zero cost
 
-Covered in §2.2. **What**: (a) soften the Tharp-cap entry from "divergencia contra el estándar" to an explicit unverified-attribution note; (b) add the **R-multiple vs raw P&L** divergence, which is better evidenced and currently unrecorded; (c) fix the xfail's `reason` string (`test_diff_metrics.py:646-654`) rather than renaming the test.
-**Benefit**: the ledger's contract is *"todo lo de acá está probado"* (`known-issues.md:6`). **An unverified attribution violates that contract.** An entry that overstates its evidence is worse than no entry, because the ledger's whole value is that you can trust it without re-deriving it.
+**Status: applied on branch `pb-followup`** — all three parts below are done (see the status note at the top of §2.2).
+
+Covered in §2.2. **What**: (a) soften the Tharp-cap entry from "divergencia contra el estándar" to an explicit unverified-attribution note; (b) add the **R-multiple vs raw P&L** divergence, which is better evidenced and currently unrecorded; (c) fix the xfail's `reason` string (`test_diff_metrics.py:664-675`) rather than renaming the test.
+**Benefit**: the ledger's contract is *"todo lo de acá está probado"* (`known-issues.md:5`). **An unverified attribution violates that contract.** An entry that overstates its evidence is worse than no entry, because the ledger's whole value is that you can trust it without re-deriving it.
 **Cost**: a doc edit and a string edit. **License / dep risk**: none.
 
 ### 5.6 Rename `wfe` — it is not Walk-Forward Efficiency ⭐ zero cost, removes an overclaim
+
+**Status: applied on branch `pb-followup`** — see `known-issues.md` §7 (RESUELTO entry). All three actions below were done: `wfe` is now `live_vs_bt_profit_ratio` throughout, the `templates/validator.html` legend (now at lines 474-483) lists the four real bands, and the vestigial 50% row was dropped from `metrics-formulas.md` §16.
 
 Covered in §4.5. **What**: rename `wfe` → `live_vs_bt_profit_ratio` (display *"Realización BT %"*); fix the `templates/validator.html:477-479` legend, which invents a 50% band and **inverts the signal** by calling 50-70% *"Aceptable"* where the code raises ALERTA; drop the vestigial 50% row from `metrics-formulas.md:341-343` that likely seeded it.
 **Benefit**: `WFE` imports a specific promise from Pardo's literature — *your optimization generalizes out-of-sample* — that this number cannot make and, given our aggregate-only inputs, **structurally never could**. A reader seeing `WFE: 85%` may believe walk-forward validation happened. It did not.
@@ -434,7 +440,7 @@ This was the brief's part (4). The finding is genuinely surprising, and it is a 
 | **vectorbt** | **No automated cross-validation against empyrical.** The comparison lives in a **Jupyter notebook** using `print()` and `%timeit`, with **zero assertions**, **not collected by pytest** — it cannot fail a build. The real suite pins self-generated golden floats from a global `seed = 42` with **no explicit tolerance**, relying on `math.isclose` defaults. |
 | **quantstats** | Ground truth, re-established (round 1's claim here was refuted, so this was checked from source): **0 hypothesis, 0 `assert_allclose`, 0 `parametrize`, 0 `pytest.approx`** — those absences are literally true. **But** the "only smoke checks" framing is **false**: across 125 test functions there are 3 tolerance assertions, 3 pandas comparisons, 3 `pytest.raises`, and **genuine seed-reproducibility tests**. **Zero reference fixtures from any independent authority** — all 6 numeric assertions compare quantstats **against itself**. No data fixture files at all. Ironically, **it is the one project that tests the seed contract itself as behavior.** |
 
-**Where this leaves us.** Our `tests/oracle/` harness — characterization / property / differential, with **named tolerance constants each justified by production's rounding** (`TOL_SHARPE = 0.006  # metrics.py:185 rounds 2dp; numpy vs empyrical ULP`) — is **more disciplined than every finance library surveyed** and is structurally the same shape as scipy's approach, which is the best in the industry.
+**Where this leaves us.** Our `tests/oracle/` harness — characterization / property / differential, with **named tolerance constants each justified by production's rounding** (`TOL_SHARPE = 0.006  # metrics.py:391 rounds 2dp; numpy vs empyrical ULP`) — is **more disciplined than every finance library surveyed** and is structurally the same shape as scipy's approach, which is the best in the industry.
 
 Three concrete refinements the survey does justify:
 
@@ -471,7 +477,7 @@ So the decision was **correct when it was made**: there was no `requirements-dev
 
 ⚠️ **Two snags if you act on this.** (1) That docstring's first clause is **false today** (`requirements.txt:6` *does* pin html5lib) and would become **true again** the moment you move it — a stale comment that self-heals is still a trap. **Fix the docstring in the same change.** (2) Anything installing from `requirements.txt` alone and then running tests would break. **Check CI before moving `pytest`** — that one is load-bearing in a way `scipy` and `html5lib` are not.
 
-Related: `docs/metrics-formulas.md:386-391` **falsely claims** the binomial gate uses scipy with a normal-approximation fallback. It does not — pure `math.comb`, no fallback. Already logged as **D1** (`known-issues.md:588-592`) and pinned by `test_diff_metrics.py:698-717`. **Mentioned here because §7 and D1 are the same underlying confusion about what scipy does for us.**
+Related: `docs/metrics-formulas.md:386-391` **falsely claims** the binomial gate uses scipy with a normal-approximation fallback. It does not — pure `math.comb`, no fallback. Already logged as **D1** (`known-issues.md:691-694`) and pinned by `test_diff_metrics.py:721-739`. **Mentioned here because §7 and D1 are the same underlying confusion about what scipy does for us.**
 
 ---
 

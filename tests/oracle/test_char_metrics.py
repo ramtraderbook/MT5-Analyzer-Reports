@@ -94,10 +94,10 @@ def test_net_pnl_zero_counts_as_loss_portfolio_level():
 
 
 def test_payout_ratio_zero_pnl_trade_inflation_defect_pin():
-    # DEFECT-PIN: net_pnl==0 cuenta como perdida (metrics.py:354 `p <= 0`),
+    # DEFECT-PIN: net_pnl==0 cuenta como perdida (metrics.py:560 `p <= 0`),
     # lo que infla artificialmente losing_trades y por lo tanto ENCOGE
     # |avg_loss| (denominador mas grande, mismo numerador) -- inflando a su
-    # vez payout_ratio = avg_win/|avg_loss| (metrics.py:366/373-377).
+    # vez payout_ratio = avg_win/|avg_loss| (metrics.py:572/579-583).
     # Pinned because it is current behavior, NOT because it is correct.
     #
     # trades: 1 ganador (100.0), 2 perdedores reales (-50.0, -30.0), 2
@@ -157,7 +157,7 @@ def test_empty_metrics_reports_zero_float_not_infinity_string():
 # ── §7: max_dd desde baseline cero + tracking independiente $/% ───────────
 
 def test_max_drawdown_baseline_is_zero_not_first_equity_point():
-    """peak_pnl arranca en 0.0, no en equity[0] (metrics.py:134)."""
+    """peak_pnl arranca en 0.0, no en equity[0] (metrics.py:174)."""
     trades = make_trades([-500.0, 100.0])  # arranca perdiendo, nunca hay pico positivo
     res = m.calculate_ea_metrics("MyEA", trades, make_config(capital=10000.0))
     # el DD se mide desde 0, no desde el primer punto de equity (-500)
@@ -180,9 +180,9 @@ def test_max_drawdown_dollar_and_pct_tracked_independently():
 
 def test_max_drawdown_double_round_4dp_then_2dp():
     """
-    _calc_max_drawdown redondea max_dd_pct a 4dp (metrics.py:159);
+    _calc_max_drawdown redondea max_dd_pct a 4dp (metrics.py:199);
     calculate_ea_metrics vuelve a redondear ese valor a 2dp
-    (metrics.py:460) -- doble redondeo verificado end-to-end.
+    (metrics.py:666) -- doble redondeo verificado end-to-end.
     """
     trades = make_trades([1000.0, -2000.0, 500.0])
     res = m.calculate_ea_metrics("MyEA", trades, make_config(capital=10000.0))
@@ -197,13 +197,13 @@ def test_max_drawdown_double_round_4dp_then_2dp():
 def test_all_untimed_trades_yield_empty_equity_curve_and_zero_dd_defect():
     """
     DEFECT-PIN: si TODOS los trades tienen close_time=None,
-    _build_equity_curve devuelve [] (metrics.py:74-76), y
+    _build_equity_curve devuelve [] (metrics.py:114-116), y
     _calc_max_drawdown([], capital) devuelve (0.0, 0.0, None)
-    (metrics.py:131-132). El resultado es que un EA con perdidas reales y
+    (metrics.py:171-172). El resultado es que un EA con perdidas reales y
     documentadas en net_profit reporta max_dd_dollar=0.0 y max_dd_pct=0.0 --
     el peor drawdown posible queda invisible porque ningun trade tenia
     fecha. Pinneado porque es el comportamiento actual
-    (metrics.py:74-76, 131-132; known-issues.md §7), NO porque sea correcto.
+    (metrics.py:114-116, 171-172; known-issues.md §7), NO porque sea correcto.
     """
     trades = [_raw_trade(-500.0, position_id=i) for i in range(5)]
     res = m.calculate_ea_metrics("MyEA", trades, make_config())
@@ -222,7 +222,7 @@ def test_capital_zero_silently_zeroes_dd_pct_but_not_dd_dollar_defect():
     DEFECT-PIN: con capital<=0 y una serie SIN picos positivos de P&L
     (peak_pnl se queda en 0.0 durante todo el recorrido), peak_abs =
     capital + peak_pnl = capital <= 0 en cada punto -> dd_pct se fuerza a
-    0.0 en TODOS los puntos (metrics.py:118, 155), aunque max_dd_dollar SI
+    0.0 en TODOS los puntos (metrics.py:158, 195), aunque max_dd_dollar SI
     sigue reflejando la perdida real en dolares. Pinneado porque es el
     comportamiento actual, NO porque sea correcto -- un capital mal
     configurado (0 o negativo) hace desaparecer silenciosamente el DD% de
@@ -244,7 +244,7 @@ def test_malformed_peak_date_returns_zero_stagnation_defect():
     """
     DEFECT-PIN: _calc_stagnation atrapa (ValueError, TypeError) alrededor de
     date.fromisoformat() y devuelve 0 -- el MEJOR valor posible -- en vez de
-    None o de propagar el error (metrics.py:162-170). Una fecha de pico
+    None o de propagar el error (metrics.py:368-376). Una fecha de pico
     corrupta se disfraza silenciosamente de "cero dias sin nuevo maximo".
     Pinneado porque es el comportamiento actual, NO porque sea correcto.
     """
@@ -293,7 +293,7 @@ def test_sqn_insufficient_data_below_2_trades():
 def test_weeks_operating_clamped_to_zero_for_same_day_intraday_trade():
     """Reloj congelado en 2026-07-16 12:00; un trade cerrado hoy a una hora
     posterior a medianoche produciria un delta negativo sin el clamp
-    (metrics.py:317-322)."""
+    (metrics.py:523-528)."""
     from datetime import datetime as real_datetime
     trades = [make_trade(100.0, close_time=real_datetime(2026, 7, 16, 23, 0, 0))]
     res = m.calculate_ea_metrics("MyEA", trades, make_config())
@@ -319,7 +319,7 @@ def test_portfolio_capital_fallback_to_5000_when_sum_is_non_positive():
     """
     DEFECT-PIN adyacente: si el capital configurado de las EAs presentes en
     el portfolio suma <=0, cae a un fallback fijo de 5000.0
-    (metrics.py:558-559) -- comparte la misma familia de comportamiento
+    (metrics.py:764-765) -- comparte la misma familia de comportamiento
     silencioso que el capital<=0 a nivel EA, pero aqui hay un fallback en
     vez de un cero silencioso.
     """
@@ -333,7 +333,7 @@ def test_portfolio_capital_fallback_to_5000_when_sum_is_non_positive():
 
 def test_portfolio_metrics_no_config_defaults_to_empty_dict():
     """config=None (default del parametro) se normaliza a {} internamente
-    (metrics.py:486-487) -- no crashea por AttributeError."""
+    (metrics.py:692-693) -- no crashea por AttributeError."""
     trades = make_trades([100.0, -50.0], comment="EA1")
     res = m.calculate_portfolio_metrics(trades, config=None)
     assert res["total_trades"] == 2
@@ -351,7 +351,7 @@ def test_portfolio_metrics_excludes_trades_with_unknown_or_missing_comment():
     calculate_portfolio_metrics NO filtra por comment al construir
     all_trades (eso lo hace el llamador via calculate_all_metrics) -- pero
     SI filtra por comment al sumar el capital de las EAs presentes
-    (metrics.py:547-553): "Unknown" y comment ausente/falsy quedan fuera de
+    (metrics.py:753-759): "Unknown" y comment ausente/falsy quedan fuera de
     la suma de capital, cayendo en el fallback de 5000 si son las unicas
     EAs presentes.
     """
@@ -361,7 +361,7 @@ def test_portfolio_metrics_excludes_trades_with_unknown_or_missing_comment():
     assert res["max_dd_pct"] == equivalent["max_dd_pct"]  # capital=999999 fue IGNORADO
 
 
-# ── Formulas basicas (verbatim contra metrics.py:364-378) ─────────────────
+# ── Formulas basicas (verbatim contra metrics.py:570-584) ─────────────────
 
 def test_win_rate_profit_factor_payout_expectancy_formulas():
     trades = make_trades([100.0, 100.0, -50.0, -50.0])  # 2 wins, 2 losses

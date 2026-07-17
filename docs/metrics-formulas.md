@@ -325,22 +325,32 @@ Si el avg_bars_live difiere mucho del backtest, puede indicar slippage elevado o
 
 ---
 
-## 16. Walk-Forward Efficiency (WFE)
+## 16. Realización BT % (`live_vs_bt_profit_ratio`)
+
+**Nota de nombre**: esto NO es Walk-Forward Efficiency (WFE) de Pardo, a
+pesar de haberse llamado así antes en este documento y en el código. WFE
+compara backtest out-of-sample contra backtest in-sample sobre una secuencia
+de ventanas con reoptimización en cada paso. Esta métrica compara **resultados
+live reales** contra un **único agregado de backtest** — no hay ventanas, no
+hay partición in-sample/out-of-sample, y no hay reoptimización posible: la
+función solo recibe agregados tipeados por el operador (`bt_expect`,
+`bt_trades`, `bt_months`), nunca una curva de equity de backtest ni un
+espacio de parámetros. Ver `docs/research/prior-art.md` §4.5. La aritmética
+es correcta y no cambia; solo el nombre anterior sobre-prometía.
 
 ```
 BT_profit_per_month  = bt_expectancy × bt_trades / bt_months
 Live_profit_per_month = live_expectancy × live_trades / live_months
-WFE = (Live_profit_per_month / BT_profit_per_month) × 100
+live_vs_bt_profit_ratio = (Live_profit_per_month / BT_profit_per_month) × 100
 ```
 
 Mide qué porcentaje de la rentabilidad del backtest se está materializando en live.
 
-| WFE | Estado |
+| live_vs_bt_profit_ratio | Estado |
 |---|---|
 | > 120% | ALERTA (mejor que BT → posible sobreoptimización del BT) |
 | 70-120% | OK |
-| 50-70% | ALERTA |
-| 30-50% | ALERTA |
+| 30-70% | ALERTA |
 | < 30% | FUERA |
 
 ---

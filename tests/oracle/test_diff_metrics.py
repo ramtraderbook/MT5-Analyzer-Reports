@@ -30,32 +30,32 @@ from conftest import make_trades, make_config
 # TOLERANCIAS — cada una justificada por el redondeo que hace produccion.
 # ─────────────────────────────────────────────────────────────────────────
 
-# Sharpe: metrics._calc_sharpe redondea a 2dp (metrics.py:185). numpy vs una
+# Sharpe: metrics._calc_sharpe redondea a 2dp (metrics.py:391). numpy vs una
 # reimplementacion via empyrical puede diferir en el ULP mas bajo; 2dp de
 # redondeo more que cubre eso.
 TOL_SHARPE = 0.006
 
 # max_dd_pct: metrics._calc_max_drawdown redondea internamente a 4dp
-# (metrics.py:159) y calculate_ea_metrics vuelve a redondear ese resultado a
-# 2dp (metrics.py:460) — doble redondeo. Ademas el calculo interno opera
-# sobre el equity_curve YA redondeado a 2dp punto a punto (metrics.py:95),
+# (metrics.py:199) y calculate_ea_metrics vuelve a redondear ese resultado a
+# 2dp (metrics.py:666) — doble redondeo. Ademas el calculo interno opera
+# sobre el equity_curve YA redondeado a 2dp punto a punto (metrics.py:135),
 # no sobre el pnl crudo, así que el error de redondeo puede acumularse
 # ligeramente a lo largo de la curva. 0.05 puntos porcentuales cubre ambas
 # fuentes con margen.
 TOL_DD_PCT = 0.05
 
-# max_dd_dollar: redondeado una sola vez a 2dp (metrics.py:459).
+# max_dd_dollar: redondeado una sola vez a 2dp (metrics.py:665).
 TOL_DD_DOLLAR = 0.03
 
 # profit_factor / win_rate / expectancy / payout_ratio: metrics.py redondea a
 # 2dp (net_profit/total_trades, win_rate, profit_factor, payout_ratio todos a
-# 2dp via fmt_pf/round() -- metrics.py:431 a nivel EA, :578 a nivel portfolio).
+# 2dp via fmt_pf/round() -- metrics.py:637 a nivel EA, :784 a nivel portfolio).
 TOL_PF = 0.01
 TOL_WIN_RATE = 0.01
 TOL_EXPECTANCY = 0.01
 TOL_PAYOUT = 0.01
 
-# SQN: metrics._calc_sqn redondea a 2dp (metrics.py:219).
+# SQN: metrics._calc_sqn redondea a 2dp (metrics.py:425).
 TOL_SQN = 0.01
 
 # p-valor binomial: math.comb es aritmetica exacta de precision entera hasta
@@ -63,6 +63,21 @@ TOL_SQN = 0.01
 # ruta interna (log-gamma / suma acumulada). Ambos deberian coincidir a
 # precision de double casi completa.
 TOL_BINOMIAL_P = 1e-9
+
+# metrics.calculate_bootstrap_risk: a diferencia de TODAS las tolerancias de
+# arriba -- que encierran error de REDONDEO (double-precision, round() a N
+# decimales) -- esta encierra error de MUESTREO Monte Carlo, que es ordenes
+# de magnitud mas grande. Dos estimaciones bootstrap igualmente validas de la
+# MISMA distribucion subyacente, con seeds distintos y B=BOOTSTRAP_ITERATIONS
+# (10000), difieren entre si; medido empiricamente sobre 20 seeds distintos
+# con un fixture mixto de N=80 trades, el spread de max_dd_pct_p99 (la cola,
+# donde el ruido de muestreo es mayor) llego a ~1.5 puntos porcentuales. 2.0pp
+# da margen sin enmascarar un defecto real -- si algun dia dos corridas
+# difieren por mas de esto, la primera sospecha debe ser B insuficiente o un
+# bug, no ruido. NO reusar TOL_DD_PCT (0.05pp): esa tolerancia solo cubre
+# redondeo y subestimaria por mas de un orden de magnitud el ruido real de
+# un bootstrap.
+TOL_BOOTSTRAP_MC_PCT = 2.0
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -153,7 +168,7 @@ def oracle_profit_factor(net_pnl_list):
     """PF textbook: suma de ganancias / |suma de perdidas|.
 
     Se filtra con < 0 / > 0 (estrictos), NO con la particion <= 0 que usa
-    metrics.py para wins/losses (metrics.py:353-354, donde net_pnl==0 cuenta
+    metrics.py para wins/losses (metrics.py:559-560, donde net_pnl==0 cuenta
     como perdida). Da igual para la SUMA: un trade en 0 no aporta nada ni a
     gross_profit ni a gross_loss sea cual sea el filtro que lo excluya, asi
     que la formula converge al mismo profit_factor pese a particionar con un
@@ -170,7 +185,7 @@ def oracle_profit_factor(net_pnl_list):
 def oracle_payout_ratio(net_pnl_list):
     """Payout ratio textbook = avg(ganadores) / |avg(perdedores)|, particion
     ESTRICTA (> 0 / < 0), a diferencia de la particion <= 0 que metrics.py
-    usa para wins/losses (metrics.py:353-354/366/373-377, donde net_pnl==0
+    usa para wins/losses (metrics.py:559-560/572/579-583, donde net_pnl==0
     cuenta como perdida). A DIFERENCIA de profit_factor (donde un trade en
     0 no aporta a la suma sea cual sea el filtro que lo excluya, asi que las
     dos particiones convergen), payout_ratio SI diverge: un trade en 0
@@ -222,12 +237,15 @@ def oracle_sqn_stdlib(net_pnl_list):
 
 
 def oracle_sqn_tharp_capped(net_pnl_list):
-    """SQN segun el estandar de Van Tharp: sqrt(min(n, 100)) * mean / stdev.
+    """SQN segun la convencion capada de la comunidad (atribucion a Tharp no
+    verificada): sqrt(min(n, 100)) * mean / stdev.
 
-    docs/metrics-formulas.md (seccion 8, "SQN") y docs/known-issues.md §7
-    anotan explicitamente que metrics.py NO tiene el cap de Tharp en
-    sqrt(100) y usa sqrt(n) sin limite. Este oraculo materializa el
-    estandar CON el cap para medir la divergencia real en un N grande.
+    docs/known-issues.md §7 y docs/research/prior-art.md §2.2 documentan que
+    la atribucion de este cap a Van Tharp no pudo confirmarse ni descartarse
+    contra una fuente primaria (vantharpinstitute.com 403, libro paywalled);
+    el cap rastrea solo a paráfrasis de terceros sin cita. metrics.py usa
+    sqrt(n) sin limite. Este oraculo materializa la convencion CON el cap
+    para medir la divergencia frente a esa convencion en un N grande.
     """
     n = len(net_pnl_list)
     if n < 2:
@@ -487,7 +505,7 @@ def test_payout_ratio_matches_textbook_oracle(shape_name):
     derivado directamente de la definicion textbook (oracle_payout_ratio,
     particion > 0/< 0 estricta). "zero_pnl_trades" se excluye A PROPOSITO
     de este parametrize: ese shape SI diverge del oraculo textbook porque
-    metrics.py cuenta net_pnl==0 como perdida (metrics.py:354), lo que
+    metrics.py cuenta net_pnl==0 como perdida (metrics.py:560), lo que
     infla artificialmente el payout_ratio reportado -- ver
     test_payout_ratio_zero_pnl_trade_inflation_defect_pin en
     test_char_metrics.py para esa caracterizacion puntual. payout_ratio no
@@ -504,7 +522,7 @@ def test_payout_ratio_matches_textbook_oracle(shape_name):
 
 
 def test_zero_pnl_trade_counts_as_loss_not_win():
-    """Caracterizacion puntual del criterio <= 0 (metrics.py:354): de los 6
+    """Caracterizacion puntual del criterio <= 0 (metrics.py:560): de los 6
     trades en zero_pnl_trades, 2 valen exactamente 0.0 y deben contarse como
     perdedores, no ganadores -- verificado contra el conteo manual."""
     pnls = _pnls_for("zero_pnl_trades")
@@ -520,16 +538,16 @@ def test_zero_pnl_trade_counts_as_loss_not_win():
 # PORTFOLIO -- misma cobertura diferencial que EA-level (F4)
 # ─────────────────────────────────────────────────────────────────────────
 #
-# calculate_portfolio_metrics (metrics.py:481-625) NO delega a
+# calculate_portfolio_metrics (metrics.py:687-831) NO delega a
 # calculate_ea_metrics: DUPLICA la aritmetica de win_rate/profit_factor/
-# payout_ratio/expectancy textualmente aparte (metrics.py:503-543), separada
-# de la version EA-level (metrics.py:340-390). Antes de estos tests solo se
+# payout_ratio/expectancy textualmente aparte (metrics.py:709-749), separada
+# de la version EA-level (metrics.py:546-596). Antes de estos tests solo se
 # verificaba la FORMA/tipo de la salida de calculate_portfolio_metrics (ver
 # test_calculate_portfolio_metrics_same_41_key_contract en
 # test_char_metrics.py) -- ningun test comparaba VALORES contra un oraculo
 # independiente para el bloque de formula propio del portfolio. Un bug
-# introducido SOLO en metrics.py:514 (portfolio win_rate) mientras
-# metrics.py:364 (EA win_rate) sigue correcto sobrevivia en silencio. Estos
+# introducido SOLO en metrics.py:720 (portfolio win_rate) mientras
+# metrics.py:570 (EA win_rate) sigue correcto sobrevivia en silencio. Estos
 # tests reusan los MISMOS oraculos independientes de arriba (no copian la
 # expresion de produccion) contra calculate_portfolio_metrics en vez de
 # calculate_ea_metrics.
@@ -644,13 +662,16 @@ def test_sqn_two_trades_below_label_threshold_but_value_present():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "DIVERGENCIA: metrics._calc_sqn usa sqrt(n)*mean/std SIN el cap de "
-        "Van Tharp en sqrt(100) (docs/known-issues.md §7). Sobre una muestra de "
-        "150 trades, SQN sin cap != SQN con cap sqrt(min(n,100)) por > 0.3 "
-        "-- ver oracle_sqn_tharp_capped vs oracle_sqn_stdlib en este mismo "
+        "DIVERGENCIA: metrics._calc_sqn usa sqrt(n)*mean/std SIN el cap "
+        "sqrt(100) de la convencion capada de la comunidad, cuya atribucion "
+        "a Van Tharp no esta verificada (docs/known-issues.md §7, "
+        "docs/research/prior-art.md §2.2). Sobre una muestra FIJA de 150 "
+        "trades, SQN sin cap != SQN con cap sqrt(min(n,100)) por > 0.3 -- "
+        "ver oracle_sqn_tharp_capped vs oracle_sqn_stdlib en este mismo "
         "archivo. El repo Y su propia docstring coinciden en NO tener el "
         "cap (documentado, no un bug); este xfail deja visible cuanto se "
-        "aleja del estandar de Tharp para muestras grandes."
+        "aleja de esa convencion capada para esta muestra de 150, sin "
+        "asegurar nada sobre el crecimiento con N."
     ),
 )
 def test_sqn_uncapped_diverges_from_tharp_standard_for_large_n():
@@ -665,7 +686,8 @@ def test_sqn_uncapped_diverges_from_tharp_standard_for_large_n():
     tharp_capped = oracle_sqn_tharp_capped(pnls)
     assert m["sqn"] is not None
     # Esta asercion es la que FALLA a proposito (xfail strict): el repo
-    # (sqrt(n), sin cap) no coincide con el estandar de Tharp (sqrt(min(n,100))).
+    # (sqrt(n), sin cap) no coincide con la convencion capada de la comunidad
+    # (sqrt(min(n,100))), cuya atribucion a Tharp no esta verificada.
     assert abs(m["sqn"] - tharp_capped) <= TOL_SQN
 
 
@@ -715,3 +737,219 @@ def test_binomial_docs_normal_approximation_does_not_match_code(wins, n, p):
     # scipy no esta disponible. El doc describe un camino de codigo que no
     # existe.
     assert abs(code_val - doc_val) > 0.02
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# BOOTSTRAP RISK (metrics.calculate_bootstrap_risk)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Standalone: no conectada a validator.py/incubation_validator.py, no
+# influye ningun veredicto (ver docstring de calculate_bootstrap_risk y
+# docs/known-issues.md §1, que documenta por que esa calibracion esta
+# bloqueada por datos reales).
+
+def oracle_bootstrap_closed_form_constant_loss(pnl_per_trade, n, capital):
+    """Forma cerrada para el caso degenerado: N trades IDENTICOS y negativos.
+    Cada trade resampleado con reemplazo sigue siendo el mismo valor (es el
+    UNICO valor en el multiset), asi que las N rutas Monte Carlo son
+    identicas entre si y a la serie original: el pico se queda anclado en
+    0.0 (la serie es monotonamente decreciente) y el DD en dolares al final
+    de la ruta es N * |pnl_per_trade|. dd_pct = N*|pnl|/capital*100 -- sin
+    aleatoriedad involucrada, es una identidad, no una aproximacion.
+    """
+    max_dd_dollar = n * abs(pnl_per_trade)
+    max_dd_pct = max_dd_dollar / capital * 100.0
+    return max_dd_dollar, max_dd_pct
+
+
+def oracle_bootstrap_independent_loop(net_pnl_list, capital, iterations, seed):
+    """Reimplementacion INDEPENDIENTE del mismo bootstrap: un loop Python
+    puro (sin np.cumsum/np.maximum.accumulate vectorizado) que resamplea
+    ruta por ruta con `rng.choice(arr, size=n, replace=True)` (una llamada
+    por ruta, no un unico `size=(iterations, n)` como hace la version de
+    produccion). Comparte la MISMA definicion de drawdown (pico ancla en 0,
+    denominador capital+pico) pero consume el stream de bits del Generator
+    en un patron de llamada distinto -- por eso, aun con el mismo seed, las
+    rutas resampleadas no son necesariamente identicas trade a trade a las
+    de la version vectorizada; es una fuente genuina de ruido de muestreo
+    Monte Carlo entre dos estimaciones igualmente validas de la misma
+    distribucion, no una discrepancia de redondeo. Ver TOL_BOOTSTRAP_MC_PCT.
+    """
+    arr = np.array(net_pnl_list, dtype=float)
+    n = len(arr)
+    rng = np.random.default_rng(seed)
+    max_dd_pcts = np.empty(iterations)
+    for i in range(iterations):
+        sample = rng.choice(arr, size=n, replace=True)
+        peak = 0.0
+        pnl = 0.0
+        max_dd = 0.0
+        for p in sample:
+            pnl += p
+            if pnl > peak:
+                peak = pnl
+            dd = (peak - pnl) / (capital + peak) * 100.0
+            if dd > max_dd:
+                max_dd = dd
+        max_dd_pcts[i] = max_dd
+    return np.percentile(max_dd_pcts, [50, 95, 99])
+
+
+def test_bootstrap_risk_matches_closed_form_for_constant_negative_pnl():
+    """Con N trades identicos y negativos, el resultado Monte Carlo no tiene
+    grado de libertad: las tres bandas (p50/p95/p99) deben coincidir EXACTO
+    (a precision de punto flotante) con la forma cerrada -- no hay ruido de
+    muestreo posible cuando el multiset de resampleo tiene un unico valor.
+    """
+    n = 30
+    pnl_per_trade = -100.0
+    capital = 10000.0
+    pnls = [pnl_per_trade] * n
+
+    result = metrics.calculate_bootstrap_risk(pnls, capital)
+    assert result is not None
+
+    _, expected_pct = oracle_bootstrap_closed_form_constant_loss(pnl_per_trade, n, capital)
+
+    # Punto flotante puro (misma aritmetica repetida N*BOOTSTRAP_ITERATIONS
+    # veces) -- tolerancia minima, no la de muestreo.
+    assert result["max_dd_pct_p50"] == pytest.approx(expected_pct, abs=1e-6)
+    assert result["max_dd_pct_p95"] == pytest.approx(expected_pct, abs=1e-6)
+    assert result["max_dd_pct_p99"] == pytest.approx(expected_pct, abs=1e-6)
+
+    # Toda ruta rompe cualquier umbral <= dd_pct real, y ninguna rompe uno mayor.
+    for threshold, prob in result["ruin_probability"].items():
+        expected_prob = 1.0 if expected_pct >= threshold else 0.0
+        assert prob == pytest.approx(expected_prob, abs=1e-9)
+
+
+def test_bootstrap_risk_dd_convention_agrees_with_calc_max_drawdown_degenerate_path():
+    """El caso degenerado de arriba tiene una segunda propiedad: como las
+    N rutas Monte Carlo son identicas a la serie original (unico valor
+    posible), max_dd_pct_p50 debe coincidir tambien con lo que
+    metrics._calc_max_drawdown calcula sobre esa MISMA serie construida via
+    _build_equity_curve -- confirmando que el bootstrap usa exactamente la
+    misma convencion de denominador (capital + peak_pnl, metrics.py:194) que
+    el camino de produccion no-Monte-Carlo, no solo la formula documentada.
+    """
+    n = 30
+    pnl_per_trade = -100.0
+    capital = 10000.0
+    pnls = [pnl_per_trade] * n
+
+    result = metrics.calculate_bootstrap_risk(pnls, capital)
+
+    trades_sorted = make_trades(pnls)
+    equity_curve = metrics._build_equity_curve(trades_sorted)
+    _, prod_max_dd_pct, _ = metrics._calc_max_drawdown(equity_curve, capital)
+
+    assert result["max_dd_pct_p50"] == pytest.approx(prod_max_dd_pct, abs=1e-6)
+
+
+def test_bootstrap_risk_percentile_bands_agree_within_monte_carlo_sampling_tolerance():
+    """Dos estimaciones bootstrap INDEPENDIENTES de la misma distribucion
+    subyacente (misma entrada, mismo B=BOOTSTRAP_ITERATIONS) -- una via la
+    API vectorizada de produccion, otra via un loop puro con un patron de
+    consumo de bits distinto (oracle_bootstrap_independent_loop) -- deben
+    coincidir dentro de TOL_BOOTSTRAP_MC_PCT. Esta es la tolerancia de
+    MUESTREO, no de redondeo: con una entrada mixta (no degenerada) SI hay
+    varianza real entre resampleos, a diferencia de los dos tests
+    anteriores.
+    """
+    pnls = [50.0, -30.0, 80.0, -100.0, 20.0, -60.0, 15.0, 40.0, -25.0, 10.0] * 8  # N=80
+    capital = 10000.0
+    iterations = metrics.BOOTSTRAP_ITERATIONS
+
+    result = metrics.calculate_bootstrap_risk(pnls, capital, iterations=iterations, seed=metrics.BOOTSTRAP_SEED)
+    oracle_p50, oracle_p95, oracle_p99 = oracle_bootstrap_independent_loop(
+        pnls, capital, iterations, seed=metrics.BOOTSTRAP_SEED + 1
+    )
+
+    assert abs(result["max_dd_pct_p50"] - oracle_p50) <= TOL_BOOTSTRAP_MC_PCT
+    assert abs(result["max_dd_pct_p95"] - oracle_p95) <= TOL_BOOTSTRAP_MC_PCT
+    assert abs(result["max_dd_pct_p99"] - oracle_p99) <= TOL_BOOTSTRAP_MC_PCT
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# BOOTSTRAP STREAM IDENTITY -- pins the chunked draw stream against the
+# pre-chunking all-at-once formulation.
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Nothing above enforces this. test_bootstrap_risk_percentile_bands_agree_
+# within_monte_carlo_sampling_tolerance compares against an INDEPENDENTLY
+# seeded, differently-patterned reimplementation (a pure Python loop, one
+# rng.choice call per path) at TOL_BOOTSTRAP_MC_PCT (2.0pp) -- that tolerance
+# encodes genuine Monte Carlo sampling noise between two valid but DIFFERENT
+# draw streams, and is wide enough to hide a real stream-identity regression.
+# calculate_bootstrap_risk's docstring and BOOTSTRAP_MEMORY_BUDGET_MB's
+# comment both claim the chunked result is numerically IDENTICAL to the old
+# all-at-once formulation for a given seed -- because a single `rng` is
+# created once up front and its stream is only ever consumed in chunks, never
+# reset or reordered. If a future refactor moved `rng = np.random.default_rng
+# (seed)` inside the chunk loop, or reordered the draws, the stream would
+# change, every result would drift, and NOTHING above would fail. This test
+# exists specifically to catch that: it pins stream-identity so that kind of
+# silent drift cannot pass CI.
+
+# Justified ONLY by production's internal round(..., 4) on p50/p95/p99
+# (calculate_bootstrap_risk's return dict) -- this is an EXACTNESS claim
+# (same seed, same stream, same per-path arithmetic), NOT a sampling
+# comparison, so it must NOT reuse TOL_BOOTSTRAP_MC_PCT. Chunking splits the
+# computation by ROW (path), and each path's cumsum/running-max/dd_pct is
+# computed independently of every other path, so the unrounded per-path
+# values are the same floating-point computation whether run in one chunk or
+# many; the only source of discrepancy against an unrounded oracle is
+# production's own 4dp rounding. 5e-5 is half a unit in that last decimal.
+TOL_BOOTSTRAP_STREAM_IDENTITY = 5e-5
+
+
+def oracle_bootstrap_all_at_once(arr, capital, iterations, seed):
+    """Pre-chunking formulation, reimplemented independently of production:
+    draws ALL `iterations` paths in a single rng.choice call instead of in
+    BOOTSTRAP_MEMORY_BUDGET_MB-bounded chunks. This is exactly what
+    calculate_bootstrap_risk did before chunking was introduced (see
+    docs/known-issues.md §7) -- kept here, independent of production code,
+    purely to pin that chunking is a memory optimization ONLY, never a
+    behavior change.
+    """
+    rng = np.random.default_rng(seed)
+    sims = rng.choice(arr, size=(iterations, len(arr)), replace=True)
+    cum = np.cumsum(np.concatenate([np.zeros((iterations, 1)), sims], axis=1), axis=1)
+    peak = np.maximum.accumulate(cum, axis=1)
+    return ((peak - cum) / (capital + peak) * 100.0).max(axis=1)
+
+
+@pytest.mark.parametrize(
+    "n",
+    [
+        50,    # budget never forces chunking here (one chunk) -- sanity baseline
+        2000,  # chunk_size ~= 598 vs iterations=10000 -- chunking DEFINITELY engages
+    ],
+)
+def test_bootstrap_risk_chunked_stream_matches_all_at_once_oracle(n):
+    """Pins stream-identity: calculate_bootstrap_risk's chunked draws must
+    produce the SAME max_dd_pct percentile bands as the pre-chunking
+    all-at-once formulation, for the SAME seed and the SAME iterations, on
+    both an n where chunking never engages (n=50, one chunk covers all
+    iterations) and an n where it definitely does (n=2000, chunk_size~=598
+    means ~17 chunks for iterations=10000). Exists so a future refactor that
+    moves `rng = np.random.default_rng(seed)` inside the chunk loop, or
+    reorders the draws, cannot silently change the draw stream without a
+    test failing -- see the module-level comment above for why the existing
+    bootstrap tests would not catch that.
+    """
+    seed = metrics.BOOTSTRAP_SEED
+    iterations = metrics.BOOTSTRAP_ITERATIONS  # same value on both paths, per the docstring's own claim
+
+    pnls = [(-1) ** i * (10.0 + (i % 7) * 3.5) for i in range(n)]
+    arr = np.array(pnls, dtype=float)
+
+    result = metrics.calculate_bootstrap_risk(pnls, CAPITAL, iterations=iterations, seed=seed)
+    assert result["available"] is True
+
+    oracle_paths = oracle_bootstrap_all_at_once(arr, CAPITAL, iterations, seed)
+    oracle_p50, oracle_p95, oracle_p99 = np.percentile(oracle_paths, [50, 95, 99])
+
+    assert result["max_dd_pct_p50"] == pytest.approx(oracle_p50, abs=TOL_BOOTSTRAP_STREAM_IDENTITY)
+    assert result["max_dd_pct_p95"] == pytest.approx(oracle_p95, abs=TOL_BOOTSTRAP_STREAM_IDENTITY)
+    assert result["max_dd_pct_p99"] == pytest.approx(oracle_p99, abs=TOL_BOOTSTRAP_STREAM_IDENTITY)

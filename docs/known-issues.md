@@ -158,12 +158,78 @@ volvió alcanzable en un caso nuevo.
 
 ## 7. `metrics.py` — menores verificados
 
-- **SQN sin el cap de Tharp**: Van K. Tharp acota el multiplicador en
-  `sqrt(100) = 10`; el código usa `sqrt(N)` sin cota, así que el número de
+- **`calculate_bootstrap_risk` existe y está deliberadamente SIN CABLEAR**:
+  bootstrap iid sobre el P&L por trade (`rng.choice(..., replace=True)`,
+  `np.random.default_rng`) que devuelve bandas percentiles de max DD% y
+  probabilidad de brecha contra `RUIN_THRESHOLDS_PCT`. Nadie en producción la
+  llama; solo los tests. **Esto NO es el mismo caso que `_calc_risk_of_ruin`**,
+  que se eliminó por dead code con cero call sites (pinneado en
+  `tests/test_metrics.py:397-401`) — aquella era privada, sin racional y nadie
+  sabía por qué estaba. Las tres razones de esta, todas verificadas:
+  1. **Costo medido**: la cifra de memoria original de esta entrada
+     (**"~160 MB de pico con 2000"**) estaba **mal por 7x** — medido con
+     `tracemalloc`, la versión sin chunking pico en **1121 MB con n=2000,
+     iterations=10000** (seis locals vivos de forma `(iterations, n+1)`
+     — `sims`, `cum`, `peak`, `dd_dollar`, `peak_abs`, `dd_pct` — más el
+     temporal de `np.concatenate`, todos co-residentes hasta el `return`).
+     Se corrigió procesando los paths en chunks acotados por
+     `BOOTSTRAP_MEMORY_BUDGET_MB=64` (ver `metrics.py`, comentario de la
+     constante): re-medido con `tracemalloc` tras el chunking, tres corridas
+     cada uno con varianza cero entre corridas, el pico es **29 MB en n=50,
+     71 MB en n=200, 77 MB en n=500, 77 MB en n=2000** — deja de crecer con
+     `n` y nunca se acerca a los 1121 MB previos (~14x menor en n=2000). El
+     resultado es
+     numéricamente **idéntico** al de antes para el mismo seed (mismo `rng`
+     creado una sola vez antes del loop, mismo stream de draws), verificado
+     directamente contra la formulación sin chunking. Tiempo: 10 ms con 50
+     trades, 104 ms con 500, 428 ms con 2000 — sin cambio material respecto
+     a la medición original — por EA. `calculate_ea_metrics` corre en el path
+     de request de Flask; hacer que cada cálculo de métricas pague eso por
+     una capacidad que nadie consume todavía no se justifica. El chunking
+     acota la memoria, no el tiempo: el costo temporal sigue creciendo
+     linealmente con `n * iterations`, así que un caller que pase un `n` o
+     `iterations` enorme paga en wall-clock, no en un salto de memoria —
+     razón por la cual no se agregó ningún tope arbitrario a ninguno de los
+     dos (ver comentario en `calculate_bootstrap_risk`).
+  2. **Contrato de claves**: `tests/oracle/test_char_metrics.py:56` fija
+     igualdad de conjuntos sobre las 41 claves de salida de
+     `calculate_ea_metrics`. Agregar una clave es un cambio deliberado de
+     contrato, no un efecto colateral de agregar una capacidad.
+  3. **Política**: cablearla a `validator.py` cambiaría veredictos
+     ELIMINAR/CONTINUAR sobre EAs reales. La §1 de este mismo documento está
+     bloqueada por datos para exactamente esa clase de calibración.
+  **Para cablearla** hace falta: decidir el punto de ruina (hoy se reportan
+  cuatro umbrales justamente para no elegirlo), decidir dónde vive el costo
+  (¿cacheado? ¿on-demand?), actualizar el contrato de 41 claves, y —si alguna
+  vez alimenta un veredicto— calibrar contra un export real de MT5.
+  **Valor de tenerla**: el gate de DD hoy se apoya en números tipeados desde
+  SQX cuya semántica la §3 admite **NO VERIFICABLE**. Un bootstrap sobre
+  nuestros propios trades no necesita ese acuerdo semántico: misma definición
+  de los dos lados, por construcción. Ver `docs/research/prior-art.md` §5.1.
+
+- **SQN sin cap en N=100 — la atribución a Tharp está sin verificar**: la
+  atribución de ese cap a Van Tharp **no pudo confirmarse ni descartarse**
+  (`docs/research/prior-art.md` §2.2): `vantharpinstitute.com` devuelve 403 en
+  todas sus URLs, `vantharp.com` redirige al mismo muro, archive.org no estuvo
+  disponible, y *Definitive Guide to Position Sizing* (2008) — el libro donde
+  se introduce SQN y donde supuestamente vive el cap — está paywalled sin cita
+  citable. El cap rastrea a solo dos paráfrasis de terceros, ninguna cita a
+  Tharp ni página ("as a work around he suggests traders use 'N=100'" en un
+  blog; "one way he suggests to cope" en un foro), y ambas describen un
+  remedio informal para muestras grandes, no un término de la fórmula
+  publicada. Contraevidencia: Jonathan Kinlay deriva SQN sin cap; un usuario de
+  Wealth-Lab que sí implementa `Math.Min(10, ...)` lo describe explícitamente
+  como **su propia** modificación, no la de Tharp. Origen probable de la
+  confusión: el propio "Market SQN" de Tharp aplica la fórmula sobre una
+  ventana FIJA de 100 días, donde `sqrt(100)=10` es una constante de
+  normalización, no un clamp. **Veredicto honesto**: el cap no forma parte de
+  la fórmula de SQN según el material accesible de Tharp y parece ser una
+  convención de la comunidad; la fuente primaria (su libro) está paywalled y
+  esto no pudo saldarse. El código usa `sqrt(N)` sin cota, así que el número de
   trades por sí solo infla la calificación (con `mean/std = 0.108` y N=2500 da
   SQN 5.42 "Sobresaliente" contra 1.08 "Pobre" con el cap). El doc §8 define la
-  fórmula sin cap, así que código y doc **coinciden**; la divergencia es contra
-  el estándar. Solo display.
+  fórmula sin cap, así que código y doc coinciden. Solo display. Ver también la
+  divergencia de R-multiples más abajo, mejor evidenciada que ésta.
 - **Acantilado del guard de varianza**: con CV = 0.0101 y N ≥ 20, el SQN
   todavía puede dar 1393 y etiqueta "Santo Grial". Cualquier umbral fijo tiene
   esa discontinuidad; se aceptó porque la banda CV 0.01–1.0 no contiene ningún
@@ -184,6 +250,41 @@ volvió alcanzable en un caso nuevo.
 - **Trades con P&L exactamente 0 cuentan como pérdidas** (`net_pnl <= 0`),
   inflando `losing_trades` y las rachas perdedoras. El doc §10 lo documenta así,
   o sea que código y doc coinciden.
+- **SQN sobre P&L crudo, no sobre R-multiples**: la propia definición del
+  Tharp Institute (recuperada vía la reproducción atribuida de TradingView de
+  la página con 403) dice: *"SQN measures the relationship between the mean
+  (expectancy) and the standard deviation of **the R-multiple distribution**
+  generated by a trading system. It also makes an adjustment for the number
+  of trades involved."* — nótese "an adjustment for the number of trades"
+  **sin ningún techo mencionado**. SQN se define sobre R-multiples (retorno
+  normalizado por el riesgo inicial de cada trade), no sobre P&L crudo en
+  moneda. `_calc_sqn` (`metrics.py:394-425`) recibe `net_pnl` crudo; lo mismo
+  hacen backtrader, backtesting.py y vectorbt (tres implementaciones
+  verificadas, ninguna usa R-multiples).
+
+  Por qué importa: los R-multiples hacen que el SQN sea comparable entre
+  tamaños de posición distintos; el P&L crudo no — un EA que varía el lotaje
+  tiene un SQN que mide en parte su gestión de tamaño, no su edge. Factible en
+  principio: `parser.py:425` y `:557` sí capturan `sl`, y `open_price`/`volume`
+  están disponibles, así que el riesgo inicial es calculable.
+
+  Confianza: la definición de R-multiples es de alta confianza pero descansa
+  en el mismo sitio con 403 y el mismo libro paywalled que el cap de arriba —
+  mejor evidenciada, no confirmada de forma independiente. Ver
+  `docs/research/prior-art.md` §2.2.
+
+  **Para destrabar**: más abajo, §10, se registra un bug de manejo de cero en
+  `sl`/`tp` — una celda numérica `0.0` es falsy → `None` (correcto), pero el
+  string `"0"` es truthy → `0.0` y se trata como un precio real — calificado
+  ahí **"Impacto bajo: `sl`/`tp` son campos de display, no entran en ningún
+  cálculo."** Esa severidad es correcta **solo porque hoy `sl` no alimenta
+  ningún cálculo**. Adoptar R-multiples convertiría `sl` en el **denominador
+  de cada SQN**, y ese bug pasaría de impacto bajo a alto de un día para el
+  otro: dividir por un riesgo inicial fabricado. Además, los EAs que usan SL
+  virtual/oculto (gestionado en código, nunca enviado al bróker) reportan
+  `sl=0`/`None`, así que el R-multiple sería incalculable para ellos. Ambos
+  problemas — el bug de cero en `sl`/`tp` y el caso de SL virtual/oculto —
+  deben resolverse antes de adoptar R-multiples.
 
 ---
 
@@ -443,7 +544,7 @@ duros. Lo que sigue quedó registrado y no tocado.
   marcaron de forma independiente. Las tarjetas explicativas hardcodean
   constantes que viven en el motor: los cortes de color de SQN 2.0/1.6
   (`dashboard.html:126-142`, `strategy.html:130-146`,
-  `incubation_strategy.html:263-268` vs `metrics.py:37-45`); los umbrales de
+  `incubation_strategy.html:263-268` vs `metrics.py:77-85`); los umbrales de
   trades de checkpoint 5/20/40 y los cortes de CP3 65/45
   (`incubation_strategy.html:44-49,75-76` e
   `incubation_dashboard.html:88-153` vs `incubation_domain.py:353-360`,
@@ -457,13 +558,15 @@ duros. Lo que sigue quedó registrado y no tocado.
   **Para cerrarlo**: pasar los umbrales desde el backend al contexto de la
   plantilla.
 
-- **La banda "50%" del WFE no existe en el código**
-  (`templates/validator.html:480-485`). La tarjeta de info de WFE inventa un
-  límite "Aceptable/Degradación" en 50% y omite el caso `>120 → ALERTA`,
-  mientras que las bandas reales son `>=70 OK`, `30–70 ALERTA`, `<30 FUERA`,
-  `>120 ALERTA` (`validator.py:673-681`). La leyenda no se corrigió porque la
-  redacción de la tarjeta necesita una decisión de producto, no solo un
-  cambio de números.
+- **RESUELTO** — la banda "50%" del ratio live-vs-BT que no existía en el
+  código (`templates/validator.html`, tarjeta de info) se corrigió: la
+  leyenda inventaba un límite "Aceptable/Degradación" en 50% e invertía la
+  señal (calificaba 50-70% como "Aceptable" cuando el motor levanta ALERTA
+  ahí), y además omitía el caso `>120 → ALERTA`. La tarjeta ahora lista las
+  cuatro bandas reales (`70-120 OK`, `30-70 ALERTA`, `<30 FUERA`, `>120
+  ALERTA`, `validator.py`) y la fila vestigial 50/30 de
+  `docs/metrics-formulas.md` §16 (que probablemente originó el invento) se
+  eliminó.
 
 - **Campos que el backend manda y el frontend ignora**. `ea.label` se envía
   pero la tabla de EAs del dashboard renderiza el `ea.name` crudo
@@ -497,7 +600,7 @@ Arnés en `tests/oracle/` (8 archivos, ~3.500 líneas): caracterización +
 propiedades (Hypothesis) + diferencial contra oráculo independiente
 (`empyrical` para Sharpe, `scipy.stats.binom.cdf` para el binomial, oráculos
 derivados a mano para el resto). **Cero ediciones de producción**: el arnés
-observa, no arregla. Suite: 266 → 519 tests, 15 `xfail(strict=True)`, uno por
+observa, no arregla. Suite: 266 → 519 tests, 17 `xfail(strict=True)`, uno por
 cada hallazgo abierto que queda visible sin romper el verde.
 
 Nota de alcance: la premisa de partida ("validator.py, incubation_validator.py
@@ -516,7 +619,7 @@ propiedades y la de oráculo diferencial.
   64.998 → `OBSERVAR`, mientras la UI muestra **65.0**, que es exactamente la
   banda de `APROBAR`. El operador lee aprobado y el motor dice observar.
   Test: `test_cp3_score_display_contradicts_verdict_at_65_boundary`.
-- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:353-354`
+- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:559-560`
   parte con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que el trade no
   cae en ninguna partición: `winning_trades + losing_trades < total_trades` y su
   P&L se evapora de `net_profit` sin error ni SIN DATOS. Repro ejecutado: 3
@@ -566,10 +669,10 @@ propiedades y la de oráculo diferencial.
 ### C. Datos silenciosamente equivocados
 
 - **C1** — Todos los trades sin fecha → curva de equity vacía → drawdown **0.0**
-  reportado sobre pérdidas reales (`metrics.py:74-76, 131-132`).
-- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:118`, `:155`).
+  reportado sobre pérdidas reales (`metrics.py:114-116, 171-172`).
+- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:158`, `:195`).
 - **C3** — Fecha de pico malformada → `_calc_stagnation` devuelve **0** días, o
-  sea el mejor valor posible salido de un fallo de parseo (`:162-170`).
+  sea el mejor valor posible salido de un fallo de parseo (`:368-376`).
 - **C4** — `_hard_gates`: `expected_monthly == 0` (no `None`) no satisface ni la
   rama `is None` ni la `> 0`, y la frecuencia queda en **"OK"** (`:361-368`).
 - **C5** — `_nd_result` usa `setdefault`: al llegar por `validator.py:555`, los
@@ -577,8 +680,8 @@ propiedades y la de oráculo diferencial.
   sobreviven al lado de las etiquetas `"N/D"`. Ya listado en §6.
 - **C6** — Zona ALERTA vacía cuando `mc_retest.max_dd == mc_trades.max_dd`
   (§4, quirk conocido y deliberado).
-- **C7** — WFE redondea **antes** de bandear (`:673-674`): 120.04 → 120.0 → `OK`
-  en vez de `ALERTA`.
+- **C7** — `live_vs_bt_profit_ratio` (antes `wfe`) redondea **antes** de bandear
+  (`validator.py:681-684`): 120.04 → 120.0 → `OK` en vez de `ALERTA`.
 - **C8** — Contratos de forma incompatibles: `evaluate_cp1` devuelve 6 claves en
   éxito y 13 en SIN DATOS; las formas PRE_CP1 ELIMINAR/PENDING **omiten**
   `mc_source`, que la forma SIN DATOS sí trae como `{}`.
