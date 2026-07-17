@@ -18,6 +18,7 @@
 </header>
 
 <form method="POST" action="{{ url_for('validator_edit', magic=magic) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <!-- ── Identificación ── -->
   <div class="section val-form-section">
@@ -201,6 +202,7 @@
     <a href="{{ url_for('validator') }}" class="btn-secondary">Cancelar</a>
     {% if entry %}
     <form method="POST" action="{{ url_for('validator_delete', magic=magic) }}" style="display:inline" onsubmit="return confirm('¿Eliminar datos de backtest para magic {{ magic }}?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn-danger">🗑 Eliminar BT</button>
     </form>
     {% endif %}

@@ -3,6 +3,11 @@ from io import BytesIO
 
 import pytest
 
+# Fixed CSRF token used by every POST in this file -- the session and the
+# posted form field must agree, or ea_analyzer's before_request CSRF check
+# rejects the request with 400 before the route body ever runs.
+CSRF_TOKEN = "test-csrf-token"
+
 
 def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_path):
     """
@@ -50,7 +55,7 @@ def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_p
     import parser
 
     monkeypatch.setattr(ea_analyzer, "UPLOAD_FOLDER", str(uploads_dir))
-    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda: None)
+    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda *a, **k: None)
     monkeypatch.setattr(ea_analyzer, "load_cache", lambda cache_key: existing_data)
     monkeypatch.setattr(parser, "parse_mt5_report", lambda filepath: parsed_same_file)
 
@@ -70,10 +75,11 @@ def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_p
     client = ea_analyzer.app.test_client()
     with client.session_transaction() as sess:
         sess["cache_key"] = "existing-cache"
+        sess["csrf_token"] = CSRF_TOKEN
 
     response = client.post(
         "/upload",
-        data={"file": (BytesIO(b"dummy"), "same.xlsx")},
+        data={"file": (BytesIO(b"dummy"), "same.xlsx"), "csrf_token": CSRF_TOKEN},
         content_type="multipart/form-data",
     )
 
@@ -221,7 +227,7 @@ def test_upload_live_mode_saves_corrections_only_reupload(monkeypatch, tmp_path)
     uploads_dir.mkdir()
 
     monkeypatch.setattr(ea_analyzer, "UPLOAD_FOLDER", str(uploads_dir))
-    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda: None)
+    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda *a, **k: None)
     monkeypatch.setattr(ea_analyzer, "load_cache", lambda cache_key: existing_data)
     monkeypatch.setattr(parser, "parse_mt5_report", lambda filepath: parsed_correction)
 
@@ -238,10 +244,11 @@ def test_upload_live_mode_saves_corrections_only_reupload(monkeypatch, tmp_path)
     client = ea_analyzer.app.test_client()
     with client.session_transaction() as sess:
         sess["cache_key"] = "existing-cache"
+        sess["csrf_token"] = CSRF_TOKEN
 
     response = client.post(
         "/upload",
-        data={"file": (BytesIO(b"dummy"), "correction.xlsx")},
+        data={"file": (BytesIO(b"dummy"), "correction.xlsx"), "csrf_token": CSRF_TOKEN},
         content_type="multipart/form-data",
     )
 
@@ -272,7 +279,7 @@ def test_upload_incubation_mode_routes_to_mapping(monkeypatch, tmp_path):
     }
 
     monkeypatch.setattr(ea_analyzer, "UPLOAD_FOLDER", str(uploads_dir))
-    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda: None)
+    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda *a, **k: None)
     monkeypatch.setattr(parser, "parse_mt5_report", lambda filepath: parsed_data)
     monkeypatch.setattr(
         ea_analyzer,
@@ -296,11 +303,15 @@ def test_upload_incubation_mode_routes_to_mapping(monkeypatch, tmp_path):
     )
 
     client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = CSRF_TOKEN
+
     response = client.post(
         "/upload",
         data={
             "analysis_mode": "incubation",
             "file": (BytesIO(b"dummy"), "incubation.xlsx"),
+            "csrf_token": CSRF_TOKEN,
         },
         content_type="multipart/form-data",
         follow_redirects=True,
@@ -333,7 +344,7 @@ def test_upload_live_mode_keeps_existing_flow(monkeypatch, tmp_path):
     saved_configs = []
 
     monkeypatch.setattr(ea_analyzer, "UPLOAD_FOLDER", str(uploads_dir))
-    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda: None)
+    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda *a, **k: None)
     monkeypatch.setattr(parser, "parse_mt5_report", lambda filepath: parsed_data)
     monkeypatch.setattr(ea_analyzer, "get_parsed_data", lambda: None)
     monkeypatch.setattr(ea_analyzer, "save_cache", lambda data: "live-cache-key")
@@ -345,11 +356,15 @@ def test_upload_live_mode_keeps_existing_flow(monkeypatch, tmp_path):
     monkeypatch.setattr(ea_analyzer, "invalidate_metrics_cache", lambda: None)
 
     client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = CSRF_TOKEN
+
     response = client.post(
         "/upload",
         data={
             "analysis_mode": "live",
             "file": (BytesIO(b"dummy"), "live.xlsx"),
+            "csrf_token": CSRF_TOKEN,
         },
         content_type="multipart/form-data",
     )
@@ -410,7 +425,8 @@ def test_incubation_mapping_and_save_flow(monkeypatch):
     with client.session_transaction() as sess:
         sess["analysis_mode"] = "incubation"
         sess["incubation_cache_key"] = "cache-1"
-        sess["filename"] = "incubation.xlsx"
+        sess["incubation_filename"] = "incubation.xlsx"
+        sess["csrf_token"] = CSRF_TOKEN
 
     response = client.get("/incubation/mapping")
     assert response.status_code == 200
@@ -425,6 +441,7 @@ def test_incubation_mapping_and_save_flow(monkeypatch):
             "capital_IncubationEA": "7500",
             "instrument_IncubationEA": "USDJPY",
             "include_IncubationEA": "on",
+            "csrf_token": CSRF_TOKEN,
         },
     )
 
@@ -472,6 +489,7 @@ def test_incubation_reference_list_and_edit_save(monkeypatch):
     client = ea_analyzer.app.test_client()
     with client.session_transaction() as sess:
         sess["analysis_mode"] = "incubation"
+        sess["csrf_token"] = CSRF_TOKEN
 
     response = client.get("/incubation/reference_data")
     assert response.status_code == 200
@@ -484,7 +502,7 @@ def test_incubation_reference_list_and_edit_save(monkeypatch):
     assert b"EA_A" in response.data
     assert b"BACKTEST" in response.data
 
-    form_data = {}
+    form_data = {"csrf_token": CSRF_TOKEN}
     for section in incubation_domain.INCUBATION_REFERENCE_SECTIONS:
         for field in section["fields"]:
             key = f"{section['key']}_{field['key']}"

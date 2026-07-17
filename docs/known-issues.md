@@ -260,3 +260,42 @@ confiado es peor que una ausencia declarada.
 - **`_parse_results` corta en el primer par por fila**. Los reportes MT5 suelen
   poner varios pares label/valor en la misma fila; solo entra el primero. Afecta
   a `results_validation`, que hoy no se usa para decidir nada.
+
+## 11. Backend Flask — hallazgos auditados y no corregidos (JD-4)
+
+Los cuatro puntos siguientes los reportó **un solo** juez en la auditoría JD-4 del
+backend Flask. El protocolo solo corrige lo que dos jueces confirman, así que
+quedaron registrados en vez de aplicados. No son especulativos: el código hace lo
+que se describe. Lo que falta es la corroboración independiente que justifique
+tocarlos.
+
+- **`GET /incubation/strategy/<ea_name>` escribe en disco**. Cuando la referencia
+  está completa, la ruta persiste el resultado de la evaluación
+  (`store[ea_name] = bundle["entry"]; save_incubation_store(store)`) durante un
+  simple GET. Un GET que muta estado es re-disparable por prefetchers del
+  navegador y por cualquier recarga. Además es un read-modify-write del store
+  entero sin lock: bajo WSGI, dos vistas concurrentes se pisan las escrituras
+  —incluidas las de **otros** EAs que viven en el mismo archivo—. Verificado a
+  nivel de código; retenido por falta de segundo juez.
+- **Carrera de nombres en `uploads/` (solo WSGI)**. Todas las subidas caen en una
+  carpeta compartida con el nombre que devuelve `secure_filename`. Los exports de
+  MT5 suelen traer el mismo nombre por default, así que dos usuarios concurrentes
+  compiten entre `file.save()` y `parse_mt5_report()`: uno puede parsear el
+  archivo del otro. En el uso local monousuario no aplica. Los archivos subidos,
+  además, no se limpian nunca.
+- **`cache_key` se interpola en rutas de archivo sin validar**. `_cache_file_path`
+  y sus pares construyen `f"{prefix}{cache_key}.json"` sin filtrar separadores.
+  Hoy la clave siempre es un UUID generado por el servidor y explotarlo exige
+  falsificar la cookie de sesión, o sea que es defensa en profundidad, no un
+  agujero abierto. Vale como cinturón si el `.secret_key` alguna vez se filtra.
+- **Carrera del `.secret_key` al importar (solo WSGI multi-worker)**. El bootstrap
+  es un check-then-write sin `O_EXCL`: dos workers pueden generar y escribir
+  claves distintas, o uno puede leer el archivo a medio escribir. Resultado:
+  firmas de sesión inconsistentes y usuarios perdiendo la sesión de forma
+  intermitente. El entrypoint que se envía es monoproceso, así que no aplica al
+  uso documentado.
+
+Contexto de despliegue: `docs/backend.md` contempla explícitamente un despliegue
+WSGI, y por eso los puntos marcados "solo WSGI" siguen abiertos en vez de
+descartados. La app tal como se ejecuta hoy (`app.run` en 127.0.0.1, monoproceso,
+sin `threaded=True`) no los alcanza.

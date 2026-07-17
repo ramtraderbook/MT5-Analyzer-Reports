@@ -7,8 +7,13 @@ Opens http://localhost:5000 in the default browser.
 """
 
 import glob
+import hashlib
+import hmac
 import json
+import logging
+import math
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -18,6 +23,7 @@ from urllib.parse import quote, unquote
 
 from flask import (
     Flask,
+    abort,
     jsonify,
     flash,
     redirect,
@@ -60,6 +66,8 @@ from incubation_domain import (
 # Setup
 # ─────────────────────────────────────────────────────────────────────────────
 
+logger = logging.getLogger(__name__)
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
 STATIC_DIR = os.path.join(APP_DIR, "static")
@@ -91,7 +99,8 @@ os.makedirs(os.path.join(APP_DIR, "test_data"), exist_ok=True)
 # Evita recalcular calculate_all_metrics() en cada llamada API del dashboard.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_metrics_cache: dict = {}  # { cache_key: {"ts": float, "result": dict} }
+_metrics_cache: dict = {}  # { "cache_key:config_hash": {"ts": float, "result": dict} }
+_metrics_cache_lock = threading.Lock()
 _METRICS_TTL = 120  # segundos
 LIVE_CACHE_PREFIX = "cache_"
 ANALYSIS_MODES = {
@@ -115,28 +124,42 @@ INCUBATION_CONFIG_DEFAULT = {
 }
 
 
+def _config_metrics_hash(config: dict) -> str:
+    """Stable hash of the config subset that affects computed metrics."""
+    payload = json.dumps(config.get("mappings", {}), sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _get_metrics_cached(parsed_data: dict, config: dict) -> dict:
     """
     Devuelve calculate_all_metrics() desde cache si sigue vigente.
-    La clave es el cache_key de sesión + hash ligero del config.
-    Se invalida automáticamente al subir un nuevo archivo (nuevo cache_key).
+    La clave combina el cache_key de sesión con un hash del config que
+    afecta a las métricas (mappings): un config reemplazado produce una
+    clave distinta y nunca puede servir una entrada calculada con el
+    config anterior -- en ningún proceso/worker, sin depender de que cada
+    call site recuerde invalidar.
     """
     from metrics import calculate_all_metrics
 
     cache_key = session.get("cache_key", "__no_key__")
+    combined_key = f"{cache_key}:{_config_metrics_hash(config)}"
     now = time.time()
 
-    entry = _metrics_cache.get(cache_key)
+    with _metrics_cache_lock:
+        entry = _metrics_cache.get(combined_key)
     if entry and (now - entry["ts"]) < _METRICS_TTL:
         return entry["result"]
 
+    # Slow computation stays outside the lock.
     result = calculate_all_metrics(parsed_data, config)
-    _metrics_cache[cache_key] = {"ts": now, "result": result}
 
-    # Limpiar entradas viejas (evitar memoria ilimitada)
-    stale = [k for k, v in _metrics_cache.items() if now - v["ts"] > _METRICS_TTL * 10]
-    for k in stale:
-        del _metrics_cache[k]
+    with _metrics_cache_lock:
+        _metrics_cache[combined_key] = {"ts": now, "result": result}
+
+        # Limpiar entradas viejas (evitar memoria ilimitada)
+        stale = [k for k, v in _metrics_cache.items() if now - v["ts"] > _METRICS_TTL * 10]
+        for k in stale:
+            _metrics_cache.pop(k, None)
 
     return result
 
@@ -144,7 +167,11 @@ def _get_metrics_cached(parsed_data: dict, config: dict) -> dict:
 def invalidate_metrics_cache():
     """Llamar tras subir un nuevo archivo para forzar recálculo."""
     cache_key = session.get("cache_key", "__no_key__")
-    _metrics_cache.pop(cache_key, None)
+    prefix = f"{cache_key}:"
+    with _metrics_cache_lock:
+        stale = [k for k in _metrics_cache if k.startswith(prefix)]
+        for k in stale:
+            _metrics_cache.pop(k, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,6 +199,43 @@ def inject_analysis_mode():
         "analysis_mode_switch_target": switch_target,
         "analysis_mode_switch_label": ANALYSIS_MODES[switch_target],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CSRF protection (dependency-free, session-bound token)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _get_csrf_token():
+    """Return this session's CSRF token, creating one on first use."""
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_hex(32)
+        session["csrf_token"] = token
+    return token
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": _get_csrf_token}
+
+
+def _tokens_match(expected, provided):
+    # compare_digest raises TypeError on non-ASCII str, and `provided` is
+    # client-supplied -- compare raw bytes so a junk token is rejected, not a 500.
+    return hmac.compare_digest(expected.encode("utf-8"), provided.encode("utf-8"))
+
+
+@app.before_request
+def _enforce_csrf():
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+
+    expected = session.get("csrf_token")
+    provided = request.form.get("csrf_token") or request.headers.get("X-CSRFToken", "")
+    if not expected or not provided or not _tokens_match(expected, provided):
+        abort(400)
+    return None
 
 
 def save_config(config):
@@ -299,13 +363,29 @@ def _delete_cache_file(cache_key, prefix):
             pass
 
 
+def _atomic_write_json(path, data):
+    """Write JSON to `path` without ever leaving a truncated file on disk."""
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def save_cache(data):
     """Save parsed data to a cache file. Returns the cache key."""
     cache_key = str(uuid.uuid4())
     cache_path = _cache_file_path(cache_key, LIVE_CACHE_PREFIX)
     serialized = _serialize_parsed_data(data)
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(serialized, f, default=str)
+    _atomic_write_json(cache_path, serialized)
     return cache_key
 
 
@@ -318,9 +398,17 @@ def load_cache(cache_key):
         return None
     try:
         with open(cache_path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("load_cache: %s is corrupt (%s)", cache_path, exc)
         return None
+    # Mark this file as actively used so cleanup_old_caches() never reaps a
+    # dataset that is still being read, regardless of when it was written.
+    try:
+        os.utime(cache_path, None)
+    except OSError:
+        pass
+    return data
 
 
 def save_incubation_cache(data):
@@ -328,8 +416,7 @@ def save_incubation_cache(data):
     cache_key = str(uuid.uuid4())
     cache_path = _cache_file_path(cache_key, INCUBATION_CACHE_PREFIX)
     serialized = _serialize_parsed_data(data)
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(serialized, f, default=str)
+    _atomic_write_json(cache_path, serialized)
     return cache_key
 
 
@@ -342,13 +429,34 @@ def load_incubation_cache(cache_key):
         return None
     try:
         with open(cache_path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("load_incubation_cache: %s is corrupt (%s)", cache_path, exc)
         return None
+    try:
+        os.utime(cache_path, None)
+    except OSError:
+        pass
+    return data
 
 
-def cleanup_old_caches():
-    """Delete cache files older than 2 hours."""
+def cleanup_old_caches(keep_live_key=None, keep_incubation_key=None):
+    """
+    Delete cache files older than 2 hours.
+
+    Cache files backing the CURRENT session (`keep_live_key` /
+    `keep_incubation_key`) are never deleted here, no matter their mtime --
+    an actively used dataset must survive a re-upload made more than 2h
+    after the previous one.
+    """
+    protected_paths = set()
+    if keep_live_key:
+        protected_paths.add(_cache_file_path(keep_live_key, LIVE_CACHE_PREFIX))
+        protected_paths.add(_legacy_cache_file_path(keep_live_key, LIVE_CACHE_PREFIX))
+    if keep_incubation_key:
+        protected_paths.add(_cache_file_path(keep_incubation_key, INCUBATION_CACHE_PREFIX))
+        protected_paths.add(_legacy_cache_file_path(keep_incubation_key, INCUBATION_CACHE_PREFIX))
+
     patterns = [
         os.path.join(CACHE_DIR, f"{LIVE_CACHE_PREFIX}*.json"),
         os.path.join(CACHE_DIR, f"{INCUBATION_CACHE_PREFIX}*.json"),
@@ -357,6 +465,8 @@ def cleanup_old_caches():
     ]
     for pattern in patterns:
         for f in glob.glob(pattern):
+            if f in protected_paths:
+                continue
             try:
                 if time.time() - os.path.getmtime(f) > 7200:
                     os.remove(f)
@@ -374,6 +484,11 @@ def get_display_label(ea_name, config):
     magic = mapping.get("magic")
     alias = mapping.get("alias", "") or ea_name
     return f"{magic} - {alias}" if magic else alias
+
+
+def _ea_is_active(ea_name, config):
+    """Same active-flag default used everywhere else: unmapped EAs stay active."""
+    return config.get("mappings", {}).get(ea_name, {}).get("active", True)
 
 
 def build_sidebar_eas(parsed_data, config, active_ea=None):
@@ -404,6 +519,34 @@ def get_incubation_parsed_data():
     """Get parsed data from the incubation session cache, or None."""
     cache_key = session.get("incubation_cache_key")
     return load_incubation_cache(cache_key)
+
+
+def _apply_capital_value(entry, capital_val, ea_name):
+    """
+    Parse a submitted capital value into `entry["capital"]`.
+
+    Matches the magic-number policy: an invalid, non-positive or non-finite
+    submission never clobbers a previously saved value -- it just keeps
+    whatever was there (or the 5000.0 default for a brand-new EA) and warns
+    the user by name instead of silently corrupting every capital-scaled
+    metric downstream.
+    """
+    if not capital_val:
+        entry.setdefault("capital", 5000.0)
+        return
+
+    try:
+        parsed_capital = float(capital_val)
+    except ValueError:
+        parsed_capital = None
+
+    if parsed_capital is not None and math.isfinite(parsed_capital) and parsed_capital > 0:
+        entry["capital"] = parsed_capital
+    else:
+        had_previous = "capital" in entry
+        entry.setdefault("capital", 5000.0)
+        kept = "se mantiene el valor anterior" if had_previous else "se usa el valor por defecto"
+        flash(f"Capital inválido para {ea_name}, {kept} ({entry['capital']:g}).", "warn")
 
 
 def build_mapping_rows(parsed_data, config):
@@ -708,7 +851,6 @@ def _merge_changed_content(existing_trades: list, merged_trades: list) -> bool:
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    cleanup_old_caches()
     analysis_mode = _normalize_analysis_mode(request.form.get("analysis_mode"))
     session["analysis_mode"] = analysis_mode
 
@@ -750,6 +892,12 @@ def upload():
         inc_config = load_incubation_config()
         existing_inc_data = get_incubation_parsed_data()
         old_inc_cache_key = session.get("incubation_cache_key")
+        # Run stale-cache GC only after the current session's own data was
+        # read, and never let it delete the file that read just came from.
+        cleanup_old_caches(
+            keep_live_key=session.get("cache_key"),
+            keep_incubation_key=old_inc_cache_key,
+        )
         added_count_inc = len(new_data["closed_trades"])
 
         if existing_inc_data:
@@ -772,7 +920,7 @@ def upload():
             _delete_cache_file(old_inc_cache_key, INCUBATION_CACHE_PREFIX)
 
         session["incubation_cache_key"] = incubation_cache_key
-        session["filename"] = safe_name
+        session["incubation_filename"] = safe_name
 
         loaded_files_inc = inc_config.get("loaded_files_incubation", [])
         loaded_files_inc.append({
@@ -791,6 +939,12 @@ def upload():
     config = load_config()
     existing_data = get_parsed_data()
     old_cache_key = session.get("cache_key")  # track to delete after merge
+    # Run stale-cache GC only after the current session's own data was read,
+    # and never let it delete the file that read just came from.
+    cleanup_old_caches(
+        keep_live_key=old_cache_key,
+        keep_incubation_key=session.get("incubation_cache_key"),
+    )
     added_count = len(new_data["closed_trades"])
 
     if existing_data:
@@ -852,6 +1006,10 @@ def upload():
 @app.route("/reset", methods=["POST"])
 def reset_history():
     """Clear live trade history (trades + file log). Keeps mappings and BT data."""
+    guard = _require_live_mode()
+    if guard:
+        return guard
+
     cache_key = session.get("cache_key")
     _delete_cache_file(cache_key, LIVE_CACHE_PREFIX)
 
@@ -871,6 +1029,10 @@ def reset_history():
 @app.route("/reset_all_live", methods=["POST"])
 def reset_all_live():
     """Full live reset: clears trades, file log, mappings, and validator BT data."""
+    guard = _require_live_mode()
+    if guard:
+        return guard
+
     cache_key = session.get("cache_key")
     _delete_cache_file(cache_key, LIVE_CACHE_PREFIX)
 
@@ -899,7 +1061,7 @@ def _clear_incubation_session_cache():
     _delete_cache_file(incubation_cache_key, INCUBATION_CACHE_PREFIX)
 
     session.pop("incubation_cache_key", None)
-    session.pop("filename", None)
+    session.pop("incubation_filename", None)
 
 
 @app.route("/incubation/reset", methods=["POST"])
@@ -961,7 +1123,7 @@ def incubation_mapping():
         "incubation_mapping.html",
         ea_list=ea_list,
         account=parsed_data.get("account", {}),
-        filename=session.get("filename", ""),
+        filename=session.get("incubation_filename", ""),
         unknown_trades=parsed_data.get("unknown_trades", 0),
         show_sidebar=False,
         active_page="incubation_mapping",
@@ -1013,13 +1175,7 @@ def mapping_save():
         entry = dict(existing)
         if instrument_val:
             entry["instrument"] = instrument_val
-        if capital_val:
-            try:
-                entry["capital"] = float(capital_val)
-            except ValueError:
-                entry["capital"] = 5000.0
-        else:
-            entry.setdefault("capital", 5000.0)
+        _apply_capital_value(entry, capital_val, ea_name)
 
         if magic_val:
             try:
@@ -1065,13 +1221,7 @@ def incubation_mapping_save():
 
         if instrument_val:
             entry["instrument"] = instrument_val
-        if capital_val:
-            try:
-                entry["capital"] = float(capital_val)
-            except ValueError:
-                entry["capital"] = 5000.0
-        else:
-            entry.setdefault("capital", 5000.0)
+        _apply_capital_value(entry, capital_val, ea_name)
 
         if magic_val:
             try:
@@ -1132,7 +1282,7 @@ def incubation_reference_data():
         loaded_count=sum(1 for row in rows if row["has_data"]),
         show_sidebar=False,
         active_page="incubation_reference_data",
-        filename=session.get("filename", ""),
+        filename=session.get("incubation_filename", ""),
     )
 
 
@@ -1180,7 +1330,7 @@ def incubation_reference_edit(ea_name):
         errors={},
         show_sidebar=False,
         active_page="incubation_reference_data",
-        filename=session.get("filename", ""),
+        filename=session.get("incubation_filename", ""),
     )
 
 
@@ -1213,7 +1363,7 @@ def incubation_reference_save(ea_name):
             errors=errors,
             show_sidebar=False,
             active_page="incubation_reference_data",
-            filename=session.get("filename", ""),
+            filename=session.get("incubation_filename", ""),
         )
 
     store = load_incubation_store()
@@ -1415,7 +1565,7 @@ def incubation_strategy(ea_name):
         reset_url=url_for("incubation_reset_checkpoints", ea_name=ea_name),
         show_sidebar=True,
         active_page="incubation_dashboard",
-        filename=session.get("filename", ""),
+        filename=session.get("incubation_filename", ""),
     )
 
 
@@ -1440,7 +1590,7 @@ def incubation_dashboard():
         sin_datos_count=dashboard_data["sin_datos_count"],
         show_sidebar=True,
         active_page="incubation_dashboard",
-        filename=session.get("filename", ""),
+        filename=session.get("incubation_filename", ""),
     )
 
 
@@ -1618,6 +1768,10 @@ def strategy(name):
         return redirect(url_for("index"))
 
     config = load_config()
+    if not _ea_is_active(ea_name, config):
+        flash("Esa estrategia está desactivada.", "warn")
+        return redirect(url_for("dashboard"))
+
     ea_trades = [
         t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
     ]
@@ -1741,13 +1895,40 @@ def export():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+DAYS_PARAM_MAX = 36500  # ~100 years -- generous upper bound, blocks OverflowError
+
+
+def _validated_days_param():
+    """
+    Parse the optional `days` query arg shared by chart endpoints.
+    Returns (days, error_response): `error_response` is a ready-to-return
+    (jsonify(...), status) pair on invalid input, or None when `days` is
+    absent (both None) or a valid positive int within DAYS_PARAM_MAX.
+    """
+    raw = request.args.get("days")
+    if raw is None:
+        return None, None
+
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return None, (jsonify({"error": "Parámetro 'days' inválido"}), 400)
+
+    if not (1 <= days <= DAYS_PARAM_MAX):
+        return None, (jsonify({"error": "Parámetro 'days' fuera de rango"}), 400)
+
+    return days, None
+
+
 @app.route("/api/equity_curves")
 def api_equity_curves():
     parsed_data = get_parsed_data()
     if not parsed_data:
         return jsonify({"error": "No hay datos cargados"}), 400
 
-    days_param = request.args.get("days", type=int)
+    days_param, days_error = _validated_days_param()
+    if days_error:
+        return days_error
 
     config = load_config()
     all_metrics = _get_metrics_cached(parsed_data, config)
@@ -1806,7 +1987,9 @@ def api_drawdown_curves():
     if not parsed_data:
         return jsonify({"error": "No hay datos cargados"}), 400
 
-    days_param = request.args.get("days", type=int)
+    days_param, days_error = _validated_days_param()
+    if days_error:
+        return days_error
 
     config = load_config()
     from metrics import calculate_all_metrics
@@ -1896,9 +2079,14 @@ def api_ea_equity(name):
     if not parsed_data:
         return jsonify({"error": "No hay datos cargados"}), 400
 
-    days_param = request.args.get("days", type=int)
+    days_param, days_error = _validated_days_param()
+    if days_error:
+        return days_error
 
     config = load_config()
+    if not _ea_is_active(ea_name, config):
+        return jsonify({"error": "EA inactiva"}), 404
+
     ea_trades = [
         t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
     ]
@@ -1933,6 +2121,9 @@ def api_ea_pnl_data(name):
         return jsonify({"error": "No hay datos cargados"}), 400
 
     config = load_config()
+    if not _ea_is_active(ea_name, config):
+        return jsonify({"error": "EA inactiva"}), 404
+
     ea_trades = [
         t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
     ]
@@ -2013,7 +2204,9 @@ def api_incubation_ea_equity(name):
     if not parsed_data:
         return jsonify({"error": "No hay datos de incubación cargados"}), 400
 
-    days_param = request.args.get("days", type=int)
+    days_param, days_error = _validated_days_param()
+    if days_error:
+        return days_error
 
     config = load_incubation_config()
     ea_trades = [
@@ -2289,6 +2482,9 @@ def api_rolling_metrics(name):
         return jsonify({"error": "No data"}), 400
 
     config = load_config()
+    if not _ea_is_active(ea_name, config):
+        return jsonify({"error": "EA inactiva"}), 404
+
     ea_trades = [
         t for t in parsed_data.get("closed_trades", []) if t.get("comment") == ea_name
     ]
