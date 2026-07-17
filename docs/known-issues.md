@@ -347,3 +347,146 @@ silencio— se corrigieron. Lo que sigue quedó registrado y no tocado.
   cinco contadores a la plantilla y esos tres no se renderizan. `pending_count`
   además mezcla dos significados: EAs sin datos de referencia y EAs con veredicto
   PENDING.
+
+## 13. Frontend — hallazgos auditados y no corregidos (JD-6)
+
+La auditoría JD-6 revisó `templates/*.html` y `static/charts.js` con dos jueces
+ciegos (`style.css` quedó fuera de alcance). Se corrigieron el escape XSS del
+chip de correlación, el colapso `0 or ''` en `validator_input.html`, el
+formulario de borrado anidado dentro del de guardado, la contradicción de la
+leyenda CP2, el Jinja crudo dentro de manejadores de eventos JS inline, los
+gráficos que quedaban obsoletos con rangos vacíos, la carrera de respuestas
+fuera de orden, el PF rolling en 0.0 renderizado como hueco, el "Score: None",
+el centinela de PF en 1e9 y la leyenda de veredicto que omitía los overrides
+duros. Lo que sigue quedó registrado y no tocado.
+
+- **"+ Agregar EA" fue eliminado, no arreglado**. El botón en
+  `templates/validator.html` apuntaba a
+  `url_for('validator_edit', magic='nuevo')`; `validator_edit` indexa el store
+  exclusivamente por el parámetro de ruta de la URL
+  (`store[str(magic)] = new_entry`, `ea_analyzer.py:2483`), y el formulario no
+  tiene ningún campo `magic`, así que todo lo que el usuario tipeaba caía en
+  `validator_store.json['nuevo']` y nunca lo mostraba la tabla del validador
+  (que solo busca entradas del store por el magic entero de un mapping).
+  Verificado: cero inputs `name="magic"` en el formulario. Como JD-6 estaba
+  acotada a frontend, el punto de entrada roto se **eliminó** para que no siga
+  comiéndose datos en silencio.
+
+  **Para destrabar**: `validator_edit` tiene que leer el magic de un campo del
+  formulario (`request.form.get('magic')`) y validarlo contra los mappings
+  existentes; recién ahí pueden volver el botón y un input de magic. La
+  funcionalidad de "agregar EA a mano" hoy está **ausente** de la UI — es un
+  trade-off deliberado y reversible, y es el punto más importante de esta
+  sección.
+
+- **Los puntos de color del sidebar nunca se pintan**
+  (`templates/base.html:109-111`). La plantilla lee `ea.color` para
+  `--ea-color` y el fondo del punto, pero `build_sidebar_eas`
+  (`ea_analyzer.py:495-510`) solo emite `name`/`label`/`url`/`active` — `color`
+  nunca está en el dict, así que el punto se renderiza sin color en toda
+  página con sidebar. `all_metrics` ya calcula `ea_colors`
+  (`ea_analyzer.py:1743`) pero nunca lo mergea. Requiere un cambio de backend,
+  fuera del alcance de JD-6.
+
+- **Inyección de fórmulas en el export** (`templates/export.html:71-109`).
+  `copyExportTable`/`downloadCSV` exportan el texto crudo de las celdas,
+  incluido el nombre del EA, que viene del comment del trade en el archivo
+  subido, sin sanitizar (`parser.py:551`). Un nombre que empiece con `=`, `+`,
+  `-` o `@` se convierte en fórmula viva al pegarlo o abrirlo en Excel. El
+  camino CSV entrecomilla pero no neutraliza el operador inicial. Se dejó
+  porque el arreglo pertenece a una decisión más amplia sobre sanitizar
+  nombres de EA en el borde del parser, no en cada sink por separado.
+
+  **Para cerrarlo**: prefijar esas celdas con `'` o quitar el operador inicial
+  al exportar.
+
+- **El export copia 12 columnas pero la instrucción dice 10**
+  (`templates/export.html:8-9` vs `:43-54`). La página dice "Copia estos
+  valores en las columnas AC–AL" (10 columnas) mientras el botón de copiar
+  copia 12 (incluye Magic y Nombre), así que seguir la instrucción al pie de
+  la letra desalinea cada métrica dos columnas. Cosmético pero engañoso;
+  necesita una decisión de producto sobre cuál de las dos es la correcta.
+
+- **El ordenamiento de tablas rompe las fechas** (`static/charts.js`,
+  `sortTableByColumn`). La función quita `[$%,+∞]` y hace `parseFloat` de la
+  celda, así que una fecha `dd/mm/yyyy HH:MM`
+  (`strategy.html:386-387`, `incubation_strategy.html:497-498`, formateada por
+  `ea_analyzer.py:1850-1858`) se interpreta como su día del mes —
+  `02/09/2025` ordena antes que `16/03/2025`. Las celdas `∞` y `N/A` además
+  caen a un `localeCompare` contra celdas numéricas, un comparador
+  inconsistente.
+
+  **Para cerrarlo**: emitir valores ISO en atributos `data-*` y ordenar sobre
+  esos.
+
+- **Los dos selectores de rango de `strategy.html` mienten**
+  (`templates/strategy.html:453-458`, lo mismo en
+  `incubation_strategy.html:563-568`). Los gráficos de equity y drawdown
+  tienen cada uno su propio selector de rango, pero ambos callbacks
+  re-renderizan LOS DOS gráficos (`renderEAEquity` escribe en los divs de
+  equity y de dd), mientras que la clase "activo" solo se setea en el
+  selector clickeado (`charts.js`). Al clickear 7D en uno cambian los dos
+  gráficos, pero el otro selector sigue marcando ALL — su propio estado
+  activo contradice a su propio gráfico. Necesita una decisión: un selector
+  compartido, o dos genuinamente independientes.
+
+- **`if (!res.ok) return;` se traga todos los errores HTTP** (`static/charts.js`,
+  ~9 sitios de llamada). Un fetch fallido o con sesión expirada deja el
+  gráfico en blanco u obsoleto sin nada mostrado al usuario; el propio
+  `400 "No hay datos cargados"` del backend (`ea_analyzer.py:1986-1988`)
+  nunca se muestra. JD-6 arregló el caso de DATOS vacíos (ahora hay un mensaje
+  explícito "sin datos en este rango") pero dejó deliberadamente el caso de
+  ERROR vacío, porque un buen arreglo necesita una decisión consistente de
+  superficie de error para todos los gráficos.
+
+- **Umbrales de negocio duplicados en las plantillas**. Los dos jueces lo
+  marcaron de forma independiente. Las tarjetas explicativas hardcodean
+  constantes que viven en el motor: los cortes de color de SQN 2.0/1.6
+  (`dashboard.html:126-142`, `strategy.html:130-146`,
+  `incubation_strategy.html:263-268` vs `metrics.py:37-45`); los umbrales de
+  trades de checkpoint 5/20/40 y los cortes de CP3 65/45
+  (`incubation_strategy.html:44-49,75-76` e
+  `incubation_dashboard.html:88-153` vs `incubation_domain.py:353-360`,
+  `incubation_validator.py:830-835`); los hard gates "DD > MC95 × 1.5" y
+  "p < 0.03" (`incubation_validator.py:342-346`). Todos coinciden HOY con el
+  motor — JD-6 verificó cada uno — pero nada los mantiene sincronizados. La
+  leyenda de CP2 que corrigió JD-6 es exactamente esta clase de bug ya
+  habiendo derivado una vez, que es la razón por la que esto queda en la
+  lista.
+
+  **Para cerrarlo**: pasar los umbrales desde el backend al contexto de la
+  plantilla.
+
+- **La banda "50%" del WFE no existe en el código**
+  (`templates/validator.html:480-485`). La tarjeta de info de WFE inventa un
+  límite "Aceptable/Degradación" en 50% y omite el caso `>120 → ALERTA`,
+  mientras que las bandas reales son `>=70 OK`, `30–70 ALERTA`, `<30 FUERA`,
+  `>120 ALERTA` (`validator.py:673-681`). La leyenda no se corrigió porque la
+  redacción de la tarjeta necesita una decisión de producto, no solo un
+  cambio de números.
+
+- **Campos que el backend manda y el frontend ignora**. `ea.label` se envía
+  pero la tabla de EAs del dashboard renderiza el `ea.name` crudo
+  (`dashboard.html:313` vs `ea_analyzer.py:1753`) — inconsistente con el
+  sidebar y los gráficos, que usan el alias. `streak_data[].color` se envía y
+  se recalcula del lado del cliente (`charts.js:475`). `long_wins`/`short_wins`
+  se envían y nunca se usan. `observar_count`/`continuar_count`/`pending_count`
+  se calculan y nunca se pasan a la plantilla (ya registrado en §12).
+
+- **Menores verificados**: `templates/incubation_reference_data.html` es
+  código muerto — ninguna ruta lo renderiza (el endpoint
+  `incubation_reference_data` renderiza `incubation_reference.html`,
+  `ea_analyzer.py:1332-1340`). `validator.html:409` usa `colspan="11"` en una
+  tabla de 12 columnas. `incubation_strategy.html:444` renderiza el timestamp
+  ISO crudo con microsegundos mientras toda otra fecha de la página es
+  `dd/mm/yyyy`. `base.html:10,183` hace cache-busting de css/js con
+  `?v={{ range(10000,99999)|random }}`, regenerado en cada request, lo que
+  anula el cacheo del navegador de forma permanente. `charts.js:586`
+  hardcodea la etiqueta del eje "Hora (UTC)" mientras las horas vienen de
+  datetimes naive del servidor del broker sin ninguna conversión de zona
+  horaria en todo el pipeline — la etiqueta afirma una zona horaria que el
+  dato no garantiza (no se puede probar solo con el código; hace falta el
+  offset del broker).
+  También: `static/style.css:3489-3494` sigue cargando las reglas
+  `.val-add-bt-link`, ya muertas, que dejó la eliminación del punto 1 —
+  `style.css` estaba fuera del alcance de JD-6.
