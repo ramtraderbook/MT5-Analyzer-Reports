@@ -113,10 +113,10 @@
         <button
             type="submit"
             class="btn-secondary"
+            id="ref-btn-delete"
             form="delete-reference-form"
             formmethod="POST"
             formaction="{{ url_for('incubation_reference_delete', ea_name=ea_name) }}"
-            onclick="return confirm('¿Eliminar los datos de referencia de {{ ea_name }}?')"
         >
             Delete
         </button>
@@ -131,6 +131,16 @@
 
 {% block scripts %}
 <script>
+const REF_EA_NAME = {{ ea_name | tojson }};
+const refDeleteBtn = document.getElementById("ref-btn-delete");
+if (refDeleteBtn) {
+    refDeleteBtn.addEventListener("click", function (e) {
+        if (!confirm("¿Eliminar los datos de referencia de " + REF_EA_NAME + "?")) {
+            e.preventDefault();
+        }
+    });
+}
+
 function parseLocaleNumber(value) {
     if (value === null || value === undefined) return null;
     var text = String(value).trim();
