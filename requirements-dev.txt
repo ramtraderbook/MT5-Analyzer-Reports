@@ -1,0 +1,7 @@
+# Dependencias sólo de test. Producción: ver requirements.txt.
+-r requirements.txt
+
+# Arnés de verdad ejecutable (tests/oracle/)
+hypothesis>=6.150.0          # capa 2: tests basados en propiedades
+empyrical-reloaded>=0.5.11   # capa 3: oráculo independiente de Sharpe
+pytz>=2024.1                 # dependencia transitiva de empyrical
