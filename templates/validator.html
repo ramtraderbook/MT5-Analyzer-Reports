@@ -327,16 +327,16 @@
                     <td class="th-center">
                         {% if a.sin_datos %}
                         <span class="val-nd">—</span>
-                        {% elif a.live_vs_bt_ratio is not none %}
+                        {% elif a.live_vs_bt_profit_ratio is not none %}
                         <div class="val-lvb-cell">
                             <span
-                                class="val-lvb-pct val-lvb-{{ a.live_vs_bt_status | lower }}"
+                                class="val-lvb-pct val-lvb-{{ a.live_vs_bt_profit_status | lower }}"
                             >
-                                {{ "%.0f"|format(a.live_vs_bt_ratio) }}%
+                                {{ "%.0f"|format(a.live_vs_bt_profit_ratio) }}%
                             </span>
-                            {% if a.live_vs_bt_ratio > 120 %}
+                            {% if a.live_vs_bt_profit_ratio > 120 %}
                             <span class="val-lvb-note">↑ BT: posible sobreajuste</span>
-                            {% elif a.live_vs_bt_ratio < 30 %}
+                            {% elif a.live_vs_bt_profit_ratio < 30 %}
                             <span class="val-lvb-note">↓ BT</span>
                             {% endif %}
                         </div>

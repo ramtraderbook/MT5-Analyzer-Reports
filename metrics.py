@@ -42,6 +42,21 @@ MIN_TRADES_FOR_BOOTSTRAP = 20
 # question) and must not be smuggled in here.
 RUIN_THRESHOLDS_PCT = (10.0, 20.0, 30.0, 50.0)
 
+# Bounds calculate_bootstrap_risk's peak allocation regardless of n or
+# iterations. The previous all-at-once formulation peaked at 1121 MB at
+# n=2000, iterations=10000 (measured with tracemalloc) -- ~7x the size of a
+# single (iterations, n+1) array, because ~7 full-size arrays were
+# co-resident (see calculate_bootstrap_risk's body for the accounting). 64 MB
+# keeps a chunk comfortably small without making the loop overhead dominate
+# at realistic n.
+#
+# Re-measured with tracemalloc after chunking, same iterations=10000, seed=42
+# (docs/known-issues.md §7): n=50 -> 27 MB peak (fits in one chunk, same as
+# before -- the budget never forces chunking for small n), n=200 -> 67 MB,
+# n=500 -> 73 MB, n=2000 -> 73 MB. Peak plateaus near the budget instead of
+# growing with n; it never approaches the previous 1121 MB.
+BOOTSTRAP_MEMORY_BUDGET_MB = 64
+
 
 EA_COLORS = [
     "#4FC3F7",
@@ -210,24 +225,32 @@ def calculate_bootstrap_risk(
       value and the tail is structurally unreachable. Do not shuffle.
     - Each simulated path's running peak floors at 0 and its drawdown % uses
       (capital + peak_pnl) as the denominator -- the SAME convention as
-      _calc_max_drawdown (metrics.py:154), by prepending a 0.0 anchor column
+      _calc_max_drawdown (metrics.py:194), by prepending a 0.0 anchor column
       before the cumulative sum, mirroring how _build_equity_curve/
       _calc_max_drawdown start from an implicit 0 P&L point. This consistency
       is the point: it lets a differential test compare the two directly.
+    - Paths are drawn in CHUNKS from a single `rng` created once up front, so
+      the draw stream -- and therefore every result -- is identical to drawing
+      all `iterations` paths at once; only peak memory changes. See
+      BOOTSTRAP_MEMORY_BUDGET_MB below for why.
 
-    Returns None (the repo's established "not estimable" shape -- see
-    _calc_sharpe/_calc_sqn) when:
-    - net_pnl_list is empty/None or has fewer than MIN_TRADES_FOR_BOOTSTRAP
-      trades,
-    - capital <= 0 (deliberately NOT the silent 0.0 that _calc_max_drawdown's
-      `peak_abs > 0 else 0.0` guard produces -- docs/known-issues.md:194-195
-      records that as a known, uncorrected defect; reproducing a known defect
-      in new code would be inexcusable),
-    - the input contains any NaN/inf (never silently propagated -- see
-      docs/known-issues.md §"A2" for what happens elsewhere in this repo when
-      a NaN is allowed to evaporate silently instead).
+    Returns a dict with `"available": False` and a `"reason"` string (the
+    repo's SIN DATOS convention -- see _calc_sqn) when:
+    - net_pnl_list is empty/None ("sin trades"),
+    - fewer than MIN_TRADES_FOR_BOOTSTRAP trades ("insuficientes datos"),
+    - capital <= 0 ("capital no positivo" -- deliberately NOT the silent 0.0
+      that _calc_max_drawdown's `peak_abs > 0 else 0.0` guard produces;
+      reproducing a known, uncorrected defect in new code would be
+      inexcusable),
+    - the input contains any NaN/inf ("valores no finitos" -- never silently
+      propagated, see docs/known-issues.md §"A2" for what happens elsewhere in
+      this repo when a NaN is allowed to evaporate silently instead),
+    - iterations < 1 ("iterations invalido" -- np.percentile on an empty array
+      would otherwise raise, breaking this function's own "not estimable ->
+      structured absence" contract; iterations == 1 is degenerate but valid
+      and DOES run).
 
-    Otherwise returns a dict:
+    Otherwise returns a dict with `"available": True` plus:
         max_dd_pct_p50 / _p95 / _p99: percentile bands of simulated max DD%.
         ruin_probability: {threshold: fraction of paths whose max DD% breached
             it} for each of RUIN_THRESHOLDS_PCT -- a set of thresholds, not one
@@ -239,49 +262,88 @@ def calculate_bootstrap_risk(
 
     DELIBERATELY NOT WIRED -- this is NOT dead code, and the distinction from
     _calc_risk_of_ruin (deleted for having zero call sites, pinned by
-    tests/test_metrics.py:393-397) is recorded in docs/known-issues.md §7.
-    Three reasons, all verified, none of them inertia:
-    - COST: measured 16ms/50 trades, 102ms/500, 474ms and ~160MB peak at 2000
-      -- per EA. calculate_ea_metrics runs in the Flask request path; making
-      every metrics call pay that is not acceptable for a capability nothing
-      currently consumes.
-    - CONTRACT: tests/oracle/test_char_metrics.py pins set-equality on
-      calculate_ea_metrics' 41 output keys. Adding a key is a deliberate
-      contract change, not a side effect of adding a capability.
-    - POLICY: wiring it into validator.py would change ELIMINAR/CONTINUAR
-      verdicts on real EAs. docs/known-issues.md §1 is blocked on real data
-      for exactly that class of calibration. Build the capability; let the
-      decision to use it be made deliberately, with data.
+    tests/test_metrics.py:393-397) is a deliberate capability with zero
+    consumers today. Full rationale (COST/CONTRACT/POLICY) lives in
+    docs/known-issues.md §7 -- read it there, not here, so the two never
+    drift out of sync.
     """
     if not net_pnl_list:
-        return None
+        return {"available": False, "reason": "sin trades"}
 
     n = len(net_pnl_list)
     if n < MIN_TRADES_FOR_BOOTSTRAP:
-        return None
+        return {
+            "available": False,
+            "reason": f"insuficientes datos (n={n} < {MIN_TRADES_FOR_BOOTSTRAP})",
+        }
 
     if capital is None or capital <= 0:
-        return None
+        return {"available": False, "reason": "capital no positivo"}
 
     arr = np.array(net_pnl_list, dtype=float)
     if not np.all(np.isfinite(arr)):
-        return None
+        return {"available": False, "reason": "valores no finitos"}
+
+    # iterations < 1 would otherwise reach np.percentile on an empty array
+    # (iterations == 0) or rng.choice with a negative size (iterations < 0),
+    # both raising instead of honoring this function's own "not estimable ->
+    # structured absence" contract. iterations == 1 is a single, degenerate
+    # path but a perfectly valid bootstrap of size 1 -- it must NOT be
+    # rejected here.
+    if iterations is None or iterations < 1:
+        return {
+            "available": False,
+            "reason": f"iterations invalido ({iterations} < 1)",
+        }
 
     rng = np.random.default_rng(seed)
-    sims = rng.choice(arr, size=(iterations, n), replace=True)
 
-    # Anchor each path at 0.0 before accumulating, matching
-    # _build_equity_curve/_calc_max_drawdown's implicit 0 P&L starting point --
-    # this is what makes the running peak floor at 0 rather than at the first
-    # (possibly negative) resampled trade.
-    anchor = np.zeros((iterations, 1))
-    cum = np.cumsum(np.concatenate([anchor, sims], axis=1), axis=1)
-    peak = np.maximum.accumulate(cum, axis=1)
-    dd_dollar = peak - cum
-    peak_abs = capital + peak  # always > 0: capital > 0 and peak >= 0 by construction
-    dd_pct = dd_dollar / peak_abs * 100.0
+    # Process paths in chunks so peak memory is bounded by
+    # BOOTSTRAP_MEMORY_BUDGET_MB regardless of n or iterations. The previous
+    # all-at-once formulation held six full-size (iterations, n+1) locals
+    # live simultaneously (sims, cum, peak, dd_dollar, peak_abs, dd_pct) plus
+    # the np.concatenate temporary -- measured with tracemalloc at 1121 MB
+    # peak for n=2000, iterations=10000, roughly 7x the size of a single one
+    # of those arrays. "7" below is that measured count of co-resident
+    # full-size arrays, not an exact accounting -- it is used only to size a
+    # chunk, and a wrong guess only wastes or under-uses the budget, it never
+    # produces a wrong result.
+    #
+    # Only per-path maxima are accumulated across chunks (one float per path
+    # -- 10k floats is ~80 KB, negligible), so peak memory no longer grows
+    # with `iterations`. It still grows linearly with `n` (each chunk is
+    # still (chunk_size, n+1)), and wall-clock time still grows with
+    # iterations * n regardless of chunking -- chunking removes the memory
+    # cliff, which was the actual hazard (unbounded RAM can OOM the process),
+    # not the linear time cost (a slow call degrades gracefully; it does not
+    # crash the process). A caller passing a huge n or iterations now pays in
+    # wall-clock time, not in a memory cliff. No arbitrary cap is added on
+    # either -- there is no equivalent hazard to bound.
+    budget_bytes = BOOTSTRAP_MEMORY_BUDGET_MB * 1024 * 1024
+    chunk_size = max(1, int(budget_bytes // (7 * (n + 1) * 8)))
+    chunk_size = min(chunk_size, iterations)
 
-    max_dd_pct_per_path = dd_pct.max(axis=1)
+    max_dd_pct_per_path = np.empty(iterations, dtype=float)
+    start = 0
+    while start < iterations:
+        end = min(start + chunk_size, iterations)
+        m = end - start
+
+        sims = rng.choice(arr, size=(m, n), replace=True)
+
+        # Anchor each path at 0.0 before accumulating, matching
+        # _build_equity_curve/_calc_max_drawdown's implicit 0 P&L starting
+        # point -- this is what makes the running peak floor at 0 rather
+        # than at the first (possibly negative) resampled trade.
+        anchor = np.zeros((m, 1))
+        cum = np.cumsum(np.concatenate([anchor, sims], axis=1), axis=1)
+        peak = np.maximum.accumulate(cum, axis=1)
+        dd_dollar = peak - cum
+        peak_abs = capital + peak  # always > 0: capital > 0, peak >= 0 by construction
+        dd_pct = dd_dollar / peak_abs * 100.0
+
+        max_dd_pct_per_path[start:end] = dd_pct.max(axis=1)
+        start = end
 
     p50, p95, p99 = np.percentile(max_dd_pct_per_path, [50, 95, 99])
 
@@ -291,6 +353,7 @@ def calculate_bootstrap_risk(
     }
 
     return {
+        "available": True,
         "max_dd_pct_p50": round(float(p50), 4),
         "max_dd_pct_p95": round(float(p95), 4),
         "max_dd_pct_p99": round(float(p99), 4),

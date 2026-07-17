@@ -33,7 +33,7 @@ A field is required iff its absence would otherwise alter the verdict through a 
 | Path | Required inputs |
 |---|---|
 | validator (all) | `live.win_rate/profit_factor/payout_ratio/expectancy/max_dd_pct/max_consec_losses/stagnation_days/avg_bars`; `bt.win_rate/profit_factor/payout_ratio/avg_bars/max_consec_losses/trades_total/months`; DD path: `bt.worst_dd_1m` OR (`mc_retest.max_dd` AND `mc_trades.max_dd`); `spp.expectancy_median` |
-| validator (optional) | `bt.stagnation_days` (documented absolute fallback 60/120 days stays); `bt.expectancy` (`live_vs_bt_ratio` is informational, stays N/D-tolerant) |
+| validator (optional) | `bt.stagnation_days` (documented absolute fallback 60/120 days stays); `bt.expectancy` (`live_vs_bt_profit_ratio` is informational, stays N/D-tolerant) |
 | PRE_CP1 | start date (see below); `backtest.total_trades` + parseable `backtest.bt_period` (or `backtest.monthly_frequency`). Unparseable/absent → SIN DATOS naming `backtest.bt_period` — no more perpetual PENDING |
 | CP1 hard gates | `backtest.win_rate`; `mc95.max_dd_pct`; `mc95.max_consec_losses`; live dd/mcl/wr/wins. "mc95.X" = key present in the worst-case bundle, i.e. in at least one provided MC95 section. Frequency check is a WARNING, not a gate: missing period → `frequency.status="SIN DATOS"`, non-blocking |
 | CP2 | CP1 set + per-metric `mc95.<k>` AND `mc50.<k>` for the 7 metrics + the 7 live values. MC50 sections are form-optional but verdict-mandatory: absent MC50 → SIN DATOS naming the `mc50.*` keys (user decision explicitly lists "MC50 section absent" as missing data) |

@@ -410,42 +410,93 @@ def test_calc_risk_of_ruin_no_longer_exists():
 # (docs/known-issues.md §3). No se conecta a validator.py ni
 # incubation_validator.py: es una capacidad standalone.
 
-def test_bootstrap_risk_returns_none_below_min_trades():
-    """n < MIN_TRADES_FOR_BOOTSTRAP -> None, mismo contrato que _calc_sharpe/_calc_sqn."""
-    pnls = [10.0] * (MIN_TRADES_FOR_BOOTSTRAP - 1)
-    assert calculate_bootstrap_risk(pnls, 10000.0) is None
+def test_bootstrap_risk_returns_unavailable_below_min_trades():
+    """n < MIN_TRADES_FOR_BOOTSTRAP -> {"available": False, "reason": ...},
+    el contrato SIN DATOS del repo (ver _calc_sqn) -- NUNCA un `None` desnudo
+    que no distinga esta causa de las otras tres (capital, NaN/inf,
+    iterations)."""
+    n = MIN_TRADES_FOR_BOOTSTRAP - 1
+    pnls = [10.0] * n
+    result = calculate_bootstrap_risk(pnls, 10000.0)
+    assert result == {
+        "available": False,
+        "reason": f"insuficientes datos (n={n} < {MIN_TRADES_FOR_BOOTSTRAP})",
+    }
 
 
 def test_bootstrap_risk_returns_none_at_exactly_min_trades_minus_one_boundary():
-    """El límite es estricto: N-1 -> None, N -> un dict (ver test siguiente)."""
+    """El límite es estricto: N-1 -> no disponible, N -> disponible (ver test siguiente)."""
     pnls = [10.0] * MIN_TRADES_FOR_BOOTSTRAP
-    assert calculate_bootstrap_risk(pnls, 10000.0) is not None
+    result = calculate_bootstrap_risk(pnls, 10000.0)
+    assert result["available"] is True
 
 
 def test_bootstrap_risk_returns_none_for_non_positive_capital():
-    """capital <= 0 -> None explícito, NO el 0.0 silencioso que produce
-    _calc_max_drawdown en el mismo caso (docs/known-issues.md:194-195,
-    "peak_abs <= 0 y el DD% cae silenciosamente a 0.0"). Reproducir ese
-    defecto conocido en código nuevo sería inexcusable."""
+    """capital <= 0 -> {"available": False, "reason": "capital no positivo"},
+    NO el 0.0 silencioso que produce _calc_max_drawdown en el mismo caso
+    (docs/known-issues.md §7, "peak_abs <= 0 y el DD% cae silenciosamente a
+    0.0"). Reproducir ese defecto conocido en código nuevo sería inexcusable."""
     pnls = [10.0] * 25
-    assert calculate_bootstrap_risk(pnls, 0.0) is None
-    assert calculate_bootstrap_risk(pnls, -500.0) is None
+    assert calculate_bootstrap_risk(pnls, 0.0) == {
+        "available": False,
+        "reason": "capital no positivo",
+    }
+    assert calculate_bootstrap_risk(pnls, -500.0) == {
+        "available": False,
+        "reason": "capital no positivo",
+    }
 
 
 def test_bootstrap_risk_returns_none_for_empty_or_none_input():
-    assert calculate_bootstrap_risk([], 10000.0) is None
-    assert calculate_bootstrap_risk(None, 10000.0) is None
+    assert calculate_bootstrap_risk([], 10000.0) == {
+        "available": False,
+        "reason": "sin trades",
+    }
+    assert calculate_bootstrap_risk(None, 10000.0) == {
+        "available": False,
+        "reason": "sin trades",
+    }
 
 
 def test_bootstrap_risk_returns_none_for_nan_or_inf_in_input():
     """Un NaN/inf en la entrada nunca se propaga en silencio — contraparte
     del hallazgo A2 (docs/known-issues.md §7/§"A2"): un net_pnl NaN
     desaparece de winning/losing_trades sin error ni SIN DATOS ahí; acá se
-    corta con None en vez de heredar esa conducta."""
+    corta con `{"available": False, "reason": "valores no finitos"}` en vez
+    de heredar esa conducta."""
     base = [10.0] * 25
-    assert calculate_bootstrap_risk(base + [float("nan")], 10000.0) is None
-    assert calculate_bootstrap_risk(base + [float("inf")], 10000.0) is None
-    assert calculate_bootstrap_risk(base + [float("-inf")], 10000.0) is None
+    expected = {"available": False, "reason": "valores no finitos"}
+    assert calculate_bootstrap_risk(base + [float("nan")], 10000.0) == expected
+    assert calculate_bootstrap_risk(base + [float("inf")], 10000.0) == expected
+    assert calculate_bootstrap_risk(base + [float("-inf")], 10000.0) == expected
+
+
+def test_bootstrap_risk_returns_unavailable_for_iterations_zero():
+    """iterations=0 -> {"available": False, ...}, no el `ValueError` de
+    np.percentile sobre un array vacío que rompería el contrato SIN DATOS."""
+    pnls = [10.0] * 25
+    result = calculate_bootstrap_risk(pnls, 10000.0, iterations=0)
+    assert result == {"available": False, "reason": "iterations invalido (0 < 1)"}
+
+
+def test_bootstrap_risk_returns_unavailable_for_iterations_negative():
+    """iterations=-1 -> {"available": False, ...}, no el `ValueError` de
+    rng.choice con un size negativo."""
+    pnls = [10.0] * 25
+    result = calculate_bootstrap_risk(pnls, 10000.0, iterations=-1)
+    assert result == {"available": False, "reason": "iterations invalido (-1 < 1)"}
+
+
+def test_bootstrap_risk_iterations_one_is_degenerate_but_valid():
+    """iterations=1 es un único path degenerado pero VÁLIDO — no debe
+    rechazarse junto con 0/negativo."""
+    pnls = [10.0] * 25
+    result = calculate_bootstrap_risk(pnls, 10000.0, iterations=1)
+    assert result["available"] is True
+    assert result["iterations"] == 1
+    # Con un único path, las tres bandas son el mismo valor (n=1 no tiene
+    # percentil que calcular).
+    assert result["max_dd_pct_p50"] == result["max_dd_pct_p95"] == result["max_dd_pct_p99"]
 
 
 def test_bootstrap_risk_output_shape():
@@ -454,9 +505,10 @@ def test_bootstrap_risk_output_shape():
 
     assert result is not None
     assert set(result.keys()) == {
-        "max_dd_pct_p50", "max_dd_pct_p95", "max_dd_pct_p99",
+        "available", "max_dd_pct_p50", "max_dd_pct_p95", "max_dd_pct_p99",
         "ruin_probability", "iterations", "seed", "trades",
     }
+    assert result["available"] is True
     assert result["trades"] == 30
     assert result["iterations"] == metrics.BOOTSTRAP_ITERATIONS
     assert result["seed"] == BOOTSTRAP_SEED

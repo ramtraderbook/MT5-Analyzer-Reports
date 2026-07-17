@@ -73,7 +73,7 @@ Universal, three independent primary confirmations. Drawdown is measured against
 
 **Two caveats, both raised by a judge against an earlier draft that claimed the identity held "exactly" with "no change needed".** The algebraic identity holds only **for `capital > 0`, on the filtered curve**:
 
-1. **`capital <= 0` diverges.** The guards at `metrics.py:118` and `:155` (`if peak_abs > 0 else 0.0`) **silently force DD% to 0.0**, masking real drawdown. The library convention has no such branch, because normalized-equity peaks are always positive. **Our own ledger already documents this** (`known-issues.md:177-178`: *"`capital <= 0` hace `peak_abs <= 0` y el DD% cae silenciosamente a 0.0, enmascarando el drawdown real. La config no valida capital no positivo."*).
+1. **`capital <= 0` diverges.** The guards at `metrics.py:118` and `:155` (`if peak_abs > 0 else 0.0`) **silently force DD% to 0.0**, masking real drawdown. The library convention has no such branch, because normalized-equity peaks are always positive. **Our own ledger already documents this** (`known-issues.md:241-242`: *"`capital <= 0` hace `peak_abs <= 0` y el DD% cae silenciosamente a 0.0, enmascarando el drawdown real. La config no valida capital no positivo."*).
 2. **Untimed trades are excluded from the curve** (`metrics.py:86-90`, `:344-350`), so the curve is not the account's absolute equity when they exist — while their P&L still counts toward `net_profit`, SQN and Sharpe. Deliberate and documented, but it means "absolute equity" is an approximation.
 
 So: **the convention is right and needs no change; the guard behavior at `capital <= 0` is a known open defect, not something this survey clears.**
@@ -84,7 +84,7 @@ One trap worth knowing if we ever differential-test against QuantStats: **it pre
 
 **Epistemic warning up front, because an earlier draft of this report got this wrong.** It claimed our `known-issues.md` was "factually wrong" about the Tharp cap. **A blind judge refuted that as absence-of-evidence dressed as evidence-of-absence, and the judge was right.** What follows is the corrected, weaker, defensible version. This is the softest material in the report; treat it accordingly.
 
-`docs/known-issues.md:161-166` states that our uncapped `sqrt(N)` is a *"divergencia … contra el estándar"*, with Van Tharp's `sqrt(min(N,100))` as that standard. `tests/oracle/test_diff_metrics.py:644-669` pins it with a strict `xfail` named `test_sqn_uncapped_diverges_from_tharp_standard_for_large_n`.
+`docs/known-issues.md:208-222` states that our uncapped `sqrt(N)` is a *"divergencia … contra el estándar"*, with Van Tharp's `sqrt(min(N,100))` as that standard. `tests/oracle/test_diff_metrics.py:644-669` pins it with a strict `xfail` named `test_sqn_uncapped_diverges_from_tharp_standard_for_large_n`.
 
 **Finding 1 — every SQN implementation found is uncapped. Three for three**, verified verbatim:
 - `backtrader/analyzers/sqn.py`: `sqn = math.sqrt(len(self.pnl)) * pnl_av / pnl_stddev`
@@ -110,7 +110,7 @@ A likely origin of the confusion: **Tharp's own *Market SQN*** applies the formu
 **Our `_calc_sqn` (`metrics.py:188-219`) feeds it raw `net_pnl`.** So do backtrader, backtesting.py and vectorbt. **That is a real divergence from Tharp's definition, it is far better evidenced than the cap, and neither our docs nor our test ledger mentions it.** It also matters more: R-multiples make SQN comparable across position sizes; raw P&L does not, so an EA that varies lot size has an SQN partly measuring its sizing rather than its edge.
 
 **Recommended action** (report-only; not applied):
-- **Amend, do not delete**, `known-issues.md:161-166`. Replace *"la divergencia es contra el estándar"* with the accurate epistemic state: *the cap at N=100 is not part of Tharp's SQN formula as stated in his accessible material and appears to be a community convention; the primary source (his book) is paywalled and this could not be settled.* **The ledger's contract is "todo lo de acá está probado" — an unverified attribution violates that contract and is exactly why this needs fixing.**
+- **Amend, do not delete**, `known-issues.md:208-222`. Replace *"la divergencia es contra el estándar"* with the accurate epistemic state: *the cap at N=100 is not part of Tharp's SQN formula as stated in his accessible material and appears to be a community convention; the primary source (his book) is paywalled and this could not be settled.* **The ledger's contract is "todo lo de acá está probado" — an unverified attribution violates that contract and is exactly why this needs fixing.**
 - **Add the R-multiple divergence** as a new, better-supported entry. This is the finding worth having.
 - **Do not rename the test to `test_sqn_uncapped_grows_unbounded_with_n`** — a judge caught that this would be *at least as inaccurate*: the test runs a **single fixed N=150 sample** and asserts nothing about growth with N. If renamed at all, something like `test_sqn_uncapped_diverges_from_community_capped_convention_at_n150` is accurate. The cleanest fix may be to leave the test alone and correct its `reason` string, which is where "el estandar de Tharp" actually appears (`:646-654`).
 - **The underlying concern remains legitimate and is ours to decide**: at N=2500, `mean/std = 0.108` gives SQN 5.42 "Sobresaliente" vs 1.08 capped. `MIN_TRADES_FOR_SQN_LABEL = 20` guards the small-N end; nothing guards the large-N end. **That is a real open decision** — just not, on this evidence, a deviation from a documented standard.
@@ -471,7 +471,7 @@ So the decision was **correct when it was made**: there was no `requirements-dev
 
 ⚠️ **Two snags if you act on this.** (1) That docstring's first clause is **false today** (`requirements.txt:6` *does* pin html5lib) and would become **true again** the moment you move it — a stale comment that self-heals is still a trap. **Fix the docstring in the same change.** (2) Anything installing from `requirements.txt` alone and then running tests would break. **Check CI before moving `pytest`** — that one is load-bearing in a way `scipy` and `html5lib` are not.
 
-Related: `docs/metrics-formulas.md:386-391` **falsely claims** the binomial gate uses scipy with a normal-approximation fallback. It does not — pure `math.comb`, no fallback. Already logged as **D1** (`known-issues.md:588-592`) and pinned by `test_diff_metrics.py:698-717`. **Mentioned here because §7 and D1 are the same underlying confusion about what scipy does for us.**
+Related: `docs/metrics-formulas.md:386-391` **falsely claims** the binomial gate uses scipy with a normal-approximation fallback. It does not — pure `math.comb`, no fallback. Already logged as **D1** (`known-issues.md:689-692`) and pinned by `test_diff_metrics.py:698-717`. **Mentioned here because §7 and D1 are the same underlying confusion about what scipy does for us.**
 
 ---
 

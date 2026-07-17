@@ -325,7 +325,7 @@ Si el avg_bars_live difiere mucho del backtest, puede indicar slippage elevado o
 
 ---
 
-## 16. Realización BT % (`live_vs_bt_ratio`)
+## 16. Realización BT % (`live_vs_bt_profit_ratio`)
 
 **Nota de nombre**: esto NO es Walk-Forward Efficiency (WFE) de Pardo, a
 pesar de haberse llamado así antes en este documento y en el código. WFE
@@ -341,12 +341,12 @@ es correcta y no cambia; solo el nombre anterior sobre-prometía.
 ```
 BT_profit_per_month  = bt_expectancy × bt_trades / bt_months
 Live_profit_per_month = live_expectancy × live_trades / live_months
-live_vs_bt_ratio = (Live_profit_per_month / BT_profit_per_month) × 100
+live_vs_bt_profit_ratio = (Live_profit_per_month / BT_profit_per_month) × 100
 ```
 
 Mide qué porcentaje de la rentabilidad del backtest se está materializando en live.
 
-| live_vs_bt_ratio | Estado |
+| live_vs_bt_profit_ratio | Estado |
 |---|---|
 | > 120% | ALERTA (mejor que BT → posible sobreoptimización del BT) |
 | 70-120% | OK |

@@ -166,10 +166,29 @@ volvió alcanzable en un caso nuevo.
   que se eliminó por dead code con cero call sites (pinneado en
   `tests/test_metrics.py:393-397`) — aquella era privada, sin racional y nadie
   sabía por qué estaba. Las tres razones de esta, todas verificadas:
-  1. **Costo medido**: 16 ms con 50 trades, 102 ms con 500, **474 ms y ~160 MB
-     de pico con 2000** — por EA. `calculate_ea_metrics` corre en el path de
-     request de Flask; hacer que cada cálculo de métricas pague eso por una
-     capacidad que nadie consume todavía no se justifica.
+  1. **Costo medido**: la cifra de memoria original de esta entrada
+     (**"~160 MB de pico con 2000"**) estaba **mal por 7x** — medido con
+     `tracemalloc`, la versión sin chunking pico en **1121 MB con n=2000,
+     iterations=10000** (seis locals vivos de forma `(iterations, n+1)`
+     — `sims`, `cum`, `peak`, `dd_dollar`, `peak_abs`, `dd_pct` — más el
+     temporal de `np.concatenate`, todos co-residentes hasta el `return`).
+     Se corrigió procesando los paths en chunks acotados por
+     `BOOTSTRAP_MEMORY_BUDGET_MB=64` (ver `metrics.py`, comentario de la
+     constante): re-medido tras el chunking, el pico es **27 MB en n=50,
+     67 MB en n=200, 73 MB en n=500, 73 MB en n=2000** — deja de crecer con
+     `n` y nunca se acerca a los 1121 MB previos. El resultado es
+     numéricamente **idéntico** al de antes para el mismo seed (mismo `rng`
+     creado una sola vez antes del loop, mismo stream de draws), verificado
+     directamente contra la formulación sin chunking. Tiempo: 10 ms con 50
+     trades, 104 ms con 500, 428 ms con 2000 — sin cambio material respecto
+     a la medición original — por EA. `calculate_ea_metrics` corre en el path
+     de request de Flask; hacer que cada cálculo de métricas pague eso por
+     una capacidad que nadie consume todavía no se justifica. El chunking
+     acota la memoria, no el tiempo: el costo temporal sigue creciendo
+     linealmente con `n * iterations`, así que un caller que pase un `n` o
+     `iterations` enorme paga en wall-clock, no en un salto de memoria —
+     razón por la cual no se agregó ningún tope arbitrario a ninguno de los
+     dos (ver comentario en `calculate_bootstrap_risk`).
   2. **Contrato de claves**: `tests/oracle/test_char_metrics.py:56` fija
      igualdad de conjuntos sobre las 41 claves de salida de
      `calculate_ea_metrics`. Agregar una clave es un cambio deliberado de
@@ -237,16 +256,22 @@ volvió alcanzable en un caso nuevo.
   of trades involved."* — nótese "an adjustment for the number of trades"
   **sin ningún techo mencionado**. SQN se define sobre R-multiples (retorno
   normalizado por el riesgo inicial de cada trade), no sobre P&L crudo en
-  moneda. `_calc_sqn` (`metrics.py:188-219`) recibe `net_pnl` crudo; lo mismo
+  moneda. `_calc_sqn` (`metrics.py:393-424`) recibe `net_pnl` crudo; lo mismo
   hacen backtrader, backtesting.py y vectorbt (tres implementaciones
-  verificadas, ninguna usa R-multiples). Por qué importa: los R-multiples
-  hacen que el SQN sea comparable entre tamaños de posición distintos; el P&L
-  crudo no — un EA que varía el lotaje tiene un SQN que mide en parte su
-  gestión de tamaño, no su edge. Factible en principio: `parser.py:425` y
-  `:557` sí capturan `sl`, y `open_price`/`volume` están disponibles, así que
-  el riesgo inicial es calculable.
+  verificadas, ninguna usa R-multiples).
 
-  **La trampa**: más abajo, §10, se registra un bug de manejo de cero en
+  Por qué importa: los R-multiples hacen que el SQN sea comparable entre
+  tamaños de posición distintos; el P&L crudo no — un EA que varía el lotaje
+  tiene un SQN que mide en parte su gestión de tamaño, no su edge. Factible en
+  principio: `parser.py:425` y `:557` sí capturan `sl`, y `open_price`/`volume`
+  están disponibles, así que el riesgo inicial es calculable.
+
+  Confianza: la definición de R-multiples es de alta confianza pero descansa
+  en el mismo sitio con 403 y el mismo libro paywalled que el cap de arriba —
+  mejor evidenciada, no confirmada de forma independiente. Ver
+  `docs/research/prior-art.md` §2.2.
+
+  **Para destrabar**: más abajo, §10, se registra un bug de manejo de cero en
   `sl`/`tp` — una celda numérica `0.0` es falsy → `None` (correcto), pero el
   string `"0"` es truthy → `0.0` y se trata como un precio real — calificado
   ahí **"Impacto bajo: `sl`/`tp` son campos de display, no entran en ningún
@@ -255,13 +280,9 @@ volvió alcanzable en un caso nuevo.
   de cada SQN**, y ese bug pasaría de impacto bajo a alto de un día para el
   otro: dividir por un riesgo inicial fabricado. Además, los EAs que usan SL
   virtual/oculto (gestionado en código, nunca enviado al bróker) reportan
-  `sl=0`/`None`, así que el R-multiple sería incalculable para ellos. **Ambos
-  problemas deben resolverse antes de adoptar R-multiples.**
-
-  Confianza: la definición de R-multiples es de alta confianza pero descansa
-  en el mismo sitio con 403 y el mismo libro paywalled que el cap de arriba —
-  mejor evidenciada, no confirmada de forma independiente. Ver
-  `docs/research/prior-art.md` §2.2.
+  `sl=0`/`None`, así que el R-multiple sería incalculable para ellos. Ambos
+  problemas — el bug de cero en `sl`/`tp` y el caso de SL virtual/oculto —
+  deben resolverse antes de adoptar R-multiples.
 
 ---
 
@@ -521,7 +542,7 @@ duros. Lo que sigue quedó registrado y no tocado.
   marcaron de forma independiente. Las tarjetas explicativas hardcodean
   constantes que viven en el motor: los cortes de color de SQN 2.0/1.6
   (`dashboard.html:126-142`, `strategy.html:130-146`,
-  `incubation_strategy.html:263-268` vs `metrics.py:37-45`); los umbrales de
+  `incubation_strategy.html:263-268` vs `metrics.py:76-84`); los umbrales de
   trades de checkpoint 5/20/40 y los cortes de CP3 65/45
   (`incubation_strategy.html:44-49,75-76` e
   `incubation_dashboard.html:88-153` vs `incubation_domain.py:353-360`,
@@ -596,7 +617,7 @@ propiedades y la de oráculo diferencial.
   64.998 → `OBSERVAR`, mientras la UI muestra **65.0**, que es exactamente la
   banda de `APROBAR`. El operador lee aprobado y el motor dice observar.
   Test: `test_cp3_score_display_contradicts_verdict_at_65_boundary`.
-- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:353-354`
+- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:558-559`
   parte con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que el trade no
   cae en ninguna partición: `winning_trades + losing_trades < total_trades` y su
   P&L se evapora de `net_profit` sin error ni SIN DATOS. Repro ejecutado: 3
@@ -646,10 +667,10 @@ propiedades y la de oráculo diferencial.
 ### C. Datos silenciosamente equivocados
 
 - **C1** — Todos los trades sin fecha → curva de equity vacía → drawdown **0.0**
-  reportado sobre pérdidas reales (`metrics.py:74-76, 131-132`).
-- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:118`, `:155`).
+  reportado sobre pérdidas reales (`metrics.py:113-115, 170-171`).
+- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:157`, `:194`).
 - **C3** — Fecha de pico malformada → `_calc_stagnation` devuelve **0** días, o
-  sea el mejor valor posible salido de un fallo de parseo (`:162-170`).
+  sea el mejor valor posible salido de un fallo de parseo (`:367-375`).
 - **C4** — `_hard_gates`: `expected_monthly == 0` (no `None`) no satisface ni la
   rama `is None` ni la `> 0`, y la frecuencia queda en **"OK"** (`:361-368`).
 - **C5** — `_nd_result` usa `setdefault`: al llegar por `validator.py:555`, los
@@ -657,7 +678,7 @@ propiedades y la de oráculo diferencial.
   sobreviven al lado de las etiquetas `"N/D"`. Ya listado en §6.
 - **C6** — Zona ALERTA vacía cuando `mc_retest.max_dd == mc_trades.max_dd`
   (§4, quirk conocido y deliberado).
-- **C7** — `live_vs_bt_ratio` (antes `wfe`) redondea **antes** de bandear
+- **C7** — `live_vs_bt_profit_ratio` (antes `wfe`) redondea **antes** de bandear
   (`validator.py:681-684`): 120.04 → 120.0 → `OK` en vez de `ALERTA`.
 - **C8** — Contratos de forma incompatibles: `evaluate_cp1` devuelve 6 claves en
   éxito y 13 en SIN DATOS; las formas PRE_CP1 ELIMINAR/PENDING **omiten**

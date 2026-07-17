@@ -170,7 +170,7 @@ def calculate_validator_score(
             "edge_erosion", "expect_live", "spp_expect_median", "edge_estado",
             "stagn_live", "stagn_bt", "stagn_label", "stagn_estado",
             "s_riesgo", "s_edge", "s_caracter", "s_desv", "detcount",
-            "live_vs_bt_ratio", "live_vs_bt_status",
+            "live_vs_bt_profit_ratio", "live_vs_bt_profit_status",
         ):
             result.setdefault(key, None)
         for key in (
@@ -179,7 +179,7 @@ def calculate_validator_score(
             "stagn_estado", "stagn_label", "dd_method", "consec_ratio",
         ):
             result[key] = "N/D"
-        result["live_vs_bt_status"] = "N/D"
+        result["live_vs_bt_profit_status"] = "N/D"
         # dd_limit is numeric, so it cannot join the "N/D" blanking above, but
         # leaving it set would display a confident threshold next to an N/D
         # dd_method and an N/D dd_estado -- the exact silent, self-contradicting
@@ -505,7 +505,7 @@ def calculate_validator_score(
     # that is literally 0 (bt_worst_dd_1m, bt_payout, bt_avg_bars,
     # spp_expect_median) -- that still leave an estado computed as "N/D"
     # below. Enforce the actual invariant here, structurally, for every
-    # SCORED estado. `live_vs_bt_status` is informational and is deliberately
+    # SCORED estado. `live_vs_bt_profit_status` is informational and is deliberately
     # excluded -- it must never trigger SIN DATOS.
     scored_estados = {
         "dd_estado": dd_estado,
@@ -660,8 +660,8 @@ def calculate_validator_score(
     # this function only receives operator-typed aggregates (bt_expect,
     # bt_trades, bt_months), never a backtest equity curve or a parameter
     # space to re-optimize. See docs/research/prior-art.md §4.5.
-    live_vs_bt_ratio = None
-    live_vs_bt_status = "N/D"
+    live_vs_bt_profit_ratio = None
+    live_vs_bt_profit_status = "N/D"
     if (
         bt_expect is not None
         and bt_trades is not None
@@ -678,19 +678,19 @@ def calculate_validator_score(
             expect_live * trades_live / live_months if live_months > 0 else 0
         )
         if bt_profit_per_month != 0:
-            live_vs_bt_ratio = round(
+            live_vs_bt_profit_ratio = round(
                 (live_profit_per_month / bt_profit_per_month) * 100, 1
             )
-            if live_vs_bt_ratio > 120:
-                live_vs_bt_status = "ALERTA"  # mejor que BT, posible sobreajuste del BT
-            elif live_vs_bt_ratio >= 70:
-                live_vs_bt_status = "OK"
-            elif live_vs_bt_ratio >= 30:
-                live_vs_bt_status = "ALERTA"
+            if live_vs_bt_profit_ratio > 120:
+                live_vs_bt_profit_status = "ALERTA"  # mejor que BT, posible sobreajuste del BT
+            elif live_vs_bt_profit_ratio >= 70:
+                live_vs_bt_profit_status = "OK"
+            elif live_vs_bt_profit_ratio >= 30:
+                live_vs_bt_profit_status = "ALERTA"
             else:
-                live_vs_bt_status = "FUERA"
-    result["live_vs_bt_ratio"] = live_vs_bt_ratio
-    result["live_vs_bt_status"] = live_vs_bt_status
+                live_vs_bt_profit_status = "FUERA"
+    result["live_vs_bt_profit_ratio"] = live_vs_bt_profit_ratio
+    result["live_vs_bt_profit_status"] = live_vs_bt_profit_status
 
     result["accion"] = accion
     result["sin_datos"] = False
