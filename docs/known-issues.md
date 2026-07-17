@@ -6,8 +6,9 @@ corregidos**. Cada uno dice por qué se dejó y qué hace falta para cerrarlo.
 Esto no es una lista de deseos: todo lo de acá está probado. Si algo se
 corrige, borrar su entrada.
 
-Origen: Judgment Day JD-2 (`metrics.py`, núcleo estadístico) y JD-3
-(`validator.py`, escalado del límite de DD).
+Origen: Judgment Day JD-2 (`metrics.py`, núcleo estadístico), JD-3
+(`validator.py`, escalado del límite de DD) y JD-3 (`parser.py`, integridad de
+datos).
 
 ---
 
@@ -183,3 +184,79 @@ volvió alcanzable en un caso nuevo.
 - **Trades con P&L exactamente 0 cuentan como pérdidas** (`net_pnl <= 0`),
   inflando `losing_trades` y las rachas perdedoras. El doc §10 lo documenta así,
   o sea que código y doc coinciden.
+
+---
+
+## 8. El JOIN POSITIONS↔ORDERS es válido solo si la orden de apertura está en el rango exportado
+
+Confirmado por los dos jueces de JD-3 (`parser.py`). El JOIN es
+`position_id == order_id`, y eso funciona porque MT5 asigna al `position_id` el
+ticket de la **orden que abrió** la posición. La consecuencia: si el usuario
+exporta un rango de fechas que **no incluye la apertura**, la orden nunca entra
+al `order_map` y el trade queda en `"Unknown"`.
+
+Forma de entrada: posición abierta el 2024-04-28 por la orden 111 (comment
+`"EA-A"`), cerrada el 2024-05-02; el usuario exporta solo mayo → la sección
+POSITIONS trae la posición 111 pero ORDERS no trae la orden 111 → el trade se
+atribuye a `"Unknown"` y queda **excluido del análisis**
+(`ea_names` filtra `"Unknown"`).
+
+**Por qué se dejó**: no hay nada en el archivo con qué reparar el JOIN — la
+información simplemente no fue exportada. Un fallback por
+`open_time`+`symbol`+`volume` sería adivinar, y adivinar mal la atribución de
+un EA es peor que decir `"Unknown"`.
+
+**Para destrabar**: el contador `unknown_trades` ya existe y es honesto. Falta
+que la UI lo muestre de forma visible al cargar el archivo, con el consejo de
+re-exportar incluyendo la fecha de apertura. Es un cambio de UI, no de parser.
+
+---
+
+## 9. Una celda de dinero ilegible sigue devolviendo 0.0 en silencio
+
+Ésta es la queja original de la auditoría —el silencio— y quedó **cerrada solo
+a medias**. `_to_float()` ahora entiende todos los formatos plausibles
+(miles, decimal europeo, negativos entre paréntesis, símbolos de moneda,
+`nan`/`inf`), pero una celda genuinamente ilegible (por ejemplo `"###"`)
+todavía cae al `default = 0.0` sin ninguna señal.
+
+Verificado ejecutando: `_to_float("###")` → `0.0`. Un trade con Profit ilegible
+se registra como breakeven y entra a las métricas como un trade real.
+
+`unknown_trades` **no** cubre esto: solo cuenta fallos del JOIN con ORDERS, no
+fallos de parseo numérico.
+
+**Por qué se dejó**: cerrarlo no es un fix, es un cambio de contrato —hace
+falta un contador nuevo en el dict que devuelve `parse_mt5_report()`
+(`malformed_cells` o similar), que la UI lo muestre, y decidir si un archivo
+con celdas ilegibles se rechaza o se carga con aviso. Eso es diseño, y se
+sale del alcance de una auditoría de integridad.
+
+**Para destrabar**: definir la política primero (¿rechazar o avisar?), después
+implementar. El patrón a seguir es el contrato SIN DATOS de
+`docs/design/decision-engine-no-data-contract.md`: un número silencioso y
+confiado es peor que una ausencia declarada.
+
+---
+
+## 10. `parser.py` — menores verificados
+
+- **`sl`/`tp` con cero: incoherente según el tipo de celda**. `"sl": _to_float(sl_val) if sl_val else None`
+  — una celda numérica `0.0` es falsy → `None` (correcto: en MT5 `S/L = 0`
+  significa "sin stop"), pero el string `"0"` es truthy → `0.0`, y se trata como
+  un precio real. Pre-existente, sin cambios en esta auditoría. Impacto bajo:
+  `sl`/`tp` son campos de display, no entran en ningún cálculo.
+- **Un comment de EA puramente numérico puede perderse en un export malformado**.
+  El escaneo de fallback de `_parse_open_positions` (solo se activa si el header
+  **no** tiene columna `Comment`) ahora saltea celdas numéricas para no volver a
+  leer el Profit como nombre de EA. El costo: un EA cuyo comment sea el magic
+  number pelado (`"1104"`, que `trade_matching.py` sí matchea contra el magic)
+  queda en `"Unknown"` en ese caso degradado. Se eligió esa dirección a
+  propósito: un EA fantasma llamado `"150.75"` contaminando `ea_names` es peor
+  que un `"Unknown"` honesto.
+- **Moneda: whitelist de tres**. `_parse_header` solo reconoce `USD`/`EUR`/`GBP`;
+  una cuenta en `JPY`/`CHF`/`AUD` queda etiquetada `"USD"` por default. Solo
+  display, pero mal etiquetado.
+- **`_parse_results` corta en el primer par por fila**. Los reportes MT5 suelen
+  poner varios pares label/valor en la misma fila; solo entra el primero. Afecta
+  a `results_validation`, que hoy no se usa para decidir nada.
