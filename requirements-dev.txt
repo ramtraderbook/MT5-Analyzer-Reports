@@ -1,7 +1,17 @@
 # Dependencias sólo de test. Producción: ver requirements.txt.
 -r requirements.txt
 
+# Ejecución de la suite
+pytest>=8.0.0                # runner; producción no lo importa
+
 # Arnés de verdad ejecutable (tests/oracle/)
 hypothesis>=6.150.0          # capa 2: tests basados en propiedades
+scipy>=1.11.0                # capa 3: oráculo (scipy.stats.binom.cdf, norm.cdf,
+                             #   skew, kurtosis). Producción NO importa scipy:
+                             #   el binomial es math.comb puro y la PSR es
+                             #   math.erf + numpy. scipy solo valida en tests.
 empyrical-reloaded>=0.5.11   # capa 3: oráculo independiente de Sharpe
 pytz>=2024.1                 # dependencia transitiva de empyrical
+
+# Contratos de frontend (tests/test_frontend_contracts.py)
+html5lib>=1.1                # parseo de HTML renderizado; solo en tests
