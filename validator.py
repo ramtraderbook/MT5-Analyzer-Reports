@@ -606,13 +606,23 @@ def calculate_validator_score(
     result["detcount"] = detcount
 
     # ── Score total /100 ───────────────────────────────────────────────────
-    score = (
-        CONFIG["w_riesgo"] * s_riesgo
-        + CONFIG["w_edge"] * s_edge
-        + CONFIG["w_caracter"] * s_caracter
-        + CONFIG["w_desv"] * s_desv
-    ) / 10
-    result["score"] = round(score, 1)
+    # Canonizar sobre el valor publicado: redondear una sola vez y decidir el
+    # veredicto con el MISMO score que se muestra, para que el número visible no
+    # pueda contradecir al veredicto (known-issues 14-A1/14-E; el gemelo en CP3
+    # está en incubation_validator.py). En validator.py la grilla exacta no
+    # tiene puntos en las bandas peligrosas, así que ningún veredicto cambia hoy;
+    # esto blinda el patrón ante futuros cambios de pesos en CONFIG.
+    score = round(
+        (
+            CONFIG["w_riesgo"] * s_riesgo
+            + CONFIG["w_edge"] * s_edge
+            + CONFIG["w_caracter"] * s_caracter
+            + CONFIG["w_desv"] * s_desv
+        )
+        / 10,
+        1,
+    )
+    result["score"] = score
 
     # ── Desviacion Estructural ─────────────────────────────────────────────
     desv_flag = "DESV" if detcount >= CONFIG["thresh_desv"] else "-"

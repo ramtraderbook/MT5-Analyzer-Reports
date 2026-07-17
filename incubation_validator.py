@@ -1162,12 +1162,17 @@ def evaluate_cp3(live_metrics, reference_data, previous_cp2_result=None):
             else str(previous_cp2_result)
         )
 
-    verdict, escalation_from_cp2 = _resolve_cp3_verdict(final_score, below_mc95, cp2_verdict)
+    # Canonizar sobre el valor publicado: redondear una sola vez y decidir el
+    # veredicto con el MISMO score que se muestra, para que un 65.0 en pantalla
+    # no pueda convivir con un OBSERVAR decidido sobre un 64.998 crudo
+    # (known-issues 14-A1).
+    published_score = round(final_score, 2)
+    verdict, escalation_from_cp2 = _resolve_cp3_verdict(published_score, below_mc95, cp2_verdict)
 
     return {
         "checkpoint": "CP3",
         "verdict": verdict,
-        "score": round(final_score, 2),
+        "score": published_score,
         "category_scores": category_scores,
         "metrics_scores": metrics_scores,
         "spp_adjustments": sorted(set(spp_adjustments)),

@@ -656,13 +656,18 @@ propiedades y la de oráculo diferencial.
 
 ### A. Puede cambiar un veredicto
 
-- **A1 — CP3 muestra un score y decide con otro.** `evaluate_cp3` resuelve el
-  veredicto con el `final_score` SIN redondear (`incubation_validator.py:1165`)
-  pero publica `round(final_score, 2)` (`:1170`). Repro ejecutado: categorías
-  deviation=54.44 / risk=65.0 / coherence=100.0 / sample=60.0 → score crudo
-  64.998 → `OBSERVAR`, mientras la UI muestra **65.0**, que es exactamente la
-  banda de `APROBAR`. El operador lee aprobado y el motor dice observar.
-  Test: `test_cp3_score_display_contradicts_verdict_at_65_boundary`.
+- **A1 — CP3 muestra un score y decide con otro. ✅ CORREGIDO (fix 4A).**
+  Antes: `evaluate_cp3` resolvía el veredicto con el `final_score` SIN redondear
+  mientras publicaba `round(final_score, 2)`, así que un crudo 64.998 daba
+  `OBSERVAR` pero la UI mostraba **65.0** (banda de `APROBAR`). Fix: se canoniza
+  sobre el valor publicado — se redondea una vez (`published_score`) y el
+  veredicto se decide con ese mismo valor, de modo que número mostrado y
+  veredicto no pueden contradecirse. El gemelo latente en `validator.py`
+  (sección E, hoy inalcanzable por la grilla exacta) recibió el mismo blindaje.
+  Efecto en el veredicto: `[64.995, 65)` ahora es `APROBAR` (si no `below_mc95`),
+  un corrimiento de borde de hasta 0.005 aceptado explícitamente por el usuario.
+  Tests: `test_cp3_score_display_matches_verdict_at_65_boundary`,
+  `test_cp3_rounded_vs_raw_score_split_at_65_is_closed`.
 - **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:559-560`
   parte con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que el trade no
   cae en ninguna partición: `winning_trades + losing_trades < total_trades` y su
@@ -764,11 +769,12 @@ propiedades y la de oráculo diferencial.
   Pinneado como caracterización, no como defecto
   (`test_char_validator.py:585`).
 
-  **Pero la estructura del defecto SÍ está**: `validator.py:614` publica
-  `round(score, 1)` mientras `:625-628` deciden con el `score` crudo —
-  exactamente el mismo patrón que en CP3, donde sí explota. Acá no explota sólo
-  porque la grilla no tiene puntos en el intervalo peligroso, y el margen es de
-  **un paso de grilla (0.125)**, no de una distancia cómoda. Es una coincidencia
-  aritmética, no un diseño: cualquier cambio futuro en los pesos de `CONFIG`
-  mueve la grilla y puede abrir el hueco sin que nadie toque la lógica del
-  veredicto.
+  **La estructura del defecto SÍ estaba** — hoy **✅ BLINDADA (fix 4A)**:
+  `validator.py` publicaba `round(score, 1)` mientras decidía con el `score`
+  crudo, el mismo patrón que en CP3. No explotaba sólo porque la grilla no tiene
+  puntos en el intervalo peligroso, con un margen de **un paso de grilla
+  (0.125)** — una coincidencia aritmética, no un diseño, que cualquier cambio
+  futuro en los pesos de `CONFIG` podía romper. El fix canoniza sobre el valor
+  publicado: `score` se redondea una sola vez y el veredicto se decide con ese
+  mismo valor, así que el hueco no puede abrirse aunque la grilla se mueva.
+  Ningún veredicto cambia hoy (la grilla vigente no toca las bandas de borde).

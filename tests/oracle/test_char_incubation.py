@@ -331,21 +331,22 @@ def test_cp3_escalation_from_cp2_observar_forces_eliminar():
     assert r_escalated["escalation_from_cp2"] is True
 
 
-def test_cp3_rounded_vs_raw_score_split_at_65_is_pinned():
+def test_cp3_rounded_vs_raw_score_split_at_65_is_closed():
     """
-    DEFECT-PIN: por analogia exacta con el veredicto del validador (70/45),
-    CP3 tambien decide el veredicto sobre el `final_score` SIN redondear
-    (incubation_validator.py:1165) mientras `result["score"]` es la version
-    YA redondeada a 2dp (:1170). A diferencia del validador (cuya grilla de
-    puntaje discreta demostro ser SIEMPRE consistente, ver
-    test_char_validator.py), CP3 usa interpolacion CONTINUA
-    (`_score_metric`), asi que el split SI es alcanzable: se construyo, por
-    biseccion contra la funcion real, un live_metrics donde el
-    final_score crudo cae justo debajo de 65.0 pero redondea a exactamente
-    65.0. Pinneado porque es el comportamiento actual
-    (incubation_validator.py:1165 vs 1170, y decision §3.18), NO porque sea
-    correcto: la UI mostraria "65.0" (frontera de APROBAR) mientras el
-    veredicto real es OBSERVAR.
+    REGRESIÓN DE CONSISTENCIA (fix 4A). Antes del fix esto era un DEFECT-PIN:
+    CP3 decidía el veredicto sobre el `final_score` SIN redondear mientras
+    `result["score"]` era la versión YA redondeada a 2dp, así que un crudo
+    infinitesimalmente por debajo de 65.0 daba OBSERVAR pero se mostraba 65.0
+    (frontera de APROBAR). A diferencia del validador (cuya grilla discreta es
+    SIEMPRE consistente, ver test_char_validator.py), CP3 usa interpolación
+    CONTINUA (`_score_metric`), así que el split SÍ era alcanzable: este
+    live_metrics se construyó por bisección contra la función real para caer
+    justo en ese punto (T=0.804...).
+
+    Tras el fix, `evaluate_cp3` canoniza sobre el valor publicado: redondea una
+    vez y decide con ese mismo score. El crudo que redondea a 65.0 ahora decide
+    APROBAR, así que el número mostrado y el veredicto salen del MISMO valor y
+    el split queda cerrado (incubation_validator.py, `published_score`).
     """
     mc95v = dict(win_rate=45.0, profit_factor=1.1, expectancy=5.0, avg_trade=5.0,
                  payout_ratio=1.0, ret_dd_ratio=1.5, max_dd_pct=20.0,
@@ -373,9 +374,10 @@ def test_cp3_rounded_vs_raw_score_split_at_65_is_pinned():
         a, b = mc95v[key], mc50v[key]
         return a + (b - a) * t
 
-    # T obtenido por biseccion binaria contra evaluate_cp3 real: es el punto
-    # exacto donde result["score"] cruza a 65.0 mientras el veredicto sigue
-    # siendo OBSERVAR (el crudo esta infinitesimalmente por debajo de 65).
+    # T obtenido por biseccion binaria contra evaluate_cp3 real: el punto exacto
+    # donde el score crudo cae infinitesimalmente por debajo de 65.0 y redondea
+    # a 65.0. Antes del fix el veredicto salía OBSERVAR; ahora, canonizando sobre
+    # el valor publicado, decide APROBAR con el MISMO 65.0 que se muestra.
     T = 0.8048214285714284
     live = dict(
         total_trades=80, winning_trades=45,
@@ -392,7 +394,7 @@ def test_cp3_rounded_vs_raw_score_split_at_65_is_pinned():
     )
     r = iv.evaluate_cp3(live, reference)
     assert r["score"] == 65.0
-    assert r["verdict"] == "OBSERVAR"  # NO "APROBAR", pese al 65.0 mostrado
+    assert r["verdict"] == "APROBAR"  # coherente con el 65.0 mostrado (fix 4A)
     assert r["hard_gate_failures"] == []
 
 

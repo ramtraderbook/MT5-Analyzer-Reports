@@ -160,33 +160,26 @@ def test_score_metric_monotonic_in_live_value(mc95, mc50, bt, live_a, live_b, hi
         assert s_hi <= s_lo + 1e-9
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: evaluate_cp3 con deviation=54.44/risk=65.0/coherence=100.0/"
-    "sample=60.0 (redondeados) da raw final_score=64.998 (<65, decide veredicto "
-    "-> OBSERVAR, :1165) pero result['score']=round(64.998,2)=65.0 (:1170) -- "
-    "display >=65 contradice OBSERVAR. Ver docstring del test para el repro exacto."
-))
-def test_cp3_score_display_contradicts_verdict_at_65_boundary(frozen_clock):
-    """CONTRAEJEMPLO CONFIRMADO (regresión fijada, no @given: encontrado por
-    bisección analítica dirigida al defecto de redondeo entre score crudo y
-    score mostrado (ver incubation_validator.py:1165 vs :1170 más abajo),
-    no por búsqueda aleatoria -- la ventana de contradicción tiene un ancho de
-    ~1e-15 en el dominio de entrada y es estadísticamente inalcanzable para
-    Hypothesis sobre floats genéricos; se deja como test fijo en vez de
-    @given para que el repro sea reproducible determinísticamente).
+def test_cp3_score_display_matches_verdict_at_65_boundary(frozen_clock):
+    """REGRESIÓN DE CONSISTENCIA (fix 4A, canonización sobre el valor publicado).
 
-    incubation_validator.py:1165 llama a `_resolve_cp3_verdict(final_score, ...)`
-    con el `final_score` SIN redondear, mientras que :1170 asigna
-    `result["score"] = round(final_score, 2)`. Con category_scores
-    deviation=54.44 (redondeado), risk=65.0, coherence=100.0, sample=60.0:
+    Antes del fix esto era un contraejemplo confirmado: evaluate_cp3 decidía el
+    veredicto con el `final_score` SIN redondear (:1165) mientras publicaba
+    `round(final_score, 2)` (:1170), así que un crudo 64.998 daba OBSERVAR pero
+    se mostraba 65.0 -- que el ojo lee como APROBAR. El repro se encontró por
+    bisección analítica dirigida (la ventana de contradicción tiene ~1e-15 de
+    ancho, inalcanzable para Hypothesis sobre floats genéricos), y se deja como
+    test fijo para que el repro sea determinísticamente reproducible.
 
-        raw final_score = 0.45*54.44 + 0.30*65 + 0.15*100 + 0.10*60
-                         = 64.998  (< 65 -> _resolve_cp3_verdict da OBSERVAR)
-        round(raw, 2)    = 65.0    (result["score"], YA >= 65)
+    Tras el fix, `evaluate_cp3` redondea UNA vez (`published_score`) y decide el
+    veredicto con ese mismo valor. Con category_scores deviation=54.44
+    (redondeado), risk=65.0, coherence=100.0, sample=60.0:
 
-    El usuario ve `score: 65.0` (que cruza el umbral APROBAR) junto a
-    `verdict: 'OBSERVAR'` -- una contradicción visible entre el número
-    mostrado y el veredicto emitido con la MISMA respuesta.
+        raw final_score   = 0.45*54.44 + 0.30*65 + 0.15*100 + 0.10*60 = 64.998
+        published_score   = round(64.998, 2) = 65.0  (>= 65 -> APROBAR)
+
+    El usuario ahora ve `score: 65.0` junto a `verdict: 'APROBAR'`: el número
+    mostrado y el veredicto salen del MISMO valor y no pueden contradecirse.
 
     Repro mínimo (live_metrics, reference_data = conftest.make_reference()):
         total_trades=45, winning_trades=22, win_rate=48.679375,
