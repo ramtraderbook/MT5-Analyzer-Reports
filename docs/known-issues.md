@@ -273,18 +273,15 @@ volvió alcanzable en un caso nuevo.
   mejor evidenciada, no confirmada de forma independiente. Ver
   `docs/research/prior-art.md` §2.2.
 
-  **Para destrabar**: más abajo, §10, se registra un bug de manejo de cero en
-  `sl`/`tp` — una celda numérica `0.0` es falsy → `None` (correcto), pero el
-  string `"0"` es truthy → `0.0` y se trata como un precio real — calificado
-  ahí **"Impacto bajo: `sl`/`tp` son campos de display, no entran en ningún
-  cálculo."** Esa severidad es correcta **solo porque hoy `sl` no alimenta
-  ningún cálculo**. Adoptar R-multiples convertiría `sl` en el **denominador
-  de cada SQN**, y ese bug pasaría de impacto bajo a alto de un día para el
-  otro: dividir por un riesgo inicial fabricado. Además, los EAs que usan SL
-  virtual/oculto (gestionado en código, nunca enviado al bróker) reportan
-  `sl=0`/`None`, así que el R-multiple sería incalculable para ellos. Ambos
-  problemas — el bug de cero en `sl`/`tp` y el caso de SL virtual/oculto —
-  deben resolverse antes de adoptar R-multiples.
+  **Para destrabar**: eran dos bloqueadores; **uno ya está resuelto**.
+  (1) El bug de manejo de cero en `sl`/`tp` (§10) — el string `"0"` se trataba
+  como precio real `0.0` mientras el `0.0` numérico daba `None` — está
+  **ARREGLADO** vía `_to_price_or_none` (`parser.py`): todo cero es ahora `None`,
+  así que `sl="0"` ya no inyectaría un riesgo inicial fabricado como
+  denominador del SQN. (2) Sigue pendiente: los EAs que usan SL virtual/oculto
+  (gestionado en código, nunca enviado al bróker) reportan `sl=None`, así que el
+  R-multiple sería incalculable para ellos y hace falta una política explícita
+  (¿excluirlos? ¿caer a P&L crudo con etiqueta?) antes de adoptar R-multiples.
 
 ---
 
@@ -342,11 +339,22 @@ confiado es peor que una ausencia declarada.
 
 ## 10. `parser.py` — menores verificados
 
-- **`sl`/`tp` con cero: incoherente según el tipo de celda**. `"sl": _to_float(sl_val) if sl_val else None`
-  — una celda numérica `0.0` es falsy → `None` (correcto: en MT5 `S/L = 0`
-  significa "sin stop"), pero el string `"0"` es truthy → `0.0`, y se trata como
-  un precio real. Pre-existente, sin cambios en esta auditoría. Impacto bajo:
-  `sl`/`tp` son campos de display, no entran en ningún cálculo.
+- **`sl`/`tp` con cero: incoherente según el tipo de celda — RESUELTO**. El guard
+  viejo `_to_float(sl_val) if sl_val else None` testeaba el valor **crudo**: el
+  `0.0` numérico (falsy) daba `None` pero el string `"0"` (truthy) parseaba a
+  `0.0` y se trataba como precio real. Arreglado con el helper compartido
+  `_to_price_or_none` (`parser.py`), que parsea primero y conserva solo precios
+  estrictamente positivos — en MT5 `S/L = 0` es un centinela de ausencia, no un
+  precio de cero, y un precio válido siempre es `> 0`. Ahora `0.0`, `"0"`,
+  `"0.0"`, `"0,0"`, vacío y `None` dan todos `None`; los negativos (celda
+  malformada) también se tratan como unset en vez de propagar un precio
+  inválido. Pineado por `test_to_price_or_none_*` y
+  `test_parse_positions_sl_zero_string_becomes_none_end_to_end` en
+  `tests/test_parser.py`. **Nota**: este era el bloqueador de parseo que la nota
+  de R-multiples (§7) señalaba — con `sl` ahora coherente, `sl="0"` ya no
+  inyectaría un riesgo inicial falso de cero. Queda pendiente lo otro de esa
+  nota: los EAs con SL virtual (gestionado en código) reportan `sl=None`, así
+  que el R-multiple seguiría siendo incalculable para ellos.
 - **Un comment de EA puramente numérico puede perderse en un export malformado**.
   El escaneo de fallback de `_parse_open_positions` (solo se activa si el header
   **no** tiene columna `Comment`) ahora saltea celdas numéricas para no volver a

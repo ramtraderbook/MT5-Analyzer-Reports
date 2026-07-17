@@ -240,6 +240,29 @@ def _to_float(val, default=0.0, ambiguous_comma="thousands"):
     return result
 
 
+def _to_price_or_none(val):
+    """
+    Parse an MT5 S/L or T/P cell to a positive price, or None if unset.
+
+    In MT5, S/L = 0 (or T/P = 0) means "no stop/target was set" — it is a
+    sentinel for absence, not a price of zero. That sentinel arrives from
+    the export in several shapes: native 0.0, the string "0"/"0.0"/"0,0",
+    an empty cell, or None. All of them must map to None so downstream
+    code can never mistake an unset level for a real level priced at zero.
+
+    The previous per-call `if sl_val` guard was inconsistent: it tested
+    the RAW cell, so numeric 0.0 (falsy) became None but the string "0"
+    (truthy) parsed to 0.0 and was treated as a real price. Parsing first,
+    then keeping only strictly-positive results, removes that split — a
+    valid price is always > 0, so anything <= 0 (including negatives from
+    a malformed cell) is treated as unset.
+
+    Uses ambiguous_comma="decimal": S/L and T/P are price columns.
+    """
+    price = _to_float(val, default=0.0, ambiguous_comma="decimal")
+    return price if price > 0 else None
+
+
 def _find_section_rows(ws):
     """
     Scan column A for section header keywords.
@@ -422,8 +445,8 @@ def _parse_positions(ws, header_row, data_start, end_row):
             "close_time": close_time,
             "open_price": _to_float(ws.cell(row=row_idx, column=price_open_col).value, ambiguous_comma="decimal"),
             "close_price": _to_float(ws.cell(row=row_idx, column=price_close_col).value, ambiguous_comma="decimal"),
-            "sl": _to_float(sl_val, ambiguous_comma="decimal") if sl_val else None,
-            "tp": _to_float(tp_val, ambiguous_comma="decimal") if tp_val else None,
+            "sl": _to_price_or_none(sl_val),
+            "tp": _to_price_or_none(tp_val),
             "commission": commission,
             "swap": swap,
             "profit": profit,
@@ -554,8 +577,8 @@ def _parse_open_positions(ws, header_row, data_start, end_row):
             "volume": _to_float(ws.cell(row=row_idx, column=volume_col).value, ambiguous_comma="decimal"),
             "open_time": _parse_date(ws.cell(row=row_idx, column=time_col).value),
             "open_price": _to_float(ws.cell(row=row_idx, column=price_open_col).value, ambiguous_comma="decimal"),
-            "sl": _to_float(sl_val, ambiguous_comma="decimal") if sl_val else None,
-            "tp": _to_float(tp_val, ambiguous_comma="decimal") if tp_val else None,
+            "sl": _to_price_or_none(sl_val),
+            "tp": _to_price_or_none(tp_val),
             "commission": commission,
             "swap": swap,
             "profit": profit,
