@@ -158,6 +158,34 @@ volvió alcanzable en un caso nuevo.
 
 ## 7. `metrics.py` — menores verificados
 
+- **`calculate_bootstrap_risk` existe y está deliberadamente SIN CABLEAR**:
+  bootstrap iid sobre el P&L por trade (`rng.choice(..., replace=True)`,
+  `np.random.default_rng`) que devuelve bandas percentiles de max DD% y
+  probabilidad de brecha contra `RUIN_THRESHOLDS_PCT`. Nadie en producción la
+  llama; solo los tests. **Esto NO es el mismo caso que `_calc_risk_of_ruin`**,
+  que se eliminó por dead code con cero call sites (pinneado en
+  `tests/test_metrics.py:393-397`) — aquella era privada, sin racional y nadie
+  sabía por qué estaba. Las tres razones de esta, todas verificadas:
+  1. **Costo medido**: 16 ms con 50 trades, 102 ms con 500, **474 ms y ~160 MB
+     de pico con 2000** — por EA. `calculate_ea_metrics` corre en el path de
+     request de Flask; hacer que cada cálculo de métricas pague eso por una
+     capacidad que nadie consume todavía no se justifica.
+  2. **Contrato de claves**: `tests/oracle/test_char_metrics.py:56` fija
+     igualdad de conjuntos sobre las 41 claves de salida de
+     `calculate_ea_metrics`. Agregar una clave es un cambio deliberado de
+     contrato, no un efecto colateral de agregar una capacidad.
+  3. **Política**: cablearla a `validator.py` cambiaría veredictos
+     ELIMINAR/CONTINUAR sobre EAs reales. La §1 de este mismo documento está
+     bloqueada por datos para exactamente esa clase de calibración.
+  **Para cablearla** hace falta: decidir el punto de ruina (hoy se reportan
+  cuatro umbrales justamente para no elegirlo), decidir dónde vive el costo
+  (¿cacheado? ¿on-demand?), actualizar el contrato de 41 claves, y —si alguna
+  vez alimenta un veredicto— calibrar contra un export real de MT5.
+  **Valor de tenerla**: el gate de DD hoy se apoya en números tipeados desde
+  SQX cuya semántica la §3 admite **NO VERIFICABLE**. Un bootstrap sobre
+  nuestros propios trades no necesita ese acuerdo semántico: misma definición
+  de los dos lados, por construcción. Ver `docs/research/prior-art.md` §5.1.
+
 - **SQN sin cap en N=100 — la atribución a Tharp está sin verificar**: la
   atribución de ese cap a Van Tharp **no pudo confirmarse ni descartarse**
   (`docs/research/prior-art.md` §2.2): `vantharpinstitute.com` devuelve 403 en

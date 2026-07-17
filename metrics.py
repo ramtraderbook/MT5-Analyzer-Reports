@@ -18,6 +18,30 @@ MIN_COEFFICIENT_OF_VARIATION = 0.01
 # "(orientativo)" note but the label is withheld. Same threshold both guards.
 MIN_TRADES_FOR_SQN_LABEL = 20
 
+# Bootstrap Monte Carlo error on a quantile falls as 1/sqrt(B), so 1000 paths
+# (arch's default for SPA/StepM/MCS -- the closest thing to an authoritative
+# default found in a maintained library, docs/research/prior-art.md §5.1) is
+# visibly unstable in the tail -- and the tail is the entire point of a ruin
+# figure. 10k costs milliseconds at this repo's data sizes and cuts that error
+# roughly 3x. There is no reason to be cheap here.
+BOOTSTRAP_ITERATIONS = 10000
+
+# Pinned so the bootstrap is reproducible; echoed in the result so the seed is
+# legible from the output, not merely assumed by whoever reads it later.
+BOOTSTRAP_SEED = 20260717
+
+# Resampling a handful of trades manufactures false confidence -- the
+# resampled multiset barely differs from the original sample at low N, so the
+# "band" would just restate the point estimate with extra ceremony. Mirrors
+# the MIN_TRADES_FOR_SQN_LABEL=20 rationale: same floor, same reasoning.
+MIN_TRADES_FOR_BOOTSTRAP = 20
+
+# A set of thresholds, not one magic "ruin" number: where the actual ruin
+# point sits is a policy decision this repo has not made (see
+# docs/known-issues.md §1, blocked on real data for a related calibration
+# question) and must not be smuggled in here.
+RUIN_THRESHOLDS_PCT = (10.0, 20.0, 30.0, 50.0)
+
 
 EA_COLORS = [
     "#4FC3F7",
@@ -157,6 +181,124 @@ def _calc_max_drawdown(equity_curve, capital):
             max_dd_pct = dd_pct
 
     return round(max_dd_dollar, 2), round(max_dd_pct, 4), last_peak_date
+
+
+def calculate_bootstrap_risk(
+    net_pnl_list, capital, iterations=BOOTSTRAP_ITERATIONS, seed=BOOTSTRAP_SEED
+):
+    """
+    iid bootstrap over per-trade net P&L: resample WITH REPLACEMENT to build a
+    Monte Carlo distribution of max drawdown, and report percentile bands plus
+    breach probabilities against a set of thresholds -- never a single point
+    estimate, since showing uncertainty is the entire purpose.
+
+    Why this exists: the DD gate elsewhere in this repo leans on operator-typed
+    StrategyQuant numbers whose semantics docs/known-issues.md §3 admits are
+    NO VERIFICABLE (we cannot confirm SQX defines "max DD %" the way this repo
+    does). A bootstrap over OUR OWN trades removes that dependency by
+    construction: the same definition applies on both sides.
+
+    Method, each detail load-bearing (docs/research/prior-art.md §3.1, §3.2,
+    §5.1):
+    - `np.random.default_rng(seed)` is the modern Generator (PCG64). Never the
+      legacy `np.random.RandomState`, and this never touches numpy's global
+      random state via `np.random.seed`.
+    - Resampling uses `replace=True`. That is what lets the worst loss be
+      redrawn repeatedly and produce the fat tails a ruin figure needs. A
+      PERMUTATION (quantstats' approach) is degenerate: it preserves
+      sum(net_pnl), so every simulated path ends at the identical terminal
+      value and the tail is structurally unreachable. Do not shuffle.
+    - Each simulated path's running peak floors at 0 and its drawdown % uses
+      (capital + peak_pnl) as the denominator -- the SAME convention as
+      _calc_max_drawdown (metrics.py:154), by prepending a 0.0 anchor column
+      before the cumulative sum, mirroring how _build_equity_curve/
+      _calc_max_drawdown start from an implicit 0 P&L point. This consistency
+      is the point: it lets a differential test compare the two directly.
+
+    Returns None (the repo's established "not estimable" shape -- see
+    _calc_sharpe/_calc_sqn) when:
+    - net_pnl_list is empty/None or has fewer than MIN_TRADES_FOR_BOOTSTRAP
+      trades,
+    - capital <= 0 (deliberately NOT the silent 0.0 that _calc_max_drawdown's
+      `peak_abs > 0 else 0.0` guard produces -- docs/known-issues.md:194-195
+      records that as a known, uncorrected defect; reproducing a known defect
+      in new code would be inexcusable),
+    - the input contains any NaN/inf (never silently propagated -- see
+      docs/known-issues.md §"A2" for what happens elsewhere in this repo when
+      a NaN is allowed to evaporate silently instead).
+
+    Otherwise returns a dict:
+        max_dd_pct_p50 / _p95 / _p99: percentile bands of simulated max DD%.
+        ruin_probability: {threshold: fraction of paths whose max DD% breached
+            it} for each of RUIN_THRESHOLDS_PCT -- a set of thresholds, not one
+            magic "ruin" number; the ruin point itself is a policy decision
+            this repo has not made. Breach is `>= threshold`: touching the
+            level counts, which is the conservative reading for a risk figure.
+        iterations / seed: echoed for reproducibility.
+        trades: n used.
+
+    DELIBERATELY NOT WIRED -- this is NOT dead code, and the distinction from
+    _calc_risk_of_ruin (deleted for having zero call sites, pinned by
+    tests/test_metrics.py:393-397) is recorded in docs/known-issues.md §7.
+    Three reasons, all verified, none of them inertia:
+    - COST: measured 16ms/50 trades, 102ms/500, 474ms and ~160MB peak at 2000
+      -- per EA. calculate_ea_metrics runs in the Flask request path; making
+      every metrics call pay that is not acceptable for a capability nothing
+      currently consumes.
+    - CONTRACT: tests/oracle/test_char_metrics.py pins set-equality on
+      calculate_ea_metrics' 41 output keys. Adding a key is a deliberate
+      contract change, not a side effect of adding a capability.
+    - POLICY: wiring it into validator.py would change ELIMINAR/CONTINUAR
+      verdicts on real EAs. docs/known-issues.md §1 is blocked on real data
+      for exactly that class of calibration. Build the capability; let the
+      decision to use it be made deliberately, with data.
+    """
+    if not net_pnl_list:
+        return None
+
+    n = len(net_pnl_list)
+    if n < MIN_TRADES_FOR_BOOTSTRAP:
+        return None
+
+    if capital is None or capital <= 0:
+        return None
+
+    arr = np.array(net_pnl_list, dtype=float)
+    if not np.all(np.isfinite(arr)):
+        return None
+
+    rng = np.random.default_rng(seed)
+    sims = rng.choice(arr, size=(iterations, n), replace=True)
+
+    # Anchor each path at 0.0 before accumulating, matching
+    # _build_equity_curve/_calc_max_drawdown's implicit 0 P&L starting point --
+    # this is what makes the running peak floor at 0 rather than at the first
+    # (possibly negative) resampled trade.
+    anchor = np.zeros((iterations, 1))
+    cum = np.cumsum(np.concatenate([anchor, sims], axis=1), axis=1)
+    peak = np.maximum.accumulate(cum, axis=1)
+    dd_dollar = peak - cum
+    peak_abs = capital + peak  # always > 0: capital > 0 and peak >= 0 by construction
+    dd_pct = dd_dollar / peak_abs * 100.0
+
+    max_dd_pct_per_path = dd_pct.max(axis=1)
+
+    p50, p95, p99 = np.percentile(max_dd_pct_per_path, [50, 95, 99])
+
+    ruin_probability = {
+        threshold: float(np.mean(max_dd_pct_per_path >= threshold))
+        for threshold in RUIN_THRESHOLDS_PCT
+    }
+
+    return {
+        "max_dd_pct_p50": round(float(p50), 4),
+        "max_dd_pct_p95": round(float(p95), 4),
+        "max_dd_pct_p99": round(float(p99), 4),
+        "ruin_probability": ruin_probability,
+        "iterations": iterations,
+        "seed": seed,
+        "trades": n,
+    }
 
 
 def _calc_stagnation(last_peak_date_str):

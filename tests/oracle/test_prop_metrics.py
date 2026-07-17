@@ -235,3 +235,56 @@ def trades_with_one_nan_pnl(draw):
 def test_winning_plus_losing_equals_total_trades_under_nan_pnl(trades, frozen_clock):
     result = metrics.calculate_ea_metrics("MyEA", trades, make_config())
     assert result["winning_trades"] + result["losing_trades"] == result["total_trades"]
+
+
+# ── 8. BOOTSTRAP — metrics.calculate_bootstrap_risk ──────────────────────────
+#
+# Standalone, no conectada a calculate_ea_metrics/validator.py -- ver
+# docs/known-issues.md y la nota de scope en metrics.calculate_bootstrap_risk.
+# max_examples se mantiene en 50 (no 200, la convención del resto del
+# archivo): cada ejemplo corre un bootstrap vectorizado de
+# BOOTSTRAP_ITERATIONS=10000 rutas, así que 200 ejemplos multiplicarían el
+# costo sin ganar cobertura de propiedad adicional -- el espacio de entrada
+# (listas finitas de floats, capital positivo) es simple comparado con
+# well_formed_trades().
+
+finite_pnls = st.lists(
+    st.floats(min_value=-1e5, max_value=1e5, allow_nan=False, allow_infinity=False),
+    min_size=metrics.MIN_TRADES_FOR_BOOTSTRAP,
+    max_size=40,
+)
+
+
+@given(pnls=finite_pnls, capital=positive_floats)
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_bootstrap_risk_ranges_and_ordering(pnls, capital):
+    """Con N >= MIN_TRADES_FOR_BOOTSTRAP y capital > 0: percentiles ordenados
+    p50 <= p95 <= p99; cada probabilidad de ruina en [0,1]; la probabilidad de
+    ruina es monótonamente NO CRECIENTE a medida que sube el umbral (romper el
+    50% implica haber roto el 10%); max_dd_pct >= 0 en las tres bandas."""
+    result = metrics.calculate_bootstrap_risk(pnls, capital)
+
+    assert result is not None
+    assert result["max_dd_pct_p50"] >= 0.0
+    assert result["max_dd_pct_p50"] <= result["max_dd_pct_p95"] <= result["max_dd_pct_p99"]
+
+    probs = result["ruin_probability"]
+    ordered_thresholds = sorted(probs.keys())
+    for threshold in ordered_thresholds:
+        p = probs[threshold]
+        assert 0.0 <= p <= 1.0
+
+    for lo, hi in zip(ordered_thresholds, ordered_thresholds[1:]):
+        assert probs[hi] <= probs[lo]
+
+
+@given(pnls=finite_pnls, capital=positive_floats)
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_bootstrap_risk_deterministic_under_hypothesis_inputs(pnls, capital):
+    """Mismo seed (el default, BOOTSTRAP_SEED) -> misma salida byte-idéntica,
+    generalizado sobre la misma familia de entradas que el test de rango de
+    arriba, no sólo sobre un fixture fijo (ver test_bootstrap_risk_same_seed_is_byte_identical
+    en tests/test_metrics.py para el caso puntual)."""
+    r1 = metrics.calculate_bootstrap_risk(pnls, capital)
+    r2 = metrics.calculate_bootstrap_risk(list(pnls), capital)
+    assert r1 == r2

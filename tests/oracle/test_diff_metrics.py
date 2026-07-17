@@ -64,6 +64,21 @@ TOL_SQN = 0.01
 # precision de double casi completa.
 TOL_BINOMIAL_P = 1e-9
 
+# metrics.calculate_bootstrap_risk: a diferencia de TODAS las tolerancias de
+# arriba -- que encierran error de REDONDEO (double-precision, round() a N
+# decimales) -- esta encierra error de MUESTREO Monte Carlo, que es ordenes
+# de magnitud mas grande. Dos estimaciones bootstrap igualmente validas de la
+# MISMA distribucion subyacente, con seeds distintos y B=BOOTSTRAP_ITERATIONS
+# (10000), difieren entre si; medido empiricamente sobre 20 seeds distintos
+# con un fixture mixto de N=80 trades, el spread de max_dd_pct_p99 (la cola,
+# donde el ruido de muestreo es mayor) llego a ~1.5 puntos porcentuales. 2.0pp
+# da margen sin enmascarar un defecto real -- si algun dia dos corridas
+# difieren por mas de esto, la primera sospecha debe ser B insuficiente o un
+# bug, no ruido. NO reusar TOL_DD_PCT (0.05pp): esa tolerancia solo cubre
+# redondeo y subestimaria por mas de un orden de magnitud el ruido real de
+# un bootstrap.
+TOL_BOOTSTRAP_MC_PCT = 2.0
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # ORACULOS INDEPENDIENTES
@@ -722,3 +737,134 @@ def test_binomial_docs_normal_approximation_does_not_match_code(wins, n, p):
     # scipy no esta disponible. El doc describe un camino de codigo que no
     # existe.
     assert abs(code_val - doc_val) > 0.02
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# BOOTSTRAP RISK (metrics.calculate_bootstrap_risk)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Standalone: no conectada a validator.py/incubation_validator.py, no
+# influye ningun veredicto (ver docstring de calculate_bootstrap_risk y
+# docs/known-issues.md §1, que documenta por que esa calibracion esta
+# bloqueada por datos reales).
+
+def oracle_bootstrap_closed_form_constant_loss(pnl_per_trade, n, capital):
+    """Forma cerrada para el caso degenerado: N trades IDENTICOS y negativos.
+    Cada trade resampleado con reemplazo sigue siendo el mismo valor (es el
+    UNICO valor en el multiset), asi que las N rutas Monte Carlo son
+    identicas entre si y a la serie original: el pico se queda anclado en
+    0.0 (la serie es monotonamente decreciente) y el DD en dolares al final
+    de la ruta es N * |pnl_per_trade|. dd_pct = N*|pnl|/capital*100 -- sin
+    aleatoriedad involucrada, es una identidad, no una aproximacion.
+    """
+    max_dd_dollar = n * abs(pnl_per_trade)
+    max_dd_pct = max_dd_dollar / capital * 100.0
+    return max_dd_dollar, max_dd_pct
+
+
+def oracle_bootstrap_independent_loop(net_pnl_list, capital, iterations, seed):
+    """Reimplementacion INDEPENDIENTE del mismo bootstrap: un loop Python
+    puro (sin np.cumsum/np.maximum.accumulate vectorizado) que resamplea
+    ruta por ruta con `rng.choice(arr, size=n, replace=True)` (una llamada
+    por ruta, no un unico `size=(iterations, n)` como hace la version de
+    produccion). Comparte la MISMA definicion de drawdown (pico ancla en 0,
+    denominador capital+pico) pero consume el stream de bits del Generator
+    en un patron de llamada distinto -- por eso, aun con el mismo seed, las
+    rutas resampleadas no son necesariamente identicas trade a trade a las
+    de la version vectorizada; es una fuente genuina de ruido de muestreo
+    Monte Carlo entre dos estimaciones igualmente validas de la misma
+    distribucion, no una discrepancia de redondeo. Ver TOL_BOOTSTRAP_MC_PCT.
+    """
+    arr = np.array(net_pnl_list, dtype=float)
+    n = len(arr)
+    rng = np.random.default_rng(seed)
+    max_dd_pcts = np.empty(iterations)
+    for i in range(iterations):
+        sample = rng.choice(arr, size=n, replace=True)
+        peak = 0.0
+        pnl = 0.0
+        max_dd = 0.0
+        for p in sample:
+            pnl += p
+            if pnl > peak:
+                peak = pnl
+            dd = (peak - pnl) / (capital + peak) * 100.0
+            if dd > max_dd:
+                max_dd = dd
+        max_dd_pcts[i] = max_dd
+    return np.percentile(max_dd_pcts, [50, 95, 99])
+
+
+def test_bootstrap_risk_matches_closed_form_for_constant_negative_pnl():
+    """Con N trades identicos y negativos, el resultado Monte Carlo no tiene
+    grado de libertad: las tres bandas (p50/p95/p99) deben coincidir EXACTO
+    (a precision de punto flotante) con la forma cerrada -- no hay ruido de
+    muestreo posible cuando el multiset de resampleo tiene un unico valor.
+    """
+    n = 30
+    pnl_per_trade = -100.0
+    capital = 10000.0
+    pnls = [pnl_per_trade] * n
+
+    result = metrics.calculate_bootstrap_risk(pnls, capital)
+    assert result is not None
+
+    _, expected_pct = oracle_bootstrap_closed_form_constant_loss(pnl_per_trade, n, capital)
+
+    # Punto flotante puro (misma aritmetica repetida N*BOOTSTRAP_ITERATIONS
+    # veces) -- tolerancia minima, no la de muestreo.
+    assert result["max_dd_pct_p50"] == pytest.approx(expected_pct, abs=1e-6)
+    assert result["max_dd_pct_p95"] == pytest.approx(expected_pct, abs=1e-6)
+    assert result["max_dd_pct_p99"] == pytest.approx(expected_pct, abs=1e-6)
+
+    # Toda ruta rompe cualquier umbral <= dd_pct real, y ninguna rompe uno mayor.
+    for threshold, prob in result["ruin_probability"].items():
+        expected_prob = 1.0 if expected_pct >= threshold else 0.0
+        assert prob == pytest.approx(expected_prob, abs=1e-9)
+
+
+def test_bootstrap_risk_dd_convention_agrees_with_calc_max_drawdown_degenerate_path():
+    """El caso degenerado de arriba tiene una segunda propiedad: como las
+    N rutas Monte Carlo son identicas a la serie original (unico valor
+    posible), max_dd_pct_p50 debe coincidir tambien con lo que
+    metrics._calc_max_drawdown calcula sobre esa MISMA serie construida via
+    _build_equity_curve -- confirmando que el bootstrap usa exactamente la
+    misma convencion de denominador (capital + peak_pnl, metrics.py:154) que
+    el camino de produccion no-Monte-Carlo, no solo la formula documentada.
+    """
+    n = 30
+    pnl_per_trade = -100.0
+    capital = 10000.0
+    pnls = [pnl_per_trade] * n
+
+    result = metrics.calculate_bootstrap_risk(pnls, capital)
+
+    trades_sorted = make_trades(pnls)
+    equity_curve = metrics._build_equity_curve(trades_sorted)
+    _, prod_max_dd_pct, _ = metrics._calc_max_drawdown(equity_curve, capital)
+
+    assert result["max_dd_pct_p50"] == pytest.approx(prod_max_dd_pct, abs=1e-6)
+
+
+def test_bootstrap_risk_percentile_bands_agree_within_monte_carlo_sampling_tolerance():
+    """Dos estimaciones bootstrap INDEPENDIENTES de la misma distribucion
+    subyacente (misma entrada, mismo B=BOOTSTRAP_ITERATIONS) -- una via la
+    API vectorizada de produccion, otra via un loop puro con un patron de
+    consumo de bits distinto (oracle_bootstrap_independent_loop) -- deben
+    coincidir dentro de TOL_BOOTSTRAP_MC_PCT. Esta es la tolerancia de
+    MUESTREO, no de redondeo: con una entrada mixta (no degenerada) SI hay
+    varianza real entre resampleos, a diferencia de los dos tests
+    anteriores.
+    """
+    pnls = [50.0, -30.0, 80.0, -100.0, 20.0, -60.0, 15.0, 40.0, -25.0, 10.0] * 8  # N=80
+    capital = 10000.0
+    iterations = metrics.BOOTSTRAP_ITERATIONS
+
+    result = metrics.calculate_bootstrap_risk(pnls, capital, iterations=iterations, seed=metrics.BOOTSTRAP_SEED)
+    oracle_p50, oracle_p95, oracle_p99 = oracle_bootstrap_independent_loop(
+        pnls, capital, iterations, seed=metrics.BOOTSTRAP_SEED + 1
+    )
+
+    assert abs(result["max_dd_pct_p50"] - oracle_p50) <= TOL_BOOTSTRAP_MC_PCT
+    assert abs(result["max_dd_pct_p95"] - oracle_p95) <= TOL_BOOTSTRAP_MC_PCT
+    assert abs(result["max_dd_pct_p99"] - oracle_p99) <= TOL_BOOTSTRAP_MC_PCT
