@@ -263,15 +263,24 @@ weeks_operating = (hoy - fecha_cierre_primer_trade).days / 7
 
 El resultado se acota con `max(0.0, ...)`: como el minuendo es "hoy a las 00:00" y `fecha_cierre_primer_trade` suele llevar una hora intradía, un trade cerrado hoy mismo produciría un valor ligeramente negativo sin el clamp. No se puede escalar un límite de DD sobre semanas negativas, así que 0.0 es el piso correcto (equivalente a "recién empezó").
 
+`weeks_operating` sigue siendo la base correcta para detectar frecuencia insuficiente e inactividad — se usa en el gate de trades mínimos/tiempo de espera, en el cálculo de `freq_estado` (Sección 14) y en la atribución de causas SIN DATOS. Lo que ya **no** hace es escalar el límite de DD (ver más abajo): ese input pasó a ser el número de trades live, no el tiempo de calendario transcurrido.
+
+### Escalado del límite de DD: reloj de trades, no reloj de calendario
+
 Usado en el Live Validator para escalar el límite de DD:
 
 ```
-DD_limite = peor_DD_1mes × √(weeks_live / 4.33)
+bt_freq_mes = bt_trades / bt_months
+DD_limite   = peor_DD_1mes × √(trades_live / bt_freq_mes)
 ```
 
-4.33 = número promedio de semanas en un mes (52/12).
+`bt_freq_mes` normaliza a "un mes de ritmo de trading del backtest", igual que antes la constante 4.33 normalizaba a "un mes calendario" — `peor_DD_1mes` conserva su significado y el factor de escala sigue siendo 1.0 cuando el EA live opera al mismo ritmo que el backtest.
 
-**⚠️ Acoplamiento conocido a resolver por separado**: como `weeks_operating` crece con el tiempo aunque el EA esté inactivo, un EA dormido (sin trades nuevos) ve crecer su `weeks_live` indefinidamente, lo que **agranda** `DD_limite` — cuanto más tiempo lleva quieto, más laxo se vuelve su gate de DD. Esto es una consecuencia no deseada de reutilizar `weeks_operating` (pensado para detectar inactividad) como input directo de un cálculo que premia la inactividad con más margen de riesgo. Se deja señalado aquí; no se modifica `validator.py` en este cambio.
+**Por qué el reloj es de trades y no de calendario**: el equity es un paseo aleatorio discreto indexado por operaciones — la varianza se acumula por cada trade cerrado, no por cada día que pasa. El tiempo inactivo (sin trades nuevos) no aporta varianza nueva y por lo tanto no debe ampliar el margen de DD tolerado.
+
+Este cambio resuelve un acoplamiento que existía cuando el escalado usaba `weeks_operating` (reloj de calendario) en vez de `trades_live`:
+- **EA dormido perdonado**: como `weeks_operating` crecía con el tiempo aunque el EA estuviera inactivo, un EA dormido (sin trades nuevos, DD congelado) veía crecer su `DD_limite` indefinidamente solo por dejar pasar el tiempo — cuanto más tiempo llevaba quieto, más laxo se volvía su gate de DD. Con el reloj de trades, `trades_live` permanece congelado junto con el DD, así que `DD_limite` también permanece congelado: un EA dormido y roto sigue siendo detectado como roto sin importar cuánto tiempo pase.
+- **EA recién nacido ejecutado**: un EA sano con pocos trades y pocos días de vida (`weeks_live` diminuto) obtenía un `DD_limite` casi nulo bajo el reloj de calendario, de modo que una pérdida ordinaria ya leía FUERA el primer día. Bajo el reloj de trades, el límite escala con el número de operaciones cerradas, que es la unidad natural de riesgo acumulado, y un EA recién nacido con pocas operaciones no se ejecuta por una pérdida normal.
 
 ---
 

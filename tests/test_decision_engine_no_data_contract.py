@@ -155,7 +155,18 @@ _VALIDATOR_BT_FULL = {
 }
 
 
-def test_validator_full_reference_preserves_monitorear_63_1():
+def test_validator_full_reference_preserves_monitorear():
+    """The full-reference fixture must keep reaching a confident MONITOREAR.
+
+    The score moved 63.1 -> 54.9 when freq_estado became two-sided. This
+    fixture trades 60 trades in 20 weeks against a backtest pace of 300/48 =
+    6.25 per month, i.e. 12.99/month = 207.8% of backtest pace. The old
+    one-sided check (`OK if freq_pct >= 70`) read that 2x over-trading as OK;
+    the two-sided check reads deviation 107.8 as FUERA, which also raises
+    detcount to 3 and flags DESV. The lower boundaries are unchanged, so this
+    is purely the newly-visible over-trading. The VERDICT is unaffected --
+    that is what this test guards.
+    """
     result = calculate_validator_score(
         bt=_VALIDATOR_BT_FULL,
         mc_retest={"max_dd": 12},
@@ -164,9 +175,12 @@ def test_validator_full_reference_preserves_monitorear_63_1():
         live=_VALIDATOR_LIVE,
     )
 
-    assert result["score"] == 63.1
+    assert result["score"] == 54.9
     assert result["veredicto"] == "MONITOREAR"
     assert result["sin_datos"] is False
+    # The fixture over-trades 2x; that must now be visible, not silent.
+    assert result["freq_estado"] == "FUERA"
+    assert result["freq_pct"] == pytest.approx(207.8, abs=0.1)
 
 
 def test_validator_missing_dd_and_spp_reference_is_sin_datos_not_eliminar():
@@ -601,10 +615,19 @@ def test_metric_summary_for_tooltip_cp3_none_score_no_crash():
 
 def test_validator_weeks_operating_zero_day_one_scalper_is_sin_datos():
     """An EA that closes 5+ trades on its FIRST DAY has weeks_operating=0.
-    Both the DD-escalado and Frecuencia branches require weeks_live > 0;
-    with no MC fallback, both computed "N/D" while every OTHER estado
-    stayed confident -- this used to reach veredicto=CONTINUAR score=74.2
-    missing=[]. Must now be SIN DATOS."""
+
+    Frecuencia still requires weeks_live > 0 (trades per month is undefined
+    over zero weeks), so it computes "N/D" while every OTHER estado stays
+    confident -- this used to reach veredicto=CONTINUAR score=74.2
+    missing=[]. Must be SIN DATOS.
+
+    DD-escalado no longer contributes to `missing` here: it scales on the
+    TRADE clock (sqrt(trades_live / bt_freq_mes)), not on weeks_live, so 60
+    trades on day one carry enough accumulated variance to judge the
+    drawdown even though the calendar says zero weeks. That is deliberate --
+    the calendar clock made dd_limit 0.91% on day one and hard-eliminated
+    healthy newborn scalpers. The SIN DATOS verdict itself is unchanged.
+    """
     live = dict(_VALIDATOR_LIVE)
     live["weeks_operating"] = 0
 
@@ -615,9 +638,15 @@ def test_validator_weeks_operating_zero_day_one_scalper_is_sin_datos():
     assert result["veredicto"] == "SIN DATOS"
     assert result["score"] is None
     assert result["sin_datos"] is True
-    assert "dd_estado" in result["missing"]
     assert "freq_estado" in result["missing"]
     assert "live.weeks_operating" in result["missing"]
+    # DD is now evaluable from the trade clock, so it must NOT be reported
+    # as missing -- but the SIN DATOS blanking still applies to its estado.
+    assert "dd_estado" not in result["missing"]
+    assert result["dd_estado"] == "N/D"
+    # No confident threshold may survive next to an N/D estado/method.
+    assert result["dd_limit"] is None
+    assert result["dd_method"] == "N/D"
 
 
 def test_validator_worst_dd_1m_zero_no_mc_fallback_is_sin_datos():

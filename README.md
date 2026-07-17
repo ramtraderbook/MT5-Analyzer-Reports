@@ -26,7 +26,7 @@ Sistema de scoring ponderado 0–100 que compara resultados **Live (MT5)** vs **
 
 **Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45
 
-- DD% escalado con fórmula `sqrt(semanas_live / 4.33)`
+- DD% escalado con fórmula `sqrt(trades_live / trades_por_mes_BT)`
 - Edge Erosion: Live Expectancy vs SPP Mediana
 - Umbrales dinámicos por cantidad de trades (< 30 / 30–49 / 50–99 / 100+)
 - Datos de backtest persistidos en `validator_store.json` (local, fuera del repo)

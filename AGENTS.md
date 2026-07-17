@@ -12,6 +12,7 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 | [`docs/frontend.md`](docs/frontend.md) | Templates Jinja2, CSS, Chart.js, APIs de gráficas, gotchas |
 | [`docs/metrics-formulas.md`](docs/metrics-formulas.md) | Todas las fórmulas: P&L, DD, SQN, Sharpe, correlación, etc. |
 | [`docs/decision-logic.md`](docs/decision-logic.md) | Scoring Live Validator + Incubation CP1/CP2/CP3, pesos, veredictos, anti-limbo |
+| [`docs/known-issues.md`](docs/known-issues.md) | **Pendientes auditados y verificados, deliberadamente no corregidos. Leer antes de tocar el motor de decisión.** |
 
 ---
 
@@ -127,7 +128,7 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 
 **Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45 · SIN DATOS (guard)
 
-**DD_límite:** `Peor_DD_1Mes × sqrt(semanas_live / 4.33)`
+**DD_límite:** `Peor_DD_1Mes × sqrt(trades_live / (bt_trades / bt_months))`
 
 **Datos Live:** auto-calculados desde `calculate_ea_metrics()`
 **Datos BT:** ingresados por usuario en `/validator/edit/<magic>`

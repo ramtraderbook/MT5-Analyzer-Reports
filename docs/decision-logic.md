@@ -44,13 +44,20 @@ Cada subcategoría `S_X` tiene valor entre 0 y 10 (los sub-pesos internos suman 
 | Stagnation | 20% | Días desde último pico vs referencia BT |
 
 #### DD% Escalado (la métrica más crítica)
-El límite de DD se escala con el tiempo en live. A más tiempo operando, mayor tolerancia porque el DD acumulado sube naturalmente:
+El límite de DD se escala con los **trades operados**, no con el calendario. A más operaciones, mayor tolerancia, porque el DD acumulado sube naturalmente con la varianza acumulada:
 
 ```
-DD_limite = peor_DD_1mes_BT × √(weeks_live / 4.33)
+trades_por_mes_BT = bt_trades / bt_months
+DD_limite         = peor_DD_1mes_BT × √(trades_live / trades_por_mes_BT)
 ```
 
-El `peor_DD_1mes_BT` es el peor drawdown en cualquier ventana de 1 mes del backtest (ingresado por el usuario). Esta fórmula viene de la teoría de procesos estocásticos: el drawdown esperado crece con la raíz cuadrada del tiempo.
+El `peor_DD_1mes_BT` es el peor drawdown en cualquier ventana de 1 mes del backtest (ingresado por el usuario). La fórmula viene de la teoría de procesos estocásticos: el drawdown esperado crece con la raíz cuadrada de la varianza acumulada.
+
+**Por qué se cuentan trades y no días**: el equity es un paseo aleatorio indexado por operaciones — la varianza se acumula por trade, y el tiempo parado no acumula ninguna. Escalando por calendario, un EA dormido veía crecer su límite indefinidamente hasta que su gate de DD lo perdonaba (pasaba de ELIMINAR a CONTINUAR sin operar un solo trade), y un EA sano recién nacido recibía un límite de 0.91% el día 1 y era eliminado por dos pérdidas normales. El denominador normaliza a "un mes de trading del BT" igual que el viejo 4.33 normalizaba a "un mes de calendario", así que `peor_DD_1mes_BT` conserva su significado y el factor sigue valiendo 1 al ritmo del backtest.
+
+`weeks_live` sigue siendo correcto —y se sigue usando— para la frecuencia y la detección de inactividad; simplemente ya no es el input del escalado de DD.
+
+> **Pendiente conocido**: como `dd_limit` crece con los trades, un EA que opera muy por encima del ritmo de su backtest compra margen de drawdown (+17.5 pts por llegar a `dd_estado = OK` contra −8.25 por perder `freq_estado`: neto +9.25 a favor de portarse mal). Está medido y documentado en [`known-issues.md`](known-issues.md#1-sobre-operar-compra-margen-de-drawdown--bloqueado-por-datos), incluida la solución acordada y las dos trampas que tiene implementarla. **Leerlo antes de tocar este bloque.**
 
 | Estado | Condición |
 |---|---|

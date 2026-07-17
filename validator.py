@@ -180,6 +180,12 @@ def calculate_validator_score(
         ):
             result[key] = "N/D"
         result["wfe_status"] = "N/D"
+        # dd_limit is numeric, so it cannot join the "N/D" blanking above, but
+        # leaving it set would display a confident threshold next to an N/D
+        # dd_method and an N/D dd_estado -- the exact silent, self-contradicting
+        # number the SIN DATOS contract exists to prevent
+        # (docs/design/decision-engine-no-data-contract.md).
+        result["dd_limit"] = None
         return result
 
     if tl < min_trades:
@@ -328,10 +334,26 @@ def calculate_validator_score(
     dd_limit_used = None
     dd_method = "N/D"
     if max_dd_live is not None:
-        if bt_worst_dd_1m is not None and bt_worst_dd_1m > 0 and weeks_live > 0:
-            dd_limit = bt_worst_dd_1m * math.sqrt(weeks_live / 4.33)
+        if (
+            bt_worst_dd_1m is not None
+            and bt_worst_dd_1m > 0
+            and bt_trades is not None
+            and bt_trades > 0
+            and bt_months is not None
+            and bt_months > 0
+            and trades_live > 0
+        ):
+            # Trade clock, not a calendar clock: equity is a discrete random
+            # walk indexed by trades, so variance accumulates per trade and
+            # idle calendar time contributes none. bt_freq_mes normalizes to
+            # "one month of BT trading pace", exactly as the old 4.33 constant
+            # normalized to "one calendar month" -- bt_worst_dd_1m keeps its
+            # meaning and the scaling factor is still 1.0 at the reference
+            # trading pace (docs/metrics-formulas.md §13).
+            bt_freq_mes = bt_trades / bt_months
+            dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / bt_freq_mes)
             dd_limit_used = round(dd_limit, 2)
-            dd_method = f"sqrt({weeks_live:.1f}sem/4.33) x {bt_worst_dd_1m}%"
+            dd_method = f"sqrt({trades_live:.0f}tr/{bt_freq_mes:.1f}tr-mes) x {bt_worst_dd_1m}%"
             dd_estado = (
                 "OK"
                 if max_dd_live <= dd_limit
@@ -340,9 +362,21 @@ def calculate_validator_score(
         elif mc_r_dd is not None and mc_t_dd is not None:
             # Use the more conservative (higher) of the two MC 95% DD values as the
             # ALERTA boundary so the zone is always reachable regardless of which
-            # MC method produces a tighter threshold.
+            # MC method produces a tighter threshold. mc_r_dd/mc_t_dd are 95% MDD
+            # figures over the FULL backtest and are NOT scaled by trade/time
+            # count -- scaling them for a young EA would reintroduce the
+            # newborn-execution defect this fallback is not exposed to.
             mc_dd_alert = max(mc_r_dd, mc_t_dd)
             dd_limit_used = min(mc_r_dd, mc_t_dd)
+            # KNOWN QUIRK, deliberately left as-is: when mc_r_dd == mc_t_dd the
+            # ALERTA zone is empty (max() == min()), so this gate collapses to
+            # two states and an EA whose two MC methods AGREE gets a harsher
+            # gate than one whose methods disagree. Widening to the BT path's
+            # 1.5x convention was tried and rejected: it moves DD in
+            # (max(mc), 1.5*min(mc)] from FUERA -- a hard ELIMINAR veto -- to
+            # ALERTA, which is a broad loosening of the stop path and breaks the
+            # pinned boundaries in test_dd_estado_both_mc_present_fallback_
+            # boundaries. Changing it is a policy decision, not a bug fix.
             dd_method = "MC min(Retest,Trades) 95% (fallback)"
             dd_estado = (
                 "OK"
@@ -399,8 +433,17 @@ def calculate_validator_score(
         bt_freq_per_month = bt_trades / bt_months
         live_freq_per_month = trades_live / (weeks_live / 4.33)
         freq_pct = (live_freq_per_month / bt_freq_per_month) * 100
+        # Two-sided, like wr_estado and bars_estado: trading far ABOVE backtest
+        # pace is a deviation too. A one-sided check read 413% of BT pace as
+        # "OK", so an EA whose character changed (grid/martingale degradation,
+        # a broker feeding duplicate signals) went unflagged -- and, since
+        # dd_limit scales on sqrt(trades), that extra pace also bought it a
+        # proportionally larger drawdown allowance with nothing to object.
+        # The under-trading boundaries are unchanged: a deviation of 30 is the
+        # old freq_pct >= 70 and a deviation of 50 is the old freq_pct >= 50.
+        freq_dev = abs(freq_pct - 100)
         freq_estado = (
-            "OK" if freq_pct >= 70 else ("ALERTA" if freq_pct >= 50 else "FUERA")
+            "OK" if freq_dev <= 30 else ("ALERTA" if freq_dev <= 50 else "FUERA")
         )
     else:
         freq_pct = None
@@ -484,10 +527,16 @@ def calculate_validator_score(
                 causes.append(name)
 
         if "dd_estado" in nd_estados:
-            if weeks_live <= 0:
-                _add_cause("live.weeks_operating")
+            # The DD branch scales on the TRADE clock, so weeks_operating is no
+            # longer one of its inputs -- its causes are the trade-clock terms.
             if bt_worst_dd_1m is None or bt_worst_dd_1m <= 0:
                 _add_cause("bt.worst_dd_1m")
+            if not bt_trades or bt_trades <= 0:
+                _add_cause("bt.trades_total")
+            if not bt_months or bt_months <= 0:
+                _add_cause("bt.months")
+            if trades_live <= 0:
+                _add_cause("live.total_trades")
         if "freq_estado" in nd_estados:
             if weeks_live <= 0:
                 _add_cause("live.weeks_operating")
