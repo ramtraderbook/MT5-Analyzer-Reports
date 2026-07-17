@@ -315,7 +315,7 @@
                         <span class="val-nd">—</span>
                         {% else %}
                         <div
-                            class="val-score-ring val-score-{{ 'high' if a.score >= 70 else ('mid' if a.score >= 45 else 'low') }}{% if signif_low %} is-tentative{% endif %}"
+                            class="val-score-ring val-score-{{ 'high' if a.score >= TH.score_continuar else ('mid' if a.score >= TH.score_monitorear else 'low') }}{% if signif_low %} is-tentative{% endif %}"
                             title="Score: {{ a.score }} / 100{% if signif_low %} · significancia {{ a.signif|lower }} (muestra chica){% endif %}"
                         >
                             {% if signif_low %}{{ "%.0f"|format(a.score) }}{% else %}{{ "%.1f"|format(a.score) }}{% endif %}

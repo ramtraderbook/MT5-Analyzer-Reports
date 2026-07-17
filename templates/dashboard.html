@@ -84,13 +84,13 @@
     </div>
 
     <div
-        class="kpi-card kpi-card--{{ 'profit' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= 1.5 else ('loss' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float < 1.0 else 'neutral') }}"
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= TH.pf_good else ('loss' if portfolio.profit_factor != '∞' and portfolio.profit_factor|float < TH.pf_bad else 'neutral') }}"
         style="--i: 3"
     >
         <div class="kpi-card-top-bar"></div>
         <div class="kpi-label">Profit Factor</div>
         <div
-            class="kpi-value {% if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= 1.5 %}profit{% elif portfolio.profit_factor != '∞' and portfolio.profit_factor|float < 1.0 %}loss{% endif %}"
+            class="kpi-value {% if portfolio.profit_factor != '∞' and portfolio.profit_factor|float >= TH.pf_good %}profit{% elif portfolio.profit_factor != '∞' and portfolio.profit_factor|float < TH.pf_bad %}loss{% endif %}"
         >
             {{ portfolio.profit_factor }}
         </div>
@@ -123,13 +123,13 @@
     </div>
 
     <div
-        class="kpi-card kpi-card--{{ 'profit' if portfolio.sqn is not none and portfolio.sqn >= 2.0 else ('loss' if portfolio.sqn is not none and portfolio.sqn < 1.6 else 'neutral') }}"
+        class="kpi-card kpi-card--{{ 'profit' if portfolio.sqn is not none and portfolio.sqn >= TH.sqn_good else ('loss' if portfolio.sqn is not none and portfolio.sqn < TH.sqn_bad else 'neutral') }}"
         style="--i: 6"
     >
         <div class="kpi-card-top-bar"></div>
         <div class="kpi-label">SQN Score</div>
         <div
-            class="kpi-value {% if portfolio.sqn is not none and portfolio.sqn >= 2.0 %}profit{% elif portfolio.sqn is not none and portfolio.sqn < 1.6 %}loss{% endif %}"
+            class="kpi-value {% if portfolio.sqn is not none and portfolio.sqn >= TH.sqn_good %}profit{% elif portfolio.sqn is not none and portfolio.sqn < TH.sqn_bad %}loss{% endif %}"
         >
             {% if portfolio.sqn is not none %}{{ "%.2f"|format(portfolio.sqn)
             }}{% else %}N/A{% endif %}
@@ -320,7 +320,7 @@
                     </td>
                     <td class="mono th-center">{{ ea.total_trades }}</td>
                     <td
-                        class="mono th-center {% if ea.profit_factor != '∞' and ea.profit_factor|float >= 1.5 %}cell-profit{% elif ea.profit_factor != '∞' and ea.profit_factor|float < 1.0 %}cell-loss{% endif %}"
+                        class="mono th-center {% if ea.profit_factor != '∞' and ea.profit_factor|float >= TH.pf_good %}cell-profit{% elif ea.profit_factor != '∞' and ea.profit_factor|float < TH.pf_bad %}cell-loss{% endif %}"
                     >
                         {{ ea.profit_factor }}
                     </td>
@@ -347,7 +347,7 @@
                         {{ ea.max_consec_losses }}
                     </td>
                     <td
-                        class="mono th-center {% if ea.sqn is not none and ea.sqn >= 2.0 %}cell-profit{% elif ea.sqn is not none and ea.sqn < 1.6 %}cell-loss{% endif %}"
+                        class="mono th-center {% if ea.sqn is not none and ea.sqn >= TH.sqn_good %}cell-profit{% elif ea.sqn is not none and ea.sqn < TH.sqn_bad %}cell-loss{% endif %}"
                     >
                         {% if ea.sqn is not none %}{{ "%.2f"|format(ea.sqn) }}{%
                         if ea.sqn_note %}<span class="orientativo orientativo--mark" title="Orientativo — muestra chica (N &lt; 20): el SQN se reporta pero no es una calificación estadísticamente sólida.">&asymp;</span>{% endif %}{%

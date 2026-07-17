@@ -599,8 +599,26 @@ duros. Lo que sigue quedó registrado y no tocado.
   habiendo derivado una vez, que es la razón por la que esto queda en la
   lista.
 
-  **Para cerrarlo**: pasar los umbrales desde el backend al contexto de la
-  plantilla.
+  **✅ RESUELTO EN PARTE (fix 4D)**: un context processor
+  `inject_display_thresholds` (`ea_analyzer.py`) inyecta un dict `TH` como
+  fuente única. Los cortes de veredicto del validador (70/45) se **leen en vivo**
+  de `validator.CONFIG` (no pueden derivar); los gates de checkpoint (5/20/40) se
+  reflejan en `TH` y quedan **pinneados** al comportamiento real de
+  `get_checkpoint_for_trades` por un test anti-drift
+  (`test_frontend_contracts.py::test_injected_thresholds_match_the_engine`); los
+  cortes de color SQN 2.0/1.6 y PF 1.5/1.0 (cosméticos, sin equivalente en el
+  motor) quedan definidos una sola vez en `TH`. Las plantillas colorean por
+  `TH.*` (`dashboard.html`, `strategy.html`, `validator.html`,
+  `incubation_strategy.html`). **No se tocó el motor** (respeta "motor = fuente
+  de verdad"): las constantes siguen en su módulo y el test garantiza la sync.
+
+  **Queda fuera de 4D** (follow-up): los cortes CP3 65/45, el `DD > MC95 × 1.5`
+  y el `p < 0.03` son constantes de decisión del motor que **no aparecen como
+  lógica de color en ninguna plantilla** — solo como prosa en las tarjetas
+  explicativas de `incubation_dashboard.html`; y el `120/30` del ratio live-vs-BT
+  en `validator.html`, cuyo color ya viene del motor (`live_vs_bt_profit_status`)
+  y solo duplica el umbral en el texto de una nota. Migrar la prosa explicativa
+  y ese texto de nota es cosmético y de menor valor.
 
 - **RESUELTO** — la banda "50%" del ratio live-vs-BT que no existía en el
   código (`templates/validator.html`, tarjeta de info) se corrigió: la

@@ -221,6 +221,32 @@ def inject_csrf_token():
     return {"csrf_token": _get_csrf_token}
 
 
+@app.context_processor
+def inject_display_thresholds():
+    """Single source for the cut constants the templates color and gate by, so
+    the UI can never silently color by a threshold the engine no longer uses
+    (4D). Engine-owned verdict thresholds are read from the engine itself; the
+    checkpoint gates mirror incubation_validator.get_checkpoint_for_trades and
+    are pinned to it by an anti-drift test; the SQN/PF cuts are UI-only color
+    choices with no engine equivalent, defined here once instead of in every
+    template."""
+    from validator import CONFIG as _VC
+
+    return {
+        "TH": {
+            "score_continuar": _VC["thresh_continuar"],    # 70
+            "score_monitorear": _VC["thresh_monitorear"],  # 45
+            "cp1_min": 5,
+            "cp2_min": 20,
+            "cp3_min": 40,
+            "sqn_good": 2.0,
+            "sqn_bad": 1.6,
+            "pf_good": 1.5,
+            "pf_bad": 1.0,
+        }
+    }
+
+
 def _tokens_match(expected, provided):
     # compare_digest raises TypeError on non-ASCII str, and `provided` is
     # client-supplied -- compare raw bytes so a junk token is rejected, not a 500.

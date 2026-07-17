@@ -42,11 +42,11 @@
         {# Trade progress bar toward next checkpoint #}
         {% set trade_count = m.total_trades %}
         {% if current_verdict_card.checkpoint == 'PRE_CP1' %}
-            {% set next_cp = 'CP1' %}{% set next_thresh = 5 %}{% set bar_pct = (trade_count / 5 * 100)|int %}
+            {% set next_cp = 'CP1' %}{% set next_thresh = TH.cp1_min %}{% set bar_pct = (trade_count / TH.cp1_min * 100)|int %}
         {% elif current_verdict_card.checkpoint == 'CP1' %}
-            {% set next_cp = 'CP2' %}{% set next_thresh = 20 %}{% set bar_pct = (trade_count / 20 * 100)|int %}
+            {% set next_cp = 'CP2' %}{% set next_thresh = TH.cp2_min %}{% set bar_pct = (trade_count / TH.cp2_min * 100)|int %}
         {% elif current_verdict_card.checkpoint == 'CP2' %}
-            {% set next_cp = 'CP3' %}{% set next_thresh = 40 %}{% set bar_pct = (trade_count / 40 * 100)|int %}
+            {% set next_cp = 'CP3' %}{% set next_thresh = TH.cp3_min %}{% set bar_pct = (trade_count / TH.cp3_min * 100)|int %}
         {% else %}
             {% set next_cp = '' %}{% set next_thresh = 0 %}{% set bar_pct = 100 %}
         {% endif %}
@@ -230,7 +230,7 @@
             <div class="kpi-value {% if m.win_rate >= 50 %}profit{% else %}loss{% endif %}">{{ "%.2f"|format(m.win_rate) }}%</div>
             <div class="kpi-card-shimmer"></div>
         </div>
-        <div class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 else 'loss' }}" style="--i: 2">
+        <div class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= TH.pf_good else 'loss' }}" style="--i: 2">
             <div class="kpi-card-top-bar"></div>
             <div class="kpi-label">Profit Factor</div>
             <div class="kpi-value">{% if m.profit_factor != '∞' %}{{ "%.2f"|format(m.profit_factor|float) }}{% else %}∞{% endif %}</div>
@@ -260,7 +260,7 @@
             <div class="kpi-value">{% if m.payout_ratio != '∞' %}{{ "%.2f"|format(m.payout_ratio|float) }}{% else %}∞{% endif %}</div>
             <div class="kpi-card-shimmer"></div>
         </div>
-        <div class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= 2.0 else 'loss' }}" style="--i: 7">
+        <div class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= TH.sqn_good else 'loss' }}" style="--i: 7">
             <div class="kpi-card-top-bar"></div>
             <div class="kpi-label">SQN</div>
             <div class="kpi-value">{% if m.sqn is not none %}{{ "%.2f"|format(m.sqn) }}{% else %}N/A{% endif %}</div>

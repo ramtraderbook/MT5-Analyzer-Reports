@@ -24,9 +24,14 @@ import html5lib
 import pytest
 from flask import url_for
 
-from ea_analyzer import app
+from ea_analyzer import app, inject_display_thresholds
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# The display-threshold context processor (4D) is not applied by
+# jinja_env.from_string(...).render(); fragments that color/gate by TH.* must be
+# handed the same dict the processor injects in production.
+_TH = inject_display_thresholds()["TH"]
 
 
 def _render(template_name, **context):
@@ -419,8 +424,8 @@ def test_sqn_orientativo_hedge_shows_only_for_small_sample(path, pattern, ctx):
     """
     fragment = _sqn_fragment(path, pattern)
     with app.test_request_context("/"):
-        rendered_small = app.jinja_env.from_string(fragment).render(**ctx("(orientativo)"))
-        rendered_large = app.jinja_env.from_string(fragment).render(**ctx(""))
+        rendered_small = app.jinja_env.from_string(fragment).render(TH=_TH, **ctx("(orientativo)"))
+        rendered_large = app.jinja_env.from_string(fragment).render(TH=_TH, **ctx(""))
     assert "orientativo" in rendered_small, (
         f"{path}: SQN hedge missing when sample is small (N<20)"
     )
@@ -452,10 +457,43 @@ _BADGE_FRAG = _SIGNIF_SET + re.search(r'<span\s+class="val-badge val-\{\{ a\.ver
 def test_thin_sample_verdict_looks_tentative(signif, sin_datos, tentative):
     a = dict(signif=signif, score=52.7, veredicto=("SIN DATOS" if sin_datos else "ELIMINAR"), sin_datos=sin_datos)
     with app.test_request_context("/"):
-        badge = app.jinja_env.from_string(_BADGE_FRAG).render(a=a)
+        badge = app.jinja_env.from_string(_BADGE_FRAG).render(TH=_TH, a=a)
         # the ring is only reached when there IS a score (not sin_datos)
-        ring = app.jinja_env.from_string(_RING_FRAG).render(a=a) if not sin_datos else ""
+        ring = app.jinja_env.from_string(_RING_FRAG).render(TH=_TH, a=a) if not sin_datos else ""
     assert ("is-tentative" in badge) is tentative, f"badge tentative mismatch for {signif}/{sin_datos}"
     assert ("muestra chica" in badge) is tentative, f"badge marker mismatch for {signif}/{sin_datos}"
     if not sin_datos:
         assert ("is-tentative" in ring) is tentative, f"ring tentative mismatch for {signif}"
+
+
+# ── Contract 9: the injected display thresholds (4D) must not drift from the
+#    engine they mirror -- if the engine's cut moves, this fails loudly instead
+#    of letting the UI silently color by a stale threshold ─────────────────────
+
+
+def test_injected_thresholds_match_the_engine():
+    """4D: templates color and gate by TH.* (inject_display_thresholds) instead
+    of hardcoded literals. The engine-owned values must equal what the engine
+    actually uses; the checkpoint gates must match the real transitions of
+    incubation_validator.get_checkpoint_for_trades. This is the anti-drift guard
+    that lets the constants stay in the engine untouched while the UI reads a
+    single source."""
+    import validator as v
+    import incubation_validator as iv
+
+    th = inject_display_thresholds()["TH"]
+
+    # Verdict thresholds are read live from validator.CONFIG -- assert the wiring.
+    assert th["score_continuar"] == v.CONFIG["thresh_continuar"]
+    assert th["score_monitorear"] == v.CONFIG["thresh_monitorear"]
+
+    # Checkpoint gates mirror get_checkpoint_for_trades; pin each transition so a
+    # change to the engine's 5/20/40 breaks this test, not the UI silently.
+    gate = iv.get_checkpoint_for_trades
+    assert gate(th["cp1_min"] - 1) == "PRE_CP1" and gate(th["cp1_min"]) == "CP1"
+    assert gate(th["cp2_min"] - 1) == "CP1" and gate(th["cp2_min"]) == "CP2"
+    assert gate(th["cp3_min"] - 1) == "CP2" and gate(th["cp3_min"]) == "CP3"
+
+    # UI-only color cuts: just assert they are present and ordered sanely.
+    assert th["sqn_good"] > th["sqn_bad"] > 0
+    assert th["pf_good"] > th["pf_bad"] > 0

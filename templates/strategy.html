@@ -66,13 +66,13 @@
     </div>
 
     <div
-        class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 else ('loss' if m.profit_factor != '∞' and m.profit_factor|float < 1.0 else 'neutral') }}"
+        class="kpi-card kpi-card--{{ 'profit' if m.profit_factor != '∞' and m.profit_factor|float >= TH.pf_good else ('loss' if m.profit_factor != '∞' and m.profit_factor|float < TH.pf_bad else 'neutral') }}"
         style="--i: 2"
     >
         <div class="kpi-card-top-bar"></div>
         <div class="kpi-label">Profit Factor</div>
         <div
-            class="kpi-value {% if m.profit_factor != '∞' and m.profit_factor|float >= 1.5 %}profit{% elif m.profit_factor != '∞' and m.profit_factor|float < 1.0 %}loss{% endif %}"
+            class="kpi-value {% if m.profit_factor != '∞' and m.profit_factor|float >= TH.pf_good %}profit{% elif m.profit_factor != '∞' and m.profit_factor|float < TH.pf_bad %}loss{% endif %}"
         >
             {{ m.profit_factor }}
         </div>
@@ -128,13 +128,13 @@
     </div>
 
     <div
-        class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= 2.0 else ('loss' if m.sqn is not none and m.sqn < 1.6 else 'neutral') }}"
+        class="kpi-card kpi-card--{{ 'profit' if m.sqn is not none and m.sqn >= TH.sqn_good else ('loss' if m.sqn is not none and m.sqn < TH.sqn_bad else 'neutral') }}"
         style="--i: 7"
     >
         <div class="kpi-card-top-bar"></div>
         <div class="kpi-label">SQN Score</div>
         <div
-            class="kpi-value {% if m.sqn is not none and m.sqn >= 2.0 %}profit{% elif m.sqn is not none and m.sqn < 1.6 %}loss{% endif %}"
+            class="kpi-value {% if m.sqn is not none and m.sqn >= TH.sqn_good %}profit{% elif m.sqn is not none and m.sqn < TH.sqn_bad %}loss{% endif %}"
         >
             {% if m.sqn is not none %}{{ "%.2f"|format(m.sqn) }}{% else %}N/A{%
             endif %}
