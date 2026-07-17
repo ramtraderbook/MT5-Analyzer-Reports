@@ -136,7 +136,8 @@
         </div>
         {% if portfolio.sqn is not none %}
         <div class="kpi-sub">
-            {{ portfolio.sqn_label }} {{ portfolio.sqn_note }}
+            {{ portfolio.sqn_label }}{% if portfolio.sqn_note %}
+            <span class="orientativo" title="Orientativo — muestra chica (N &lt; 20): el SQN se reporta pero no es una calificación estadísticamente sólida.">{{ portfolio.sqn_note }}</span>{% endif %}
         </div>
         {% endif %}
         <div class="kpi-card-shimmer"></div>
@@ -349,6 +350,7 @@
                         class="mono th-center {% if ea.sqn is not none and ea.sqn >= 2.0 %}cell-profit{% elif ea.sqn is not none and ea.sqn < 1.6 %}cell-loss{% endif %}"
                     >
                         {% if ea.sqn is not none %}{{ "%.2f"|format(ea.sqn) }}{%
+                        if ea.sqn_note %}<span class="orientativo orientativo--mark" title="Orientativo — muestra chica (N &lt; 20): el SQN se reporta pero no es una calificación estadísticamente sólida.">&asymp;</span>{% endif %}{%
                         else %}N/A{% endif %}
                     </td>
                     <td
@@ -415,7 +417,8 @@
                     <td class="mono th-center">
                         <strong
                             >{% if portfolio.sqn is not none %}{{
-                            "%.2f"|format(portfolio.sqn) }}{% else %}N/A{% endif
+                            "%.2f"|format(portfolio.sqn) }}{% if portfolio.sqn_note
+                            %}<span class="orientativo orientativo--mark" title="Orientativo — muestra chica (N &lt; 20): el SQN se reporta pero no es una calificación estadísticamente sólida.">&asymp;</span>{% endif %}{% else %}N/A{% endif
                             %}</strong
                         >
                     </td>

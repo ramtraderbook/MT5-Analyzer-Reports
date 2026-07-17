@@ -351,6 +351,28 @@ code {
     margin-top: 4px;
 }
 
+/* Marca de baja confianza para el SQN con muestra chica (N < 20): el número se
+   reporta pero no es una calificación estadísticamente sólida. Se muestra allí
+   donde aparezca el SQN, con un tratamiento distinto al de un subtítulo sólido
+   para no proyectar más certeza de la que la muestra sostiene (honestidad de la
+   interfaz, 4C). */
+.orientativo {
+    font-style: italic;
+    font-weight: 600;
+    color: var(--warning);
+    border-bottom: 1px dotted var(--warning);
+    cursor: help;
+}
+
+/* Variante compacta para celdas de tabla: un signo ≈ en superíndice junto al
+   número, sin ocupar el ancho de la nota completa. */
+.orientativo--mark {
+    margin-left: 3px;
+    font-size: 0.85em;
+    vertical-align: super;
+    border-bottom: none;
+}
+
 .kpi-progress-bar {
     height: 3px;
     background: var(--border);

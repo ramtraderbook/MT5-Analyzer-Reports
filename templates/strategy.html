@@ -140,7 +140,7 @@
             endif %}
         </div>
         {% if m.sqn is not none %}
-        <div class="kpi-sub">{{ m.sqn_label }} {{ m.sqn_note }}</div>
+        <div class="kpi-sub">{{ m.sqn_label }}{% if m.sqn_note %} <span class="orientativo" title="Orientativo — muestra chica (N &lt; 20): el SQN se reporta pero no es una calificación estadísticamente sólida.">{{ m.sqn_note }}</span>{% endif %}</div>
         {% endif %}
         <div class="kpi-card-shimmer"></div>
     </div>

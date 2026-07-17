@@ -370,3 +370,60 @@ def test_every_chart_empty_state_path_clears_message_before_replot():
             )
 
     assert checked_any, "no renderer with a chart-empty-msg path found -- fixture drifted from charts.js"
+
+
+# ── Contract 7: the SQN "(orientativo)" hedge must render wherever the number
+#    shows, and only when the sample is small (4C, honestidad de la interfaz) ──
+
+
+def _sqn_fragment(path, pattern):
+    src = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+    match = re.search(pattern, src, re.DOTALL)
+    assert match, f"SQN fragment not found in {path}"
+    return match.group(0)
+
+
+# (template, regex to extract the SQN fragment, context builder taking sqn_note)
+_SQN_SURFACES = [
+    (
+        "templates/strategy.html",
+        r'\{% if m\.sqn is not none %\}\s*<div class="kpi-sub">.*?</div>\s*\{% endif %\}',
+        lambda note: dict(m=dict(sqn=11.0, sqn_label="N/A", sqn_note=note)),
+    ),
+    (
+        "templates/dashboard.html",
+        r'<div\s+class="kpi-sub">\s*\{\{ portfolio\.sqn_label \}\}.*?</div>',
+        lambda note: dict(portfolio=dict(sqn=11.0, sqn_label="N/A", sqn_note=note)),
+    ),
+    (
+        "templates/dashboard.html",
+        r'<td\s+class="mono th-center \{% if ea\.sqn.*?</td>',
+        lambda note: dict(ea=dict(sqn=11.0, sqn_note=note)),
+    ),
+    (
+        "templates/incubation_strategy.html",
+        r'\{% if m\.sqn is not none and m\.sqn_note %\}.*?\{% endif %\}',
+        lambda note: dict(m=dict(sqn=11.0, sqn_note=note)),
+    ),
+]
+
+
+@pytest.mark.parametrize("path,pattern,ctx", _SQN_SURFACES)
+def test_sqn_orientativo_hedge_shows_only_for_small_sample(path, pattern, ctx):
+    """Regression (4C): with N < 20 the SQN is reported but its quality label is
+    withheld and `sqn_note` carries "(orientativo)". Every surface that shows the
+    SQN number must render that hedge with the distinct `.orientativo` class --
+    it was dropped entirely on the per-EA table and the incubation strategy card,
+    and styled identically to a solid subtitle elsewhere. With a large sample
+    (`sqn_note` empty) the hedge must NOT appear.
+    """
+    fragment = _sqn_fragment(path, pattern)
+    with app.test_request_context("/"):
+        rendered_small = app.jinja_env.from_string(fragment).render(**ctx("(orientativo)"))
+        rendered_large = app.jinja_env.from_string(fragment).render(**ctx(""))
+    assert "orientativo" in rendered_small, (
+        f"{path}: SQN hedge missing when sample is small (N<20)"
+    )
+    assert "orientativo" not in rendered_large, (
+        f"{path}: SQN hedge shown when sample is large (must be clean)"
+    )

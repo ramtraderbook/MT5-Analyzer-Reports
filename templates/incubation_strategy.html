@@ -264,6 +264,9 @@
             <div class="kpi-card-top-bar"></div>
             <div class="kpi-label">SQN</div>
             <div class="kpi-value">{% if m.sqn is not none %}{{ "%.2f"|format(m.sqn) }}{% else %}N/A{% endif %}</div>
+            {% if m.sqn is not none and m.sqn_note %}
+            <div class="kpi-sub"><span class="orientativo" title="Orientativo — muestra chica (N &lt; 20): el SQN se reporta pero no es una calificación estadísticamente sólida.">{{ m.sqn_note }}</span></div>
+            {% endif %}
             <div class="kpi-card-shimmer"></div>
         </div>
         <div class="kpi-card kpi-card--neutral" style="--i: 8">
