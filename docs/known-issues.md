@@ -541,11 +541,19 @@ propiedades y la de oráculo diferencial.
   `live` que no pasa por `_safe_float` (los otros 9 sí).
 - **B2** — `validator.py:134`: `int(trades_live)` → `ValueError` con NaN,
   `OverflowError` con ±inf.
-- **B3** — `validator.py:434` y `:353-354`: **`ZeroDivisionError` por subnormal**
+- **B3** — `validator.py:434` y `:353-354`: **`ZeroDivisionError` por underflow**
   (hallazgo nuevo, encontrado por Hypothesis, no previsto por la auditoría
-  previa). Un `weeks_operating` o `bt.trades_total` subnormal (5e-324, 1e-323)
-  pasa la guarda `> 0`, pero la división intermedia (`/4.33`, `/months`)
-  **hace underflow a 0.0 exacto** y la siguiente división explota.
+  previa). Dos variantes, la segunda más grave:
+  - *Entrada subnormal*: un `weeks_operating` o `bt.trades_total` subnormal
+    (5e-324, 1e-323) pasa la guarda `> 0`, pero la división intermedia
+    (`/4.33`, `/months`) **hace underflow a 0.0 exacto** y la siguiente
+    división explota.
+  - *Cociente que hace underflow* (más amplio): **no hacen falta subnormales**.
+    `bt.trades_total = 2.49e-238` y `bt.months = 4.61e+204` son floats
+    perfectamente normales y ambos `> 0`, pero su **cociente** cae por debajo
+    del subnormal mínimo y da `0.0` exacto (`:353`), y `:354` explota. La
+    lección general: **la guarda `x > 0 and y > 0` no garantiza `x / y > 0`**.
+    Ninguna validación de rango sobre los operandos por separado lo evita.
 - **B4** — `incubation_validator._safe_int(float("inf"))` → `OverflowError` no
   capturado: el `except (TypeError, ValueError)` (`:49-55`) no lo cubre.
   Alcanzable vía `total_trades` y `max_consec_losses` en cualquier checkpoint.

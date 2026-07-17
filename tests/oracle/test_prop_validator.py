@@ -270,16 +270,38 @@ _SAFE_TRADE_COUNT = st.one_of(
 )
 
 
+# bt.trades_total y bt.months son los operandos de `bt_trades / bt_months`
+# (validator.py:353). Dos floats PERFECTAMENTE NORMALES (ninguno subnormal) que
+# pasan la guarda `> 0` pueden tener un cociente que hace underflow a 0.0
+# exacto -- p.ej. 2.5e-238 / 4.6e+204 -> 0.0 -- y la división siguiente explota.
+# Es una clase de defecto DISTINTA (y más amplia) que la del subnormal: acá el
+# underflow lo produce la división, no la entrada, así que `allow_subnormal=False`
+# no la evita. Se aísla en su propio test determinista
+# (test_bt_freq_quotient_underflow_crashes, más abajo) y se acota acá para que
+# esta propiedad general mida el espacio restante en vez de re-encontrar un
+# defecto ya documentado.
+_SAFE_BT_RATIO_OPERAND = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(min_value=-10 ** 6, max_value=10 ** 6),
+    st.floats(min_value=1e-6, max_value=1e6, allow_nan=False, allow_infinity=False),
+    st.sampled_from(["", "5", "5.5", "-3", "abc", "1e10", "nan"]),
+)
+
+
 @st.composite
 def fuzzy_bt(draw):
-    return {
+    bt = {
         k: draw(_SAFE_SCALARS)
         for k in (
             "win_rate", "profit_factor", "payout_ratio", "expectancy", "avg_bars",
-            "max_dd_pct", "max_consec_losses", "trades_total", "months",
+            "max_dd_pct", "max_consec_losses",
             "worst_dd_1m", "worst_dd_3m", "stagnation_days",
         )
     }
+    bt["trades_total"] = draw(_SAFE_BT_RATIO_OPERAND)
+    bt["months"] = draw(_SAFE_BT_RATIO_OPERAND)
+    return bt
 
 
 @st.composite
@@ -436,5 +458,35 @@ def test_weeks_operating_subnormal_crashes(weeks, frozen_clock):
 ))
 def test_bt_trades_total_subnormal_crashes(trades_total, frozen_clock):
     bt = make_bt(trades_total=trades_total, months=2.0)
+    live = make_live(total_trades=5, weeks_operating=1.0)
+    validator.calculate_validator_score(bt, make_mc(), make_mc(), make_spp(), live)
+
+
+# DETERMINISTIC, not @given: Hypothesis encontró este caso con una semilla
+# nueva, y se lo fija con el valor exacto para que no dependa del sorteo.
+@pytest.mark.parametrize(
+    "trades_total,months",
+    [(2.48829416752246e-238, 4.605831368114236e+204), (1e-200, 1e200)],
+    ids=["hypothesis-found", "hand-derived"],
+)
+@pytest.mark.xfail(strict=True, reason=(
+    "COUNTEREXAMPLE (encontrado por Hypothesis con una semilla nueva, más "
+    "amplio que el caso subnormal): dos floats PERFECTAMENTE NORMALES -- "
+    "ninguno subnormal, ambos > 0 -- cuyo COCIENTE hace underflow a 0.0 "
+    "exacto. bt.trades_total=2.49e-238 y bt.months=4.61e+204 pasan la guarda "
+    "`bt_trades > 0 and bt_months > 0` (validator.py:341), pero "
+    "`bt_freq_mes = bt_trades / bt_months` (:353) da EXACTAMENTE 0.0 porque "
+    "el resultado cae por debajo del subnormal mínimo (~5e-324), y "
+    "`trades_live / bt_freq_mes` (:354) explota con ZeroDivisionError. "
+    "POR QUÉ IMPORTA MÁS QUE EL CASO SUBNORMAL: acá el underflow lo produce "
+    "la DIVISIÓN, no la entrada, así que ninguna validación de rango sobre "
+    "los operandos por separado lo evita -- `allow_subnormal=False` no "
+    "ayuda. La guarda `x > 0 and y > 0` NO garantiza `x / y > 0`. "
+    "Repro: calculate_validator_score(make_bt(trades_total=2.48829416752246e-238, "
+    "months=4.605831368114236e+204), make_mc(), make_mc(), make_spp(), "
+    "make_live(total_trades=5, weeks_operating=1.0))."
+))
+def test_bt_freq_quotient_underflow_crashes(trades_total, months, frozen_clock):
+    bt = make_bt(trades_total=trades_total, months=months)
     live = make_live(total_trades=5, weeks_operating=1.0)
     validator.calculate_validator_score(bt, make_mc(), make_mc(), make_spp(), live)
