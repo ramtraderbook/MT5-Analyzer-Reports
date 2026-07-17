@@ -541,29 +541,60 @@ def _incubation_metric_band_state(live_value, mc95_value, mc50_value, inverse=Fa
     return {"label": "🔴", "class": "cmp-red", "score_band": "below_mc95"}
 
 
+def count_cp1_hard_gates(gates):
+    """Count CP1 hard gates passed vs. total.
+
+    `frequency` is a WARNING, not a pass/fail gate (see `_hard_gates` in
+    incubation_validator.py): it never carries a "passed" key, only
+    "status". Treat it as passed when status == "OK" -- the same rule the
+    dashboard row label must use (JD-5 C4) so the label and this tooltip
+    never diverge on the same fully-passing EA.
+    """
+    passed = 0
+    total = 0
+    for key, gate in (gates or {}).items():
+        if not isinstance(gate, dict):
+            continue
+        if key == "frequency":
+            total += 1
+            passed += 1 if gate.get("status") == "OK" else 0
+            continue
+        if "passed" in gate:
+            total += 1
+            passed += 1 if gate.get("passed") else 0
+    return passed, total
+
+
 def metric_summary_for_tooltip(evaluation):
     if not evaluation:
         return "NO DATA"
 
     details = evaluation.get("details", {})
     checkpoint = evaluation.get("current_checkpoint", "")
+    if evaluation.get("verdict") == "SIN DATOS":
+        # JD-5 C8: a SIN DATOS evaluation carries no real gate/metric
+        # tallies (gates:{}, failing_count absent, etc. -- see _sd_result
+        # in incubation_validator.py). Fabricating "0/0 passed" or
+        # "0/7 failing" contradicts the SIN DATOS verdict shown in the
+        # same cell; state the actual missing-data reason instead.
+        missing = evaluation.get("missing") or details.get("missing") or []
+        return f"SIN DATOS: {len(missing)} campos faltantes" if missing else "SIN DATOS: datos faltantes"
     if checkpoint == "CP1":
         gates = details.get("gates", {})
-        passed = 0
-        total = 0
-        for key, gate in gates.items():
-            if not isinstance(gate, dict):
-                continue
-            if key == "frequency":
-                total += 1
-                passed += 1 if gate.get("status") == "OK" else 0
-                continue
-            if "passed" in gate:
-                total += 1
-                passed += 1 if gate.get("passed") else 0
+        passed, total = count_cp1_hard_gates(gates)
         return f"Hard gates: {passed}/{total} passed"
     if checkpoint == "CP2":
-        failing = details.get("failing_count", 0)
+        failing = details.get("failing_count")
+        if failing is None:
+            # JD-5 C5: the CP2 hard-gate branch never evaluates bands --
+            # failing_count is None, not 0 (evaluate_cp2's hard-gate-failed
+            # return). A bare `or 0` default would collapse "not evaluated"
+            # into "zero failing", asserting bands are OK when they were
+            # never checked.
+            hard_gate_failures = details.get("hard_gate_failures") or []
+            if hard_gate_failures:
+                return "Hard gates failed: " + ", ".join(hard_gate_failures)
+            return "Hard gates failed"
         return f"Failing metrics: {failing}/7"
     if checkpoint == "CP3":
         score = evaluation.get("score")
@@ -895,7 +926,17 @@ def build_verdict_card(evaluation):
         "verdict_reading": verdict_reading,
         "failing_metrics": failing_metrics,
         "escalation_from_cp2": bool(details.get("escalation_from_cp2")),
-        "category_scores": details.get("category_scores", {}),
+        # JD-5 C3: incubation_validator.py stores category_scores as a
+        # dict-of-dicts ({"score","weight","details"} per category -- see
+        # evaluate_cp3), but the CP3 template contracts for a scalar per
+        # category (`val|int`, `"%.0f"|format(val)`) and crashes with
+        # TypeError on the raw dict. Flatten to the engine-computed numeric
+        # score per category so the template gets what it expects, without
+        # re-deriving or rounding the value itself.
+        "category_scores": {
+            cat: (val.get("score") if isinstance(val, dict) else val)
+            for cat, val in (details.get("category_scores") or {}).items()
+        },
         "freq_deadline_info": freq_deadline_info,
     }
 

@@ -299,3 +299,51 @@ Contexto de despliegue: `docs/backend.md` contempla explícitamente un despliegu
 WSGI, y por eso los puntos marcados "solo WSGI" siguen abiertos en vez de
 descartados. La app tal como se ejecuta hoy (`app.run` en 127.0.0.1, monoproceso,
 sin `threaded=True`) no los alcanza.
+
+## 12. Capa de view-model de incubación — hallazgos auditados y no corregidos (JD-5)
+
+La auditoría JD-5 revisó la capa que traduce el veredicto del motor a lo que ve el
+usuario: `_build_incubation_dashboard`, las secciones de datos de referencia y el
+parseo/validación de su formulario. Los ocho defectos que podían mostrar una
+conclusión distinta a la que calculó el motor —o borrar datos obligatorios en
+silencio— se corrigieron. Lo que sigue quedó registrado y no tocado.
+
+- **Las secciones MC y SPP no se pueden vaciar desde el formulario**. `mc_*` y
+  `spp` se guardan con `payload or existing`, así que si el usuario borra a
+  propósito una sección para eliminar datos cargados por error, el dict vacío es
+  falsy y los valores viejos reviven. El guardado no avisa nada y esos datos
+  siguen alimentando veredictos que el usuario cree haber quitado. El único
+  camino de borrado hoy es el botón Delete, que elimina la entrada entera. Es el
+  reverso exacto de C1: ahí el problema era que el backtest **no** se preservaba;
+  acá es que MC/SPP se preservan cuando no deberían. Cerrarlo bien pide distinguir
+  "campo no enviado" de "campo vaciado a propósito", que es un cambio de contrato
+  del formulario, no un parche.
+- **`incubation_reference_data` marca "datos cargados" sin MC50**. La lista usa un
+  chequeo propio (`has_bt and (manip.confidence_95 or retest.confidence_95)`) que
+  duplica a mano la regla de `reference_ready()`. Por eso una entrada sin MC50
+  aparece como completa y recién se convierte en SIN DATOS cuando la EA llega a 20
+  trades y el motor exige las claves `mc50.*`. Además trata como alternativas
+  (OR) las dos secciones MC95 que AGENTS.md declara obligatorias por separado. El
+  arreglo natural es llamar a `reference_ready()` —ya importado en el archivo— pero
+  eso cambia qué EAs figuran como listas en la UI y conviene decidirlo con datos
+  reales a la vista.
+- **La columna "Días" usa otro reloj que el motor**. El dashboard calcula los días
+  con `days_since_first_trade()` (primer trade cerrado) mientras el motor cuenta
+  desde `date_added` (design C7). Para una EA agregada hace 60 días cuyo primer
+  trade cerró hace 5, la fila muestra 5 al lado de un veredicto que el motor
+  calculó con `days_incubating = 60`, y la página de estrategia muestra las dos
+  cifras a la vez. La evaluación ya trae `days_incubating`; unificar es fácil, pero
+  cambia una cifra visible en todas las filas y merece confirmarse antes.
+- **Claves legacy y helpers duplicados**. `entry.get("mc_manipulation") or
+  entry.get("monte_carlo")` está copiado textual en tres lugares
+  (`incubation_reference_data`, `..._edit`, `..._save`), y cada guardado sigue
+  reescribiendo la clave vieja `monte_carlo` por compatibilidad. `fmt_dt` está
+  definido tres veces: las copias de `incubation_strategy` y `strategy` son
+  idénticas, y la del dashboard live derivó (le falta la rama `isinstance(...,
+  datetime)`). Hoy no rompe nada porque el cache guarda fechas como strings ISO
+  (AGENTS.md), pero es deriva esperando pasar.
+- **Contadores muertos en el view-model**. `_build_incubation_dashboard` calcula
+  `observar_count`, `continuar_count` y `pending_count`, pero la ruta solo pasa
+  cinco contadores a la plantilla y esos tres no se renderizan. `pending_count`
+  además mezcla dos significados: EAs sin datos de referencia y EAs con veredicto
+  PENDING.
