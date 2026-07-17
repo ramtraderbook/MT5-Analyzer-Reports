@@ -35,7 +35,7 @@ RESULT_KEYS = {
     "edge_erosion", "expect_live", "spp_expect_median", "edge_estado",
     "stagn_live", "stagn_bt", "stagn_label", "stagn_estado",
     "s_riesgo", "s_edge", "s_caracter", "s_desv", "detcount",
-    "wfe", "wfe_status",
+    "live_vs_bt_ratio", "live_vs_bt_status",
 }
 
 
@@ -75,7 +75,7 @@ def test_full_scored_shape_key_set_and_types():
     assert isinstance(r["score"], float)
     # todos los *_estado escalonados deben ser uno de estos 3 -- "N/D" es
     # inalcanzable en esta forma para los 9 estados scoreados (gate #2,
-    # validator.py:500-555). wfe_status esta explicitamente exento.
+    # validator.py:500-555). live_vs_bt_status esta explicitamente exento.
     for key in ("wr_estado", "pf_estado", "payout_estado", "dd_estado",
                 "consec_estado", "bars_estado", "freq_estado", "edge_estado",
                 "stagn_estado"):
@@ -458,44 +458,45 @@ def test_detcount_and_s_desv_thresholds():
     assert three["desv_flag"] == "DESV"  # thresh_desv == 3
 
 
-# ── §3.14: WFE, incl. redondeo ANTES de bandear ─────────────────────────────
+# ── §3.14: live_vs_bt_ratio, incl. redondeo ANTES de bandear ────────────────
 
-@pytest.mark.parametrize("wfe_target_pct,estado", [
+@pytest.mark.parametrize("ratio_target_pct,estado", [
     (120.0, "OK"), (70.0, "OK"), (69.9, "ALERTA"), (30.0, "ALERTA"), (29.9, "FUERA"),
 ])
-def test_wfe_bands(wfe_target_pct, estado):
+def test_live_vs_bt_ratio_bands(ratio_target_pct, estado):
     """
     bt_expect=10,bt_trades=120,bt_months=12 -> bt_profit_per_month=100.
-    Se ajusta expect_live para que wfe caiga cerca del borde deseado.
+    Se ajusta expect_live para que el ratio caiga cerca del borde deseado.
     """
     live_months = 40.0 / 4.33
-    expect_live = wfe_target_pct * live_months / 100.0
+    expect_live = ratio_target_pct * live_months / 100.0
     r = v.calculate_validator_score(
         make_bt(expectancy=10.0, trades_total=120, months=12.0),
         make_mc(12.0), make_mc(14.0), make_spp(),
         make_live(expectancy=expect_live),
     )
-    assert r["wfe_status"] == estado
+    assert r["live_vs_bt_status"] == estado
 
 
-def test_wfe_round_before_band_defect_is_pinned():
+def test_live_vs_bt_ratio_round_before_band_defect_is_pinned():
     """
-    DEFECT-PIN: wfe se compara DESPUES de redondearlo a 1dp
-    (validator.py:673: `wfe = round(..., 1)` y LUEGO `if wfe > 120`). Un
-    ratio crudo de ~120.05% (verificado por busqueda binaria contra la
-    funcion real: raw==120.04999999999998) redondea a 120.0 y por lo tanto
-    queda del lado OK, NO del lado ALERTA que un umbral evaluado sobre el
-    valor crudo hubiera dado. Pinneado porque es el comportamiento actual,
-    NO porque sea correcto -- un EA que superó el BT en +20.05% escapa
-    silenciosamente de la señal de posible sobreajuste del backtest.
+    DEFECT-PIN: live_vs_bt_ratio se compara DESPUES de redondearlo a 1dp
+    (validator.py: `live_vs_bt_ratio = round(..., 1)` y LUEGO
+    `if live_vs_bt_ratio > 120`). Un ratio crudo de ~120.05% (verificado por
+    busqueda binaria contra la funcion real: raw==120.04999999999998)
+    redondea a 120.0 y por lo tanto queda del lado OK, NO del lado ALERTA que
+    un umbral evaluado sobre el valor crudo hubiera dado. Pinneado porque es
+    el comportamiento actual, NO porque sea correcto -- un EA que superó el
+    BT en +20.05% escapa silenciosamente de la señal de posible sobreajuste
+    del backtest.
     """
     r = v.calculate_validator_score(
         make_bt(expectancy=10.0, trades_total=120, months=12.0),
         make_mc(12.0), make_mc(14.0), make_spp(),
         make_live(expectancy=11.090069284064665, total_trades=100, weeks_operating=40.0),
     )
-    assert r["wfe"] == 120.0
-    assert r["wfe_status"] == "OK"  # NO "ALERTA", pese a que el crudo era >120
+    assert r["live_vs_bt_ratio"] == 120.0
+    assert r["live_vs_bt_status"] == "OK"  # NO "ALERTA", pese a que el crudo era >120
 
 
 # ── §3.1: Veredicto 70/45, incl. el split redondeado-vs-crudo ──────────────
@@ -653,11 +654,11 @@ def test_nd_result_setdefault_leak_at_gate_2_is_pinned():
     # ambos MC ausentes), asi que no hay numero confiado que mostrar.
     assert r["dd_limit"] is None
 
-    # Las categorias/score/wfe SI quedan correctamente en None -- todavia
-    # no se habian calculado en este punto del flujo.
-    for key in ("s_riesgo", "s_edge", "s_caracter", "s_desv", "detcount", "wfe"):
+    # Las categorias/score/live_vs_bt_ratio SI quedan correctamente en None --
+    # todavia no se habian calculado en este punto del flujo.
+    for key in ("s_riesgo", "s_edge", "s_caracter", "s_desv", "detcount", "live_vs_bt_ratio"):
         assert r[key] is None
-    assert r["wfe_status"] == "N/D"
+    assert r["live_vs_bt_status"] == "N/D"
 
 
 # ── §1.2: get_all_validator_results -- orden de sort y skips ───────────────

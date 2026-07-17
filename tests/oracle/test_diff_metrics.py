@@ -222,12 +222,15 @@ def oracle_sqn_stdlib(net_pnl_list):
 
 
 def oracle_sqn_tharp_capped(net_pnl_list):
-    """SQN segun el estandar de Van Tharp: sqrt(min(n, 100)) * mean / stdev.
+    """SQN segun la convencion capada de la comunidad (atribucion a Tharp no
+    verificada): sqrt(min(n, 100)) * mean / stdev.
 
-    docs/metrics-formulas.md (seccion 8, "SQN") y docs/known-issues.md §7
-    anotan explicitamente que metrics.py NO tiene el cap de Tharp en
-    sqrt(100) y usa sqrt(n) sin limite. Este oraculo materializa el
-    estandar CON el cap para medir la divergencia real en un N grande.
+    docs/known-issues.md §7 y docs/research/prior-art.md §2.2 documentan que
+    la atribucion de este cap a Van Tharp no pudo confirmarse ni descartarse
+    contra una fuente primaria (vantharpinstitute.com 403, libro paywalled);
+    el cap rastrea solo a paráfrasis de terceros sin cita. metrics.py usa
+    sqrt(n) sin limite. Este oraculo materializa la convencion CON el cap
+    para medir la divergencia frente a esa convencion en un N grande.
     """
     n = len(net_pnl_list)
     if n < 2:
@@ -644,13 +647,16 @@ def test_sqn_two_trades_below_label_threshold_but_value_present():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "DIVERGENCIA: metrics._calc_sqn usa sqrt(n)*mean/std SIN el cap de "
-        "Van Tharp en sqrt(100) (docs/known-issues.md §7). Sobre una muestra de "
-        "150 trades, SQN sin cap != SQN con cap sqrt(min(n,100)) por > 0.3 "
-        "-- ver oracle_sqn_tharp_capped vs oracle_sqn_stdlib en este mismo "
+        "DIVERGENCIA: metrics._calc_sqn usa sqrt(n)*mean/std SIN el cap "
+        "sqrt(100) de la convencion capada de la comunidad, cuya atribucion "
+        "a Van Tharp no esta verificada (docs/known-issues.md §7, "
+        "docs/research/prior-art.md §2.2). Sobre una muestra FIJA de 150 "
+        "trades, SQN sin cap != SQN con cap sqrt(min(n,100)) por > 0.3 -- "
+        "ver oracle_sqn_tharp_capped vs oracle_sqn_stdlib en este mismo "
         "archivo. El repo Y su propia docstring coinciden en NO tener el "
         "cap (documentado, no un bug); este xfail deja visible cuanto se "
-        "aleja del estandar de Tharp para muestras grandes."
+        "aleja de esa convencion capada para esta muestra de 150, sin "
+        "asegurar nada sobre el crecimiento con N."
     ),
 )
 def test_sqn_uncapped_diverges_from_tharp_standard_for_large_n():
@@ -665,7 +671,8 @@ def test_sqn_uncapped_diverges_from_tharp_standard_for_large_n():
     tharp_capped = oracle_sqn_tharp_capped(pnls)
     assert m["sqn"] is not None
     # Esta asercion es la que FALLA a proposito (xfail strict): el repo
-    # (sqrt(n), sin cap) no coincide con el estandar de Tharp (sqrt(min(n,100))).
+    # (sqrt(n), sin cap) no coincide con la convencion capada de la comunidad
+    # (sqrt(min(n,100))), cuya atribucion a Tharp no esta verificada.
     assert abs(m["sqn"] - tharp_capped) <= TOL_SQN
 
 
