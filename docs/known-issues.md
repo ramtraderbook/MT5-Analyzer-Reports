@@ -605,11 +605,23 @@ propiedades y la de oráculo diferencial.
 
 ### E. Hipótesis refutada por el arnés
 
-- El split de redondeo score/veredicto **no existe en `validator.py`** (sí en
-  CP3, ver A1). Se sospechaba que un score crudo de 69.96 podía publicarse como
-  70.0 con veredicto `MONITOREAR`. Es **inalcanzable**: enumerando con
-  `Fraction` todas las combinaciones alcanzables de `(s_riesgo, s_edge,
-  s_caracter, s_desv)`, el score crudo cae siempre en una grilla exacta de
-  múltiplos de 0.125, y el punto inmediatamente inferior a 70 es **67.5**, que
-  redondea a 67.5 — mismo lado que la comparación. Pinneado como caracterización,
-  no como defecto.
+- El split de redondeo score/veredicto **no se puede alcanzar en `validator.py`**
+  (sí en CP3, ver A1). Se sospechaba que un score crudo de 69.96 podía
+  publicarse como 70.0 con veredicto `MONITOREAR`. Enumerando con `Fraction`
+  las 701 combinaciones alcanzables de `(s_riesgo, s_edge, s_caracter, s_desv)`
+  — recordando que los tres primeros son sumas ponderadas de sub-scores, no
+  valores de `{0,5,10}` — el score crudo cae en una grilla exacta de múltiplos
+  de 0.125. El punto inmediatamente inferior a 70 es **69.875**, que redondea a
+  69.9: mismo lado que la comparación. El intervalo `[69.95, 70)` está vacío, y
+  el `[44.95, 45)` también, así que ninguna de las dos bandas puede partirse.
+  Pinneado como caracterización, no como defecto
+  (`test_char_validator.py:585`).
+
+  **Pero la estructura del defecto SÍ está**: `validator.py:614` publica
+  `round(score, 1)` mientras `:625-628` deciden con el `score` crudo —
+  exactamente el mismo patrón que en CP3, donde sí explota. Acá no explota sólo
+  porque la grilla no tiene puntos en el intervalo peligroso, y el margen es de
+  **un paso de grilla (0.125)**, no de una distancia cómoda. Es una coincidencia
+  aritmética, no un diseño: cualquier cambio futuro en los pesos de `CONFIG`
+  mueve la grilla y puede abrir el hueco sin que nadie toque la lógica del
+  veredicto.
