@@ -427,3 +427,35 @@ def test_sqn_orientativo_hedge_shows_only_for_small_sample(path, pattern, ctx):
     assert "orientativo" not in rendered_large, (
         f"{path}: SQN hedge shown when sample is large (must be clean)"
     )
+
+
+# ── Contract 8: a thin-sample verdict must LOOK tentative -- the score ring and
+#    the verdict badge desaturate and carry a "muestra chica" marker when
+#    significance is Baja/Muy baja, so a KILL on 14 trades never renders as firm
+#    as one on 500 (4B, honestidad de la interfaz) ────────────────────────────
+
+_VALIDATOR_HTML = (PROJECT_ROOT / "templates" / "validator.html").read_text(encoding="utf-8")
+# The row-level {% set signif_low %} lives outside these fragments; re-declare it
+# so each extracted fragment renders with the same logic as production.
+_SIGNIF_SET = "{% set signif_low = a.signif in ['Baja', 'Muy baja'] %}"
+_RING_FRAG = _SIGNIF_SET + re.search(r'<div\s+class="val-score-ring.*?</div>', _VALIDATOR_HTML, re.DOTALL).group(0)
+_BADGE_FRAG = _SIGNIF_SET + re.search(r'<span\s+class="val-badge val-\{\{ a\.veredicto.*?muestra chica</span>\s*\{% endif %\}', _VALIDATOR_HTML, re.DOTALL).group(0)
+
+
+@pytest.mark.parametrize("signif,sin_datos,tentative", [
+    ("Alta", False, False),
+    ("Media", False, False),
+    ("Baja", False, True),
+    ("Muy baja", False, True),
+    ("Muy baja", True, False),  # SIN DATOS already states the absence -- never double-mark
+])
+def test_thin_sample_verdict_looks_tentative(signif, sin_datos, tentative):
+    a = dict(signif=signif, score=52.7, veredicto=("SIN DATOS" if sin_datos else "ELIMINAR"), sin_datos=sin_datos)
+    with app.test_request_context("/"):
+        badge = app.jinja_env.from_string(_BADGE_FRAG).render(a=a)
+        # the ring is only reached when there IS a score (not sin_datos)
+        ring = app.jinja_env.from_string(_RING_FRAG).render(a=a) if not sin_datos else ""
+    assert ("is-tentative" in badge) is tentative, f"badge tentative mismatch for {signif}/{sin_datos}"
+    assert ("muestra chica" in badge) is tentative, f"badge marker mismatch for {signif}/{sin_datos}"
+    if not sin_datos:
+        assert ("is-tentative" in ring) is tentative, f"ring tentative mismatch for {signif}"

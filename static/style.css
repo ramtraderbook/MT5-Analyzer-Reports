@@ -373,6 +373,24 @@ code {
     border-bottom: none;
 }
 
+/* Veredicto y score sobre muestra insuficiente (significancia Baja/Muy baja):
+   se desaturan y se marcan "muestra chica" para que un KILL sobre 14 trades no
+   se lea igual de firme que uno sobre 500. El chip de significancia (columna
+   Live) sigue mostrando el tier exacto (honestidad de la interfaz, 4B). */
+.val-score-ring.is-tentative,
+.val-badge.is-tentative {
+    opacity: 0.5;
+    filter: saturate(0.4);
+}
+.val-muestra-chica {
+    display: block;
+    margin-top: 3px;
+    font-size: 0.6rem;
+    font-style: italic;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
 .kpi-progress-bar {
     height: 3px;
     background: var(--border);
