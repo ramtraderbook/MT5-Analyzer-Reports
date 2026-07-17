@@ -8,15 +8,16 @@ lugar de debilitar la propiedad. Un xpass bajo strict=True es una falla del
 arnés (significa que el defecto documentado se corrigió y el marcador quedó
 obsoleto).
 
-Anclas citadas contra el árbol de trabajo en commit a934bcc (ver
-scratchpad/ground-truth.md).
+Anclas citadas contra el árbol de trabajo real (validator.py) y, cuando
+aplica, contra docs/decision-logic.md y docs/known-issues.md -- nunca
+contra "ground-truth.md" o "scratchpad/", que no existen en este repo.
 """
 
 import copy
 import math
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 import validator
@@ -121,35 +122,70 @@ def test_veredicto_always_in_legal_set(bt, live, mc_r, mc_t, spp_med, frozen_clo
     assert result["sin_datos"] is (result["veredicto"] == "SIN DATOS") or result["veredicto"] == "ELIMINAR"
 
 
-def _veredicto_from_score(score, thresh_continuar, thresh_monitorear):
-    """Réplica pura de la cascada validator.py:626-631 (ignora los atajos de
-    dd_estado/pf_live -- esos se prueban aparte, aquí se fija sólo la
-    partición score->veredicto en sí)."""
-    if score >= thresh_continuar:
-        return "CONTINUAR"
-    elif score >= thresh_monitorear:
-        return "MONITOREAR"
-    else:
-        return "ELIMINAR"
+@given(bt=bt_strategy(), live=live_strategy(), mc_r=clean_floats, mc_t=clean_floats, spp_med=clean_floats)
+# Ambos overrides ocupan ventanas ANGOSTAS del espacio de entrada (dd_estado
+# =="FUERA" y sobre todo pf_live<1.0 con tl>=50 -- un rango de 1.0 de ancho
+# dentro de un dominio clean_floats de [-1e6,1e6]), así que la búsqueda
+# aleatoria de Hypothesis por sí sola los visita con muy baja probabilidad
+# dentro del presupuesto de max_examples. Verificado por mutation testing
+# manual (pf_live<1.0 mutado a pf_live<1.3 en validator.py): la búsqueda
+# aleatoria sin @example NO detectó la mutación en una corrida de 300
+# ejemplos. Estos dos @example fijan un caso de cada rama de override
+# explícitamente, así que la propiedad SIEMPRE los ejercita, en cada corrida,
+# sin depender de qué ejemplos dibuje Hypothesis por azar.
+@example(
+    bt=make_bt(), live=make_live(total_trades=100, max_dd_pct=50.0),
+    mc_r=12.0, mc_t=14.0, spp_med=10.0,
+)  # dd_estado=="FUERA" (score alto, 79.0, que sin el override sería CONTINUAR)
+@example(
+    bt=make_bt(), live=make_live(total_trades=50, profit_factor=1.1),
+    mc_r=12.0, mc_t=14.0, spp_med=10.0,
+)  # pf_live<1.0 y tl>=50 (score alto, 77.9, que sin el override sería CONTINUAR)
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_verdict_band_function_is_total_partition(bt, live, mc_r, mc_t, spp_med, frozen_clock):
+    """Totalidad/disjunción probada contra la CASCADA REAL de veredicto
+    (validator.py:622-631), no contra una réplica.
 
+    Una réplica anterior de este test modelaba solo la banda de score
+    70/45 (CONFIG:40-41) e ignoraba las DOS ramas de override que la
+    cascada real evalúa ANTES de mirar el score: dd_estado=="FUERA" (:622)
+    y pf_live<1.0 con tl>=50 (:624). Como la réplica nunca llamaba a
+    calculate_validator_score, un cambio real en esas dos ramas de
+    override no la podía hacer fallar -- era una tautología. Esta versión
+    llama a la función real y fija las dos ramas de override
+    explícitamente junto con la banda de score, así que SÍ puede fallar
+    si alguna de las tres cambia."""
+    result = _call(bt, live, mc_r, mc_t, spp_med)
 
-@given(score=st.floats(min_value=-1000, max_value=1000, allow_nan=False, allow_infinity=False))
-@settings(max_examples=300, deadline=None)
-def test_verdict_band_function_is_total_partition(score):
-    """La cascada de bandas 70/45 (CONFIG:40-41) es total y disjunta: exactamente
-    una rama aplica para cualquier score, sin huecos ni solapes."""
+    if result["sin_datos"]:
+        # Guard de datos mínimos (validator.py:191-259): no hay banda de
+        # score que verificar, la cascada de veredicto ni se alcanza.
+        assert result["veredicto"] in {"SIN DATOS", "ELIMINAR"}
+        return
+
+    veredicto = result["veredicto"]
+    score = result["score"]
+    dd_estado = result["dd_estado"]
+    pf_live = result["pf_live"]
+    tl = result["trades_live"]
     thresh_continuar = validator.CONFIG["thresh_continuar"]
     thresh_monitorear = validator.CONFIG["thresh_monitorear"]
 
-    veredicto = _veredicto_from_score(score, thresh_continuar, thresh_monitorear)
     assert veredicto in {"CONTINUAR", "MONITOREAR", "ELIMINAR"}
 
-    branches = [
-        score >= thresh_continuar,
-        thresh_monitorear <= score < thresh_continuar,
-        score < thresh_monitorear,
-    ]
-    assert sum(branches) == 1
+    # Cascada real, en el mismo orden que validator.py:622-631: las dos
+    # ramas de override ganan sobre la banda de score, exactamente una
+    # rama aplica.
+    if dd_estado == "FUERA":
+        assert veredicto == "ELIMINAR"
+    elif pf_live is not None and pf_live < 1.0 and tl >= 50:
+        assert veredicto == "ELIMINAR"
+    elif score >= thresh_continuar:
+        assert veredicto == "CONTINUAR"
+    elif score >= thresh_monitorear:
+        assert veredicto == "MONITOREAR"
+    else:
+        assert veredicto == "ELIMINAR"
 
 
 # ── 3. MONOTONICIDAD ─────────────────────────────────────────────────────────
@@ -201,8 +237,8 @@ def test_calculate_validator_score_is_deterministic(bt, live, mc_r, mc_t, spp_me
 
 def test_config_weights_sum_to_declared_totals():
     """CONFIG (validator.py:18-50) declara en comentarios que los pesos suman
-    100 por grupo pero nunca lo afirma en runtime (ground-truth §4.1). Fija
-    esa invariante como test ejecutable contra el CONFIG real (no una copia)."""
+    100 por grupo pero nunca lo afirma en runtime. Fija esa invariante como
+    test ejecutable contra el CONFIG real (no una copia)."""
     cfg = validator.CONFIG
     assert cfg["w_riesgo"] + cfg["w_edge"] + cfg["w_caracter"] + cfg["w_desv"] == 100
     assert cfg["w_dd_escalado"] + cfg["w_consec_losses"] + cfg["w_stagnation"] == 100
@@ -339,40 +375,61 @@ def test_total_trades_nan_or_inf_crashes(bad, frozen_clock):
     validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
 
 
-@given(weeks=st.floats(min_value=5e-324, max_value=2e-323, allow_nan=False, allow_infinity=False))
-@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+# DETERMINISTIC, not @given: an earlier version of this test drew
+# weeks_operating from st.floats(min_value=5e-324, max_value=2e-323) under
+# xfail(strict=True). That range is NOT uniformly a counterexample --
+# verified by direct execution against validator.calculate_validator_score:
+# only k=1 (5e-324) and k=2 (1e-323) underflow `weeks_live / 4.33` (:434) to
+# exactly 0.0 and crash; k=3 (1.5e-323) and k=4 (2e-323) round to a nonzero
+# subnormal (5e-324) and DO NOT crash. Hypothesis choosing a non-crashing
+# k inside that range would make xfail(strict=True) XPASS -- turning the
+# whole suite red for the next person with zero code change, since nothing
+# about the underlying defect changed. Pinning the exact two proven-crashing
+# values makes the repro reproducible on every run instead of dependent on
+# which example Hypothesis happens to draw.
+@pytest.mark.parametrize("weeks", [5e-324, 1e-323], ids=["k=1", "k=2"])
 @pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE (encontrado por Hypothesis, no previsto en el ground-truth): "
-    "live={'weeks_operating': <float subnormal, p.ej. 5e-324>} -> ZeroDivisionError "
-    "no capturado en validator.py:434 `live_freq_per_month = trades_live / "
-    "(weeks_live / 4.33)`. weeks_live pasa la guarda `weeks_live > 0` (:432, "
-    "5e-324 > 0 es True) pero `weeks_live / 4.33` HACE UNDERFLOW A 0.0 exacto "
-    "(el subnormal es demasiado chico para sobrevivir la división en punto "
-    "flotante de 64 bits), y la división siguiente por ese 0.0 crashea. "
-    "Requiere además bt.trades_total y bt.months truthy (bt_trades and "
-    "bt_months and bt_months>0) para entrar a esa rama -- con bt completo "
-    "(make_bt() por defecto) se reproduce siempre. Repro mínimo: "
+    "COUNTEREXAMPLE (verified by direct execution, not just found once by "
+    "Hypothesis): live={'weeks_operating': <float subnormal, 5e-324 or "
+    "1e-323>} -> ZeroDivisionError not caught in validator.py:434 "
+    "`live_freq_per_month = trades_live / (weeks_live / 4.33)`. weeks_live "
+    "passes the guard `weeks_live > 0` (:432, both values are > 0) but "
+    "`weeks_live / 4.33` UNDERFLOWS TO EXACTLY 0.0 for these two values only "
+    "(the subnormal is too small to survive the 64-bit float division), and "
+    "the following division by that 0.0 crashes. WHY ONLY k=1/k=2: larger "
+    "subnormals (1.5e-323, 2e-323, ...) round DOWN to a nonzero subnormal "
+    "(5e-324) instead of to 0.0, so they survive the division and do not "
+    "crash -- verified: 1.5e-323/4.33 == 5e-324 != 0.0. Requires bt.trades_total "
+    "and bt.months truthy (bt_trades and bt_months and bt_months>0) to reach "
+    "that branch -- the default make_bt() satisfies this. Repro: "
     "calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), "
-    "make_live(total_trades=5, weeks_operating=5e-324))."
+    "make_live(total_trades=5, weeks_operating=weeks))."
 ))
 def test_weeks_operating_subnormal_crashes(weeks, frozen_clock):
     live = make_live(total_trades=5, weeks_operating=weeks)
     validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
 
 
-@given(trades_total=st.floats(min_value=5e-324, max_value=2e-323, allow_nan=False, allow_infinity=False))
-@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+# DETERMINISTIC, not @given: same rationale as test_weeks_operating_subnormal_crashes
+# above. Verified by direct execution: for bt.trades_total / bt.months(=2.0),
+# ONLY k=1 (5e-324) underflows to exactly 0.0 and crashes -- k=2 (1e-323)
+# already rounds to a nonzero subnormal (5e-324) and does NOT crash (a
+# narrower survival window than the /4.33 path above, because dividing by
+# 2.0 loses one fewer bit of the subnormal than dividing by 4.33).
+@pytest.mark.parametrize("trades_total", [5e-324], ids=["k=1"])
 @pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE (encontrado por Hypothesis): bt={'trades_total': <float "
-    "subnormal, p.ej. 5e-324>} -> ZeroDivisionError no capturado en "
-    "validator.py:354 `dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / "
-    "bt_freq_mes)`. bt_trades pasa la guarda `bt_trades > 0` (:341, 5e-324>0 "
-    "es True) pero `bt_freq_mes = bt_trades / bt_months` (:353) HACE "
-    "UNDERFLOW A 0.0 exacto, y la división siguiente por ese 0.0 crashea. "
-    "Mismo mecanismo de fondo que test_weeks_operating_subnormal_crashes "
-    "(un numerador subnormal sobrevive una guarda `>0` pero no sobrevive la "
-    "división intermedia), disparado por un campo bt distinto y una rama de "
-    "código distinta (DD escalado, no frecuencia). Repro mínimo: "
+    "COUNTEREXAMPLE (verified by direct execution): bt={'trades_total': "
+    "5e-324} -> ZeroDivisionError not caught in validator.py:354 "
+    "`dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / bt_freq_mes)`. "
+    "bt_trades passes the guard `bt_trades > 0` (:341, 5e-324>0 is True) but "
+    "`bt_freq_mes = bt_trades / bt_months` (:353, bt_months=2.0) UNDERFLOWS "
+    "TO EXACTLY 0.0 for this one value only, and the following division by "
+    "that 0.0 crashes. WHY ONLY k=1: 1e-323/2.0 == 5e-324 != 0.0 (verified), "
+    "so it survives -- the /2.0 path has a narrower crash window than the "
+    "/4.33 path in test_weeks_operating_subnormal_crashes (only k=1, not "
+    "k=1 and k=2). Same underlying mechanism (a subnormal numerator "
+    "survives a `>0` guard but not the intermediate division), a different "
+    "bt field and code branch (scaled DD, not frequency). Repro: "
     "calculate_validator_score(make_bt(trades_total=5e-324, months=2.0), "
     "make_mc(), make_mc(), make_spp(), make_live(total_trades=5, "
     "weeks_operating=1.0))."

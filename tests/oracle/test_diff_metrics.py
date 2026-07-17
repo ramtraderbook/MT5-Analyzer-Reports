@@ -47,11 +47,13 @@ TOL_DD_PCT = 0.05
 # max_dd_dollar: redondeado una sola vez a 2dp (metrics.py:459).
 TOL_DD_DOLLAR = 0.03
 
-# profit_factor / win_rate / expectancy: metrics.py redondea a 2dp
-# (net_profit/total_trades, win_rate, profit_factor todos a 2dp).
+# profit_factor / win_rate / expectancy / payout_ratio: metrics.py redondea a
+# 2dp (net_profit/total_trades, win_rate, profit_factor, payout_ratio todos a
+# 2dp via fmt_pf/round() -- metrics.py:431 a nivel EA, :578 a nivel portfolio).
 TOL_PF = 0.01
 TOL_WIN_RATE = 0.01
 TOL_EXPECTANCY = 0.01
+TOL_PAYOUT = 0.01
 
 # SQN: metrics._calc_sqn redondea a 2dp (metrics.py:219).
 TOL_SQN = 0.01
@@ -86,8 +88,9 @@ def oracle_max_drawdown_hand(net_pnl_list, capital):
     Es una reimplementacion DISTINTA en forma (vectorizada, sin el loop de
     metrics._calc_max_drawdown, sin pasar por el equity_curve
     pre-redondeado de metrics._build_equity_curve) que solo comparte la
-    definicion matematica documentada en ground-truth.md #7, no la
-    expresion linea por linea de produccion.
+    definicion matematica documentada en docs/metrics-formulas.md (seccion
+    6, "Drawdown (DD)") y docs/known-issues.md §7, no la expresion linea
+    por linea de produccion.
 
     Retorna (max_dd_dollar, max_dd_pct) sin redondear.
     """
@@ -164,6 +167,29 @@ def oracle_profit_factor(net_pnl_list):
     return float("inf") if profits > 0 else 0.0
 
 
+def oracle_payout_ratio(net_pnl_list):
+    """Payout ratio textbook = avg(ganadores) / |avg(perdedores)|, particion
+    ESTRICTA (> 0 / < 0), a diferencia de la particion <= 0 que metrics.py
+    usa para wins/losses (metrics.py:353-354/366/373-377, donde net_pnl==0
+    cuenta como perdida). A DIFERENCIA de profit_factor (donde un trade en
+    0 no aporta a la suma sea cual sea el filtro que lo excluya, asi que las
+    dos particiones convergen), payout_ratio SI diverge: un trade en 0
+    infla el DENOMINADOR de conteo (losing_trades) sin aportar magnitud,
+    encogiendo |avg_loss| y por lo tanto inflando el ratio reportado. Este
+    oraculo materializa la definicion textbook para medir esa divergencia
+    -- ver test_payout_ratio_zero_pnl_trade_inflation_defect_pin en
+    test_char_metrics.py para la caracterizacion puntual con numeros
+    exactos.
+    """
+    wins = [p for p in net_pnl_list if p > 0]
+    losses = [p for p in net_pnl_list if p < 0]
+    avg_win = statistics.mean(wins) if wins else 0.0
+    avg_loss = statistics.mean(losses) if losses else 0.0
+    if avg_loss != 0:
+        return avg_win / abs(avg_loss)
+    return float("inf") if avg_win > 0 else 0.0
+
+
 def oracle_expectancy(net_pnl_list):
     """Expectancy textbook = P&L promedio por trade = mean(net_pnl)."""
     if not net_pnl_list:
@@ -198,10 +224,10 @@ def oracle_sqn_stdlib(net_pnl_list):
 def oracle_sqn_tharp_capped(net_pnl_list):
     """SQN segun el estandar de Van Tharp: sqrt(min(n, 100)) * mean / stdev.
 
-    ground-truth.md #7 (Formulas, seccion SQN) anota explicitamente que
-    metrics.py NO tiene el cap de Tharp en sqrt(100) y usa sqrt(n) sin
-    limite. Este oraculo materializa el estandar CON el cap para medir la
-    divergencia real en un N grande.
+    docs/metrics-formulas.md (seccion 8, "SQN") y docs/known-issues.md §7
+    anotan explicitamente que metrics.py NO tiene el cap de Tharp en
+    sqrt(100) y usa sqrt(n) sin limite. Este oraculo materializa el
+    estandar CON el cap para medir la divergencia real en un N grande.
     """
     n = len(net_pnl_list)
     if n < 2:
@@ -304,9 +330,9 @@ def test_sharpe_cv_guard_is_a_documented_repo_deviation():
     devuelve None de forma explicita.
 
     Este test PIN-ea esa desviacion documentada (no es un hallazgo nuevo:
-    ground-truth.md #6 checklist punto 6 ya la nombra) -- el oraculo
-    "estandar" no produce un numero comparable, asi que aqui solo afirmamos
-    el comportamiento repo-especifico.
+    docs/metrics-formulas.md seccion 9 "Sharpe Ratio" ya la nombra, mismo
+    guard que SQN) -- el oraculo "estandar" no produce un numero comparable,
+    asi que aqui solo afirmamos el comportamiento repo-especifico.
     """
     pnls = _pnls_for("degenerate_variance")
     m = _ea_metrics_for("degenerate_variance")
@@ -327,8 +353,8 @@ def test_sharpe_cv_guard_is_a_documented_repo_deviation():
 def test_max_drawdown_matches_hand_derived_oracle(shape_name):
     """max_dd_dollar / max_dd_pct de la API publica vs. una reimplementacion
     manual vectorizada (oracle_max_drawdown_hand) que comparte la DEFINICION
-    documentada (ground-truth.md #7) pero no la expresion linea-por-linea de
-    metrics._calc_max_drawdown.
+    documentada (docs/metrics-formulas.md seccion 6) pero no la expresion
+    linea-por-linea de metrics._calc_max_drawdown.
     """
     pnls = _pnls_for(shape_name)
     m = _ea_metrics_for(shape_name)
@@ -452,6 +478,31 @@ def test_win_rate_matches_textbook_oracle(shape_name):
     assert abs(m["win_rate"] - oracle) <= TOL_WIN_RATE
 
 
+@pytest.mark.parametrize(
+    "shape_name",
+    ["all_wins", "all_losses", "mixed", "two_trades", "degenerate_variance"],
+)
+def test_payout_ratio_matches_textbook_oracle(shape_name):
+    """payout_ratio de la API publica vs. avg(ganadores)/|avg(perdedores)|
+    derivado directamente de la definicion textbook (oracle_payout_ratio,
+    particion > 0/< 0 estricta). "zero_pnl_trades" se excluye A PROPOSITO
+    de este parametrize: ese shape SI diverge del oraculo textbook porque
+    metrics.py cuenta net_pnl==0 como perdida (metrics.py:354), lo que
+    infla artificialmente el payout_ratio reportado -- ver
+    test_payout_ratio_zero_pnl_trade_inflation_defect_pin en
+    test_char_metrics.py para esa caracterizacion puntual. payout_ratio no
+    tenia NINGUN oraculo diferencial antes de este test."""
+    pnls = _pnls_for(shape_name)
+    m = _ea_metrics_for(shape_name)
+    oracle = oracle_payout_ratio(pnls)
+
+    if oracle == float("inf"):
+        assert m["payout_ratio"] == "∞"
+    else:
+        assert m["payout_ratio"] != "∞"
+        assert abs(m["payout_ratio"] - oracle) <= TOL_PAYOUT
+
+
 def test_zero_pnl_trade_counts_as_loss_not_win():
     """Caracterizacion puntual del criterio <= 0 (metrics.py:354): de los 6
     trades en zero_pnl_trades, 2 valen exactamente 0.0 y deben contarse como
@@ -463,6 +514,92 @@ def test_zero_pnl_trade_counts_as_loss_not_win():
     assert m["winning_trades"] == manual_wins
     assert m["losing_trades"] == manual_losses
     assert 0.0 in pnls  # confirma que la forma realmente ejercita el caso limite
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PORTFOLIO -- misma cobertura diferencial que EA-level (F4)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# calculate_portfolio_metrics (metrics.py:481-625) NO delega a
+# calculate_ea_metrics: DUPLICA la aritmetica de win_rate/profit_factor/
+# payout_ratio/expectancy textualmente aparte (metrics.py:503-543), separada
+# de la version EA-level (metrics.py:340-390). Antes de estos tests solo se
+# verificaba la FORMA/tipo de la salida de calculate_portfolio_metrics (ver
+# test_calculate_portfolio_metrics_same_41_key_contract en
+# test_char_metrics.py) -- ningun test comparaba VALORES contra un oraculo
+# independiente para el bloque de formula propio del portfolio. Un bug
+# introducido SOLO en metrics.py:514 (portfolio win_rate) mientras
+# metrics.py:364 (EA win_rate) sigue correcto sobrevivia en silencio. Estos
+# tests reusan los MISMOS oraculos independientes de arriba (no copian la
+# expresion de produccion) contra calculate_portfolio_metrics en vez de
+# calculate_ea_metrics.
+
+def _portfolio_metrics_for(shape_name, capital=CAPITAL, comment="EA1"):
+    """Corre la API PUBLICA calculate_portfolio_metrics sobre la forma dada.
+    El capital de la EA es irrelevante para win_rate/profit_factor/
+    payout_ratio/expectancy (solo afecta max_dd/ret_dd, no cubiertos aqui)."""
+    pnls = _pnls_for(shape_name)
+    trades = make_trades(pnls, comment=comment)
+    config = make_config(ea_name=comment, capital=capital)
+    return metrics.calculate_portfolio_metrics(trades, config)
+
+
+@pytest.mark.parametrize(
+    "shape_name",
+    ["all_wins", "all_losses", "mixed", "zero_pnl_trades", "two_trades", "degenerate_variance"],
+)
+def test_portfolio_win_rate_matches_textbook_oracle(shape_name):
+    pnls = _pnls_for(shape_name)
+    m = _portfolio_metrics_for(shape_name)
+    oracle = oracle_win_rate(pnls)
+    assert abs(m["win_rate"] - oracle) <= TOL_WIN_RATE
+
+
+@pytest.mark.parametrize(
+    "shape_name",
+    ["all_wins", "all_losses", "mixed", "zero_pnl_trades", "two_trades", "degenerate_variance"],
+)
+def test_portfolio_profit_factor_matches_textbook_oracle(shape_name):
+    pnls = _pnls_for(shape_name)
+    m = _portfolio_metrics_for(shape_name)
+    oracle = oracle_profit_factor(pnls)
+
+    if oracle == float("inf"):
+        assert m["profit_factor"] == "∞"
+    else:
+        assert m["profit_factor"] != "∞"
+        assert abs(m["profit_factor"] - oracle) <= TOL_PF
+
+
+@pytest.mark.parametrize(
+    "shape_name",
+    ["all_wins", "all_losses", "mixed", "two_trades", "degenerate_variance"],
+)
+def test_portfolio_payout_ratio_matches_textbook_oracle(shape_name):
+    """"zero_pnl_trades" se excluye por la misma razon documentada en
+    test_payout_ratio_matches_textbook_oracle (EA-level, mas arriba): la
+    inflacion por net_pnl==0 contando como perdida es un defecto conocido,
+    no una divergencia de este test."""
+    pnls = _pnls_for(shape_name)
+    m = _portfolio_metrics_for(shape_name)
+    oracle = oracle_payout_ratio(pnls)
+
+    if oracle == float("inf"):
+        assert m["payout_ratio"] == "∞"
+    else:
+        assert m["payout_ratio"] != "∞"
+        assert abs(m["payout_ratio"] - oracle) <= TOL_PAYOUT
+
+
+@pytest.mark.parametrize(
+    "shape_name",
+    ["all_wins", "all_losses", "mixed", "zero_pnl_trades", "two_trades", "degenerate_variance"],
+)
+def test_portfolio_expectancy_matches_textbook_oracle(shape_name):
+    pnls = _pnls_for(shape_name)
+    m = _portfolio_metrics_for(shape_name)
+    oracle = oracle_expectancy(pnls)
+    assert abs(m["expectancy"] - oracle) <= TOL_EXPECTANCY
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -508,7 +645,7 @@ def test_sqn_two_trades_below_label_threshold_but_value_present():
     strict=True,
     reason=(
         "DIVERGENCIA: metrics._calc_sqn usa sqrt(n)*mean/std SIN el cap de "
-        "Van Tharp en sqrt(100) (ground-truth.md #7). Sobre una muestra de "
+        "Van Tharp en sqrt(100) (docs/known-issues.md §7). Sobre una muestra de "
         "150 trades, SQN sin cap != SQN con cap sqrt(min(n,100)) por > 0.3 "
         "-- ver oracle_sqn_tharp_capped vs oracle_sqn_stdlib en este mismo "
         "archivo. El repo Y su propia docstring coinciden en NO tener el "
@@ -559,7 +696,7 @@ def test_binomial_p_value_matches_scipy_exact_cdf(wins, n, p):
 
 @pytest.mark.parametrize("wins,n,p", [(3, 10, 0.5), (28, 50, 0.55), (2, 5, 0.5)])
 def test_binomial_docs_normal_approximation_does_not_match_code(wins, n, p):
-    """HALLAZGO D1 (ground-truth.md #9): docs/metrics-formulas.md:386-391
+    """HALLAZGO D1: docs/metrics-formulas.md:386-391
     afirma que, sin scipy, el codigo cae a una aproximacion normal
     (z-score + erf). Eso es FALSO: incubation_validator.py:252-268 es puro
     math.comb, exacto, sin scipy y sin fallback normal (su propio docstring

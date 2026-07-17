@@ -11,9 +11,17 @@ Tres capas:
 Todos los datos son inventados y hardcodeados. Ningún .xlsx real.
 
 Determinismo: metrics.py e incubation_validator.py llaman a date.today() /
-datetime.now() en 6 sitios. Ambos módulos hacen `from datetime import date,
-datetime`, por lo que el monkeypatch va sobre el NOMBRE IMPORTADO EN EL MÓDULO
-(metrics.date, incubation_validator.date), nunca sobre datetime.date.
+datetime.now() en 9 sitios en total (verificado por grep: metrics.py:168,317;
+incubation_validator.py:353,1089,1191,1229,1258,1278,1302). Ambos módulos
+hacen `from datetime import date, datetime`, por lo que el monkeypatch va
+sobre el NOMBRE IMPORTADO EN EL MÓDULO (metrics.date, incubation_validator.date),
+nunca sobre datetime.date.
+
+NOTA: incubation_domain.py:375 también llama a date.today() (dentro de
+`days_since_first_trade`) y NO está parcheado por este fixture -- solo
+metrics y incubation_validator lo están. Cualquier test futuro que importe
+incubation_domain directamente golpea el reloj real y pierde determinismo
+silenciosamente.
 """
 
 import pytest

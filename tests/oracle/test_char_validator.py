@@ -354,8 +354,9 @@ def test_frequency_alerta_fuera_boundary_deviation_50():
 
 def test_frequency_overtrading_far_above_bt_pace_is_fuera_not_ok():
     """
-    DEFECT-PIN referencia historica: la doc decision-logic.md (D2 en
-    ground-truth) describe esto como de UNA cola (OK si freq_pct>=70). El
+    DEFECT-PIN referencia historica: la doc decision-logic.md (seccion
+    "Frecuencia", Modulo 1) describe esto como de UNA cola (OK si
+    freq_pct>=70). El
     codigo real es de DOS colas: sobre-operar muy por encima del ritmo BT
     tambien es FUERA. Esto ya esta documentado como cambio intencional en
     el propio codigo (validator.py:436-443) -- se pinnea aqui como
@@ -569,9 +570,11 @@ def test_veredicto_score_44_875_rounds_down_and_is_eliminar():
 
 def test_veredicto_score_exactly_70_is_continuar_no_rounding_split_found():
     """
-    El ground-truth doc (§3.1/§10-item1) afirma que existe un caso donde
-    result["score"]==70.0 pero veredicto=="MONITOREAR" (split
-    redondeado-vs-crudo, por analogia con el de CP3 en incubation_validator).
+    Se investigo la hipotesis (por analogia con el split redondeado-vs-crudo
+    confirmado en CP3, ver test_char_incubation.py e
+    incubation_validator.py:1165 vs :1170) de que pudiera existir un caso
+    donde result["score"]==70.0 pero veredicto=="MONITOREAR" en
+    validator.py.
 
     INVESTIGADO Y REFUTADO para validator.py: s_riesgo/s_edge/s_caracter son
     siempre sumas exactas de pts(estado) in {0,5,10} por peso/100 (weights

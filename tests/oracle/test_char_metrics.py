@@ -93,6 +93,36 @@ def test_net_pnl_zero_counts_as_loss_portfolio_level():
     assert res["winning_trades"] == 1
 
 
+def test_payout_ratio_zero_pnl_trade_inflation_defect_pin():
+    # DEFECT-PIN: net_pnl==0 cuenta como perdida (metrics.py:354 `p <= 0`),
+    # lo que infla artificialmente losing_trades y por lo tanto ENCOGE
+    # |avg_loss| (denominador mas grande, mismo numerador) -- inflando a su
+    # vez payout_ratio = avg_win/|avg_loss| (metrics.py:366/373-377).
+    # Pinned because it is current behavior, NOT because it is correct.
+    #
+    # trades: 1 ganador (100.0), 2 perdedores reales (-50.0, -30.0), 2
+    # trades en net_pnl==0.0 exactos.
+    trades = make_trades([100.0, 0.0, -50.0, -30.0, 0.0])
+    res = m.calculate_ea_metrics("MyEA", trades, make_config(capital=10000.0))
+
+    assert res["winning_trades"] == 1
+    assert res["losing_trades"] == 4  # 2 perdedores reales + 2 en net_pnl==0.0
+    assert res["avg_win"] == 100.0
+    # avg_loss = gross_loss / losing_trades = -80.0 / 4 = -20.0 (produccion)
+    assert res["avg_loss"] == -20.0
+    # payout_ratio reportado = avg_win / |avg_loss| = 100 / 20 = 5.0
+    assert res["payout_ratio"] == 5.0
+
+    # Textbook (particion ESTRICTA < 0, sin los dos trades en 0): avg_loss
+    # real = -80.0 / 2 = -40.0, payout_ratio real = 100 / 40 = 2.5 -- el
+    # valor reportado (5.0) es exactamente 2x el valor textbook (2.5).
+    textbook_avg_loss = -80.0 / 2
+    textbook_payout = 100.0 / abs(textbook_avg_loss)
+    assert textbook_avg_loss == -40.0
+    assert textbook_payout == 2.5
+    assert res["payout_ratio"] == pytest.approx(textbook_payout * 2, rel=1e-9)
+
+
 # ── §8: profit_factor / payout_ratio -- union type float|"∞" ───────────────
 
 def test_profit_factor_and_payout_ratio_are_infinity_string_when_no_losses():

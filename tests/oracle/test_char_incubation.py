@@ -13,6 +13,8 @@ busqueda/biseccion contra la funcion real antes de hardcodear el assert --
 ver el reporte de la tarea para el detalle de cada busqueda.
 """
 
+import copy
+
 import pytest
 
 import incubation_validator as iv
@@ -533,3 +535,56 @@ def test_evaluate_incubation_unified_shape_for_cp1():
     assert r["verdict"] == "CONTINUAR"
     assert r["score"] is None
     assert r["details"]["checkpoint"] == "CP1"
+
+
+# ── §4 (dispatch de checkpoints): evaluate_incubation SI enruta a CP2/CP3 ──
+#
+# El resto de este archivo y de test_prop_incubation.py llama a evaluate_cp2/
+# evaluate_cp3 DIRECTAMENTE con total_trades en {25, 30, 40, 50, 80, ...}, o
+# a evaluate_incubation con total_trades en {2, 10} (que solo alcanza
+# PRE_CP1/CP1, incubation_validator.py:1281-1286). Ningún test anterior
+# probaba que evaluate_incubation('EA', ..., total_trades=25/50, ...)
+# REALMENTE despacha al checkpoint correcto y que la porción CP2/CP3 de su
+# salida coincide con la llamada directa -- el cableado del dispatcher
+# (:1283 elif checkpoint=='CP2', :1286 else evaluate_cp3) quedaba sin cubrir.
+
+def test_evaluate_incubation_dispatches_to_cp2_and_matches_direct_call():
+    """total_trades=25 esta en el rango CP2 (20<=n<40, incubation_validator.py:
+    306-313). evaluate_incubation debe reportar current_checkpoint=='CP2' Y su
+    'details' debe ser EXACTAMENTE el dict que devuelve una llamada directa a
+    evaluate_cp2 con los mismos argumentos -- no solo un shape compatible."""
+    ref = make_reference()
+    lm = make_live_metrics(total_trades=25, winning_trades=14)
+
+    r = iv.evaluate_incubation("EA", copy.deepcopy(lm), copy.deepcopy(ref))
+    direct = iv.evaluate_cp2(copy.deepcopy(lm), copy.deepcopy(ref))
+
+    assert r["current_checkpoint"] == "CP2"
+    assert r["verdict"] == direct["verdict"]
+    assert r["score"] == direct["score"]
+    # evaluate_cp2's return dict never has a "timestamp" key of its own (see
+    # evaluate_cp2 at incubation_validator.py:766-781), so "details" (the
+    # wrapped result) equals the direct call verbatim -- no field needs
+    # excluding here.
+    assert r["details"] == direct
+
+
+def test_evaluate_incubation_dispatches_to_cp3_and_matches_direct_call():
+    """total_trades=50 esta en el rango CP3 (n>=40). evaluate_incubation debe
+    reportar current_checkpoint=='CP3' Y su 'details' debe ser EXACTAMENTE el
+    dict que devuelve una llamada directa a evaluate_cp3 -- mismo contrato
+    que el test de CP2 de arriba, para la otra rama del dispatcher
+    (incubation_validator.py:1286)."""
+    ref = make_reference()
+    lm = make_live_metrics(total_trades=50, winning_trades=28)
+
+    r = iv.evaluate_incubation("EA", copy.deepcopy(lm), copy.deepcopy(ref))
+    direct = iv.evaluate_cp3(copy.deepcopy(lm), copy.deepcopy(ref))
+
+    assert r["current_checkpoint"] == "CP3"
+    assert r["verdict"] == direct["verdict"]
+    assert r["score"] == direct["score"]
+    # Same rationale as the CP2 test above: evaluate_cp3's return dict has no
+    # "timestamp" key of its own (incubation_validator.py:1167-1180), so
+    # "details" equals the direct call verbatim.
+    assert r["details"] == direct

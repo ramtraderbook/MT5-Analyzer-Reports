@@ -7,10 +7,14 @@ en test_prop_validator.py: un contraejemplo real de Hypothesis se documenta
 con @pytest.mark.xfail(strict=True) y el repro mínimo, nunca se debilita la
 propiedad para forzarla a pasar.
 
-Anclas contra el árbol de trabajo en commit a934bcc (scratchpad/ground-truth.md).
+Anclas contra el árbol de trabajo real (incubation_validator.py) y, cuando
+aplica, contra docs/decision-logic.md -- nunca contra "ground-truth.md" o
+"scratchpad/", que no existen en este repo.
 """
 
+import ast
 import copy
+import inspect
 import math
 
 import pytest
@@ -19,6 +23,23 @@ from hypothesis import strategies as st
 
 import incubation_validator as iv
 from conftest import make_reference, make_live_metrics
+
+
+def _extract_dict_literal(func, var_name):
+    """Extrae el dict literal asignado a `var_name` dentro del cuerpo FUENTE
+    de `func`, via inspect.getsource + el módulo `ast` -- nunca ejecuta la
+    función ni copia su expresión, solo parsea el AST y evalúa el literal
+    encontrado con ast.literal_eval. Usado para leer pesos hardcodeados
+    function-local (sin CONFIG importable) directamente de producción en vez
+    de mantener una copia del test que nunca podría detectar un cambio real."""
+    source = inspect.getsource(func)
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name) and target.id == var_name and isinstance(node.value, ast.Dict):
+                return ast.literal_eval(node.value)
+    return None
 
 clean_floats = st.floats(min_value=-1e6, max_value=1e6, allow_nan=False, allow_infinity=False)
 wide_floats = st.floats(min_value=-1e8, max_value=1e8, allow_nan=False, allow_infinity=False)
@@ -58,7 +79,7 @@ def test_score_metric_range(live, mc95, mc50, bt, higher):
 def test_cp3_final_score_and_category_scores_in_range(wr, pf, exp, payout, dd, stag, mcl, total_trades,
                                                         frozen_clock):
     """evaluate_cp3 -> score in [0,100] o None; cada category_scores[*]['score']
-    también in [0,100] (incubation_validator.py:1116-1128, §2 de ground-truth)."""
+    también in [0,100] (incubation_validator.py:1116-1128)."""
     ref = make_reference()
     winning = int(round(total_trades * min(max(wr, 0.0), 100.0) / 100.0))
     live = make_live_metrics(
@@ -114,8 +135,9 @@ def test_resolve_cp3_verdict_is_total_partition(score, below_mc95, cp2_verdict):
 def test_score_metric_monotonic_in_live_value(mc95, mc50, bt, live_a, live_b, higher):
     """Mejorar SOLO el valor live (con mc95/mc50/bt y la dirección fijos) nunca
     empeora _score_metric -- ni siquiera con bandas de referencia invertidas
-    (mc50 > bt para higher_is_better, el escenario que ground-truth §7/§10
-    señala como sospechoso por los guards `max(..., 0.001)`).
+    (mc50 > bt para higher_is_better, el escenario que la función de scoring
+    de docs/decision-logic.md (sección "Función de scoring por métrica",
+    CP3) señala como sospechoso por los guards `max(..., 0.001)`).
 
     Investigado a fondo (>25000 ejemplos de Hypothesis dirigidos, incluido un
     barrido específico con mc50>bt y higher=True): NO se encontró ningún
@@ -125,8 +147,8 @@ def test_score_metric_monotonic_in_live_value(mc95, mc50, bt, live_a, live_b, hi
     positivo, nunca invertir su signo), y una banda invertida simplemente
     vuelve inalcanzable la rama intermedia correspondiente -- el valor cae en
     la rama MÁS generosa anterior, nunca en una peor. Por eso esta propiedad
-    queda como aserción honesta (no xfail): el temor del ground-truth no se
-    materializa para la monotonía en `live_value`.
+    queda como aserción honesta (no xfail): la sospecha de banda invertida
+    descrita arriba no se materializa para la monotonía en `live_value`.
     """
     lo, hi = sorted([live_a, live_b])
     s_lo = iv._score_metric(lo, mc95, mc50, bt, higher_is_better=higher)
@@ -146,7 +168,8 @@ def test_score_metric_monotonic_in_live_value(mc95, mc50, bt, live_a, live_b, hi
 ))
 def test_cp3_score_display_contradicts_verdict_at_65_boundary(frozen_clock):
     """CONTRAEJEMPLO CONFIRMADO (regresión fijada, no @given: encontrado por
-    bisección analítica dirigida al defecto de redondeo de ground-truth §10#2,
+    bisección analítica dirigida al defecto de redondeo entre score crudo y
+    score mostrado (ver incubation_validator.py:1165 vs :1170 más abajo),
     no por búsqueda aleatoria -- la ventana de contradicción tiene un ancho de
     ~1e-15 en el dominio de entrada y es estadísticamente inalcanzable para
     Hypothesis sobre floats genéricos; se deja como test fijo en vez de
@@ -199,8 +222,8 @@ def test_cp3_score_display_contradicts_verdict_at_65_boundary(frozen_clock):
 @settings(max_examples=201, deadline=None)
 def test_checkpoint_dispatch_is_total_partition(n):
     """get_checkpoint_for_trades (:306-313) cubre 0..200 sin huecos ni solapes,
-    con las fronteras exactas de ground-truth §5: 4->PRE_CP1, 5->CP1, 19->CP1,
-    20->CP2, 39->CP2, 40->CP3."""
+    con las fronteras exactas de docs/decision-logic.md (sección "Sistema de
+    checkpoints"): 4->PRE_CP1, 5->CP1, 19->CP1, 20->CP2, 39->CP2, 40->CP3."""
     checkpoint = iv.get_checkpoint_for_trades(n)
     assert checkpoint in {"PRE_CP1", "CP1", "CP2", "CP3"}
 
@@ -238,16 +261,33 @@ def test_evaluate_incubation_is_deterministic(wr, pf, exp, total_trades, frozen_
 
 def test_cp3_deviation_and_risk_sub_weights_sum_to_one():
     """incubation_validator.py:1036-1048 -- literales hardcodeados, sin CONFIG
-    importable (ground-truth §6: 'incubation_validator.py reads NO config
-    file'). No introspectables en runtime desde afuera del módulo, así que
-    este test fija los mismos valores citados en el código como pin de
-    regresión explícito (si el código cambia estos pesos, hay que actualizar
-    este test a mano -- documentado, no automático)."""
-    deviation_weights = {
-        "win_rate": 0.15, "profit_factor": 0.20, "expectancy": 0.20,
-        "avg_trade": 0.15, "payout_ratio": 0.15, "ret_dd_ratio": 0.15,
-    }
-    risk_weights = {"max_dd_pct": 0.45, "max_consec_losses": 0.30, "stagnation_days": 0.25}
+    importable (verificado: no hay un dict CONFIG a nivel de módulo en
+    incubation_validator.py, a diferencia de validator.CONFIG). No
+    introspectables en runtime desde AFUERA del módulo (no son atributos de
+    módulo, son dict literals locales dentro de evaluate_cp3), así que este
+    test lee los literales REALES parseando el AST de la función real
+    (inspect.getsource + ast, ver _extract_dict_literal arriba) en vez de
+    mantener una copia hardcodeada.
+
+    Una versión anterior de este test SÍ hardcodeaba su propia copia de
+    estos pesos y nunca leía producción -- si alguien rebalanceaba los
+    pesos reales en evaluate_cp3, el test seguía en verde porque comparaba
+    la copia contra sí misma, no contra el código. Era una tautología. Esta
+    versión falla si el AST no encuentra el dict (nombre de variable
+    cambiado, o dejó de ser un literal) -- nunca pasa en silencio."""
+    deviation_weights = _extract_dict_literal(iv.evaluate_cp3, "deviation_weights")
+    risk_weights = _extract_dict_literal(iv.evaluate_cp3, "risk_weights")
+
+    assert deviation_weights is not None, (
+        "no se pudo extraer 'deviation_weights' del AST fuente de "
+        "evaluate_cp3 -- ¿se renombró la variable o dejó de ser un dict "
+        "literal en incubation_validator.py?"
+    )
+    assert risk_weights is not None, (
+        "no se pudo extraer 'risk_weights' del AST fuente de evaluate_cp3 "
+        "-- ¿se renombró la variable o dejó de ser un dict literal en "
+        "incubation_validator.py?"
+    )
     assert math.isclose(sum(deviation_weights.values()), 1.0)
     assert math.isclose(sum(risk_weights.values()), 1.0)
 
@@ -332,7 +372,8 @@ def test_no_crash_on_malformed_but_typed_live_metrics(live, frozen_clock):
     "-> ValueError no capturado. _wins_from_metrics (incubation_validator.py:118-125) "
     "sólo deriva wins desde win_rate cuando 'winning_trades' está ausente: "
     "`wr = _safe_float(live_metrics.get('win_rate'), 0.0) or 0.0` deja pasar NaN "
-    "intacto (_safe_float no filtra NaN, ground-truth §8), y "
+    "intacto (_safe_float no filtra NaN -- verificado directamente contra "
+    "incubation_validator._safe_float), y "
     "`int(round(total * wr / 100.0))` explota con NaN. Repro mínimo: "
     "live = make_live_metrics(total_trades=5, win_rate=float('nan')); "
     "del live['winning_trades']; evaluate_incubation('EA', live, make_reference()) "
@@ -354,8 +395,9 @@ def test_no_crash_on_malformed_reference_dates(bad_date, bad_period, frozen_cloc
     """`date_added` y `backtest.bt_period` malformados degradan a None/SIN
     DATOS vía `_parse_date_only` (:85-97, except ValueError) y
     `calculate_monthly_frequency` (:276-303, `.search` + except ValueError en
-    el parseo de fecha) -- documentado como intencional (ground-truth §8:
-    'No -- documented and intentional'). Nunca debe crashear."""
+    el parseo de fecha) -- ambos `except ValueError` explícitos en el código
+    fuente confirman que degradar a None/SIN DATOS es intencional, no un
+    descuido. Nunca debe crashear."""
     ref = make_reference(date_added=bad_date)
     ref["backtest"] = dict(ref["backtest"], bt_period=bad_period)
     live = make_live_metrics(total_trades=10)
@@ -363,8 +405,15 @@ def test_no_crash_on_malformed_reference_dates(bad_date, bad_period, frozen_cloc
     assert isinstance(result, dict)
 
 
-@given(total_trades=st.integers(min_value=0, max_value=100))
-@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+# DETERMINISTIC, not @given: the previous version declared
+# @given(total_trades=st.integers(...)) but the body never used the drawn
+# value -- it always called make_live_metrics(total_trades=float("inf")).
+# Hypothesis was drawing 30 examples and re-running the exact same crash 30
+# times under a different name each time; the strategy was dead weight that
+# implied a property search without ever performing one. The counterexample
+# IS a single fixed value (float('inf')), so this is a plain regression
+# test under xfail(strict=True), consistent with the rest of this file's
+# convention for documenting a confirmed defect without touching production.
 @pytest.mark.xfail(strict=True, reason=(
     "COUNTEREXAMPLE: live_metrics['total_trades']=float('inf') -> OverflowError "
     "no capturado. incubation_validator._safe_int (:49-55) hace "
@@ -375,7 +424,7 @@ def test_no_crash_on_malformed_reference_dates(bad_date, bad_period, frozen_cloc
     "Repro mínimo: evaluate_incubation('EA', make_live_metrics(total_trades=float('inf')), "
     "make_reference()) -> OverflowError: cannot convert float infinity to integer."
 ))
-def test_total_trades_infinity_crashes(total_trades, frozen_clock):
+def test_total_trades_infinity_crashes(frozen_clock):
     ref = make_reference()
     live = make_live_metrics(total_trades=float("inf"))
     iv.evaluate_incubation("EA", live, ref)
