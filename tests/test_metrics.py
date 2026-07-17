@@ -20,8 +20,10 @@ from metrics import (
     _weeks_operating,
     calculate_ea_metrics,
     calculate_bootstrap_risk,
+    calculate_psr,
     BOOTSTRAP_SEED,
     MIN_TRADES_FOR_BOOTSTRAP,
+    MIN_TRADES_FOR_PSR,
     RUIN_THRESHOLDS_PCT,
 )
 
@@ -541,3 +543,81 @@ def test_bootstrap_risk_different_seed_differs():
         or r1["max_dd_pct_p95"] != r2["max_dd_pct_p95"]
         or r1["max_dd_pct_p99"] != r2["max_dd_pct_p99"]
     )
+
+
+# ── Test 17: calculate_psr — casos borde, contrato SIN DATOS ─────────────────
+#
+# PSR (Bailey & Lopez de Prado). Como el bootstrap, es una capacidad nueva
+# deliberadamente sin cablear; devuelve la forma estructurada {"available": ...}.
+
+def test_psr_unavailable_for_too_few_trades():
+    result = calculate_psr(list(range(1, MIN_TRADES_FOR_PSR)))  # n = 19
+    assert result["available"] is False
+    assert "insuficientes datos" in result["reason"]
+
+
+def test_psr_available_at_the_floor():
+    # exactamente MIN_TRADES_FOR_PSR con varianza real -> estimable
+    pnls = [50.0, -30.0, 80.0, -100.0] * 5  # n = 20
+    result = calculate_psr(pnls)
+    assert result["available"] is True
+    assert 0.0 <= result["psr"] <= 1.0
+    assert result["trades"] == 20
+
+
+def test_psr_unavailable_for_empty_and_none():
+    assert calculate_psr([]) == {"available": False, "reason": "sin trades"}
+    assert calculate_psr(None) == {"available": False, "reason": "sin trades"}
+
+
+def test_psr_unavailable_for_non_finite():
+    base = [50.0, -30.0, 80.0, -100.0] * 5
+    assert calculate_psr(base + [float("nan")])["available"] is False
+    assert calculate_psr(base + [float("inf")])["available"] is False
+    assert calculate_psr(base + [float("-inf")])["available"] is False
+
+
+def test_psr_unavailable_for_degenerate_variance():
+    # todos iguales -> std 0 -> guarda de CV, Sharpe no estimable
+    result = calculate_psr([100.0] * 30)
+    assert result["available"] is False
+    assert "degenerada" in result["reason"]
+
+
+def test_psr_unavailable_when_moments_under_or_overflow():
+    # magnitudes extremas: los momentos estandarizados hacen underflow (denorm)
+    # u overflow (~1e160). Ambos -> "momentos no estimables", nunca una
+    # excepcion ni un psr NaN. El overflow se cuela por 'skew is None' y por
+    # 'bracket <= 0' (nan <= 0 es False) si no se ataja en la fuente.
+    underflow = [0.0] * 15 + [1e-160] * 5
+    overflow = [1e160] * 10 + [-1e160] * 10
+    for pnls in (underflow, overflow):
+        r = calculate_psr(pnls)
+        assert r["available"] is False
+        assert r["reason"] == "momentos no estimables"
+
+
+def test_psr_probability_in_unit_interval_never_annualized():
+    # el bug de quantstats: annualize=True devuelve psr*sqrt(252) ~ 15.8.
+    # aca la PSR SIEMPRE queda en [0,1], sin parametro de anualizacion.
+    pnls = [50.0, -30.0, 80.0, -100.0, 20.0, -60.0] * 10  # n = 60
+    result = calculate_psr(pnls)
+    assert result["available"] is True
+    assert 0.0 <= result["psr"] <= 1.0
+
+
+def test_psr_higher_benchmark_lowers_probability():
+    # PSR(SR*) decrece monotonicamente al subir el umbral SR*.
+    pnls = [50.0, -30.0, 80.0, -100.0, 20.0, -60.0] * 10
+    p0 = calculate_psr(pnls, sr_benchmark=0.0)["psr"]
+    p_hi = calculate_psr(pnls, sr_benchmark=0.5)["psr"]
+    assert p_hi <= p0
+
+
+def test_psr_more_trades_same_edge_raises_confidence():
+    # mismo patron de retornos con edge POSITIVO (suma 80 > 0), mas trades ->
+    # mayor PSR: la misma ventaja medida sobre mas datos es menos incertidumbre.
+    unit = [50.0, -30.0, 80.0, -100.0, 20.0, 60.0]  # suma = +80
+    p_small = calculate_psr(unit * 5)["psr"]   # n = 30
+    p_large = calculate_psr(unit * 40)["psr"]  # n = 240
+    assert p_large > p_small

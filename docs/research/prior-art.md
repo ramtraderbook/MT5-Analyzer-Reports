@@ -337,6 +337,8 @@ Ordered by value/cost. **None of these were applied — this is a report.**
 
 ### 5.2 Hand-roll PSR from Bailey & López de Prado ⭐ high value
 
+> ✅ **APLICADO en esta rama** (`metrics.calculate_psr`), con una mejora sobre lo que este ítem proponía: producción NO usa scipy. La CDF normal es `math.erf` (stdlib) y los momentos son numpy — el mismo patrón que el binomial `math.comb`, validado contra `scipy.stats` en la capa de oráculos. Eso permitió mover scipy a `requirements-dev.txt` (§7). La fórmula se verificó contra el paper original de 2012 (denominador `n−1`, kurtosis no-excess); las convenciones de ddof quedaron documentadas como elecciones (el paper es asintótico y no las fija). **MinTRL diferido**: necesita `norm.ppf` y no hay `erfinv` en la stdlib. Está deliberadamente SIN CABLEAR — ver `known-issues.md` §7.
+
 - **What**: `PSR = Φ((SR - SR_benchmark) * sqrt(n-1) / sqrt(1 - skew*SR + ((kurt-1)/4)*SR²))` — the probability our observed Sharpe exceeds a benchmark given skew and kurtosis. Optionally MinTRL.
 - **Why**: it is the direct, published answer to *"is this Sharpe real or is it noise at this sample size?"* — a question our validator currently answers with a hand-set tolerance band that merely **widens at low N** (`validator.py:261-279`). PSR makes the sample-size adjustment **principled rather than hand-tuned**, and it composes with our existing "Significancia" label (`validator.py:134-143`), which today is just `>=100 → "Alta"`.
 - **Cost**: ~10 lines. **`scipy.stats.norm.cdf` — and `scipy` is already in `requirements.txt`.** (Note: §7 — scipy is currently a *phantom* production dependency. This would make it real, which is arguably a cleanup.)
@@ -454,7 +456,9 @@ Three concrete refinements the survey does justify:
 
 ## 7. Incidental finding — `requirements.txt` carries three test-only packages
 
-**`scipy>=1.11.0` sits in `requirements.txt` (production) but production code imports it nowhere.** `_binomial_p_value` is pure `math.comb` (`incubation_validator.py:252-268`). The only importer is `tests/oracle/test_diff_metrics.py:21`. It is a **phantom production dependency** — *unless* we adopt §5.2 (PSR), which needs `scipy.stats.norm.cdf` and would make it real. **Decide those two together.**
+> ✅ **RESUELTO en esta rama**: los tres (`scipy`, `pytest`, `html5lib`) se movieron a `requirements-dev.txt`. La disyuntiva "scipy se vuelve real si adoptamos PSR" se cerró del lado limpio: **PSR se implementó stdlib-pura** (`math.erf`, §5.2), así que scipy NUNCA entró a producción y quedó como oráculo de test junto al binomial. Verificado bloqueando los tres al importar: los 8 módulos de producción importan igual.
+
+**`scipy>=1.11.0` sat in `requirements.txt` (production) but production code imports it nowhere.** `_binomial_p_value` is pure `math.comb` (`incubation_validator.py:252-268`). The only importer is `tests/oracle/test_diff_metrics.py:21`. It was a **phantom production dependency**. The §5.2 (PSR) coupling resolved toward stdlib — `math.erf`, not `scipy.stats.norm.cdf` — so scipy stayed test-only.
 
 **And a judge caught that scipy is not alone.** All six lines of `requirements.txt`:
 

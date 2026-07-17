@@ -288,3 +288,48 @@ def test_bootstrap_risk_deterministic_under_hypothesis_inputs(pnls, capital):
     r1 = metrics.calculate_bootstrap_risk(pnls, capital)
     r2 = metrics.calculate_bootstrap_risk(list(pnls), capital)
     assert r1 == r2
+
+
+# ── 9. PSR — metrics.calculate_psr ───────────────────────────────────────────
+#
+# Standalone, sin conectar a validator.py -- misma disciplina que el bootstrap.
+# Sin RNG y O(n), así que max_examples=200 (la convención del archivo) es barato.
+
+psr_pnls = st.lists(
+    st.floats(min_value=-1e5, max_value=1e5, allow_nan=False, allow_infinity=False),
+    min_size=metrics.MIN_TRADES_FOR_PSR,
+    max_size=60,
+)
+
+
+@given(pnls=psr_pnls)
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_psr_is_a_probability_or_structured_unavailable(pnls):
+    """Para toda entrada finita con N >= MIN_TRADES_FOR_PSR: o bien PSR es una
+    probabilidad en [0,1] con momentos finitos, o bien devuelve la forma
+    estructurada {"available": False, "reason": ...}. Nunca una excepcion,
+    nunca un numero fuera de [0,1] (el modo de falla del annualize de quantstats)."""
+    result = metrics.calculate_psr(pnls)
+    assert isinstance(result, dict)
+    assert result["available"] in (True, False)
+    if result["available"]:
+        assert 0.0 <= result["psr"] <= 1.0
+        assert math.isfinite(result["skew"])
+        assert math.isfinite(result["kurtosis"])
+        # kurtosis (no-excess) >= 1 por la desigualdad de medias de potencias
+        assert result["kurtosis"] >= 1.0 - 1e-9
+    else:
+        assert isinstance(result["reason"], str) and result["reason"]
+
+
+@given(pnls=psr_pnls)
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_psr_monotonic_non_increasing_in_benchmark(pnls):
+    """PSR(SR*) decrece (no crece) al subir el umbral SR*: exigir un Sharpe
+    mayor solo puede bajar la probabilidad de superarlo. Se prueba cuando la
+    entrada es estimable en los tres umbrales."""
+    r_lo = metrics.calculate_psr(pnls, sr_benchmark=-0.5)
+    r_mid = metrics.calculate_psr(pnls, sr_benchmark=0.0)
+    r_hi = metrics.calculate_psr(pnls, sr_benchmark=0.5)
+    if r_lo["available"] and r_mid["available"] and r_hi["available"]:
+        assert r_hi["psr"] <= r_mid["psr"] <= r_lo["psr"]

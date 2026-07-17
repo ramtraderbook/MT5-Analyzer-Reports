@@ -158,6 +158,42 @@ volvió alcanzable en un caso nuevo.
 
 ## 7. `metrics.py` — menores verificados
 
+- **`calculate_psr` existe y está deliberadamente SIN CABLEAR**: Probabilistic
+  Sharpe Ratio (Bailey & López de Prado, 2012) — la probabilidad de que el
+  Sharpe verdadero supere un umbral `sr_benchmark`, ajustando por tamaño de
+  muestra, skew y kurtosis. `PSR(0) > 0.95` = "el Sharpe es positivo al 95% de
+  confianza". Fórmula verificada contra el paper original; ver
+  `docs/research/prior-art.md` §5.2. Producción usa `math.erf` + momentos numpy
+  (SIN scipy, mismo patrón que el binomial `math.comb`); el oráculo
+  `tests/oracle/test_diff_metrics.py` valida contra `scipy.stats` (norm.cdf,
+  skew, kurtosis) a tolerancia de redondeo (4dp).
+  **Convenciones — son ELECCIONES documentadas, no las fija el paper** (su
+  derivación es asintótica): SR con `std(ddof=1)` (igual que `_calc_sharpe`, así
+  la PSR es sobre el Sharpe que reportamos); skew biased/poblacional; **kurtosis
+  NO-excess (normal=3)** — el punto exacto donde quantstats resta 3 dos veces e
+  infla la PSR (su bracket es siempre el correcto menos `0.75·SR²`); denominador
+  `n−1` (Bessel, per el paper original — algunas fuentes secundarias usan `n`,
+  diferencia O(1/n)). La PSR es atemporal y unitless: **nunca se anualiza**
+  (quantstats la multiplica por `√252`, devolviendo "probabilidades" > 1).
+  Devuelve la forma estructurada `{"available": ...}` como el bootstrap; no
+  estimable con: vacío/None, `n < MIN_TRADES_FOR_PSR` (20, mismo piso que SQN y
+  bootstrap — skew/kurt son ruido debajo), valores no finitos, varianza
+  degenerada (misma guarda de CV que `_calc_sharpe`), bracket de varianza
+  cero en el borde degenerado de dos puntos (Cauchy-Schwarz `kurt >= skew²+1`
+  impide que sea negativo, así que NO es por skew/kurt "extremos"; el borde
+  vuelve `se=0` y dividiría por cero), o momentos que hacen under/overflow con
+  entradas de magnitud extrema (denormales ~1e-160 o ~1e160; cazado en la
+  fuente en `_standardized_moments`, no por un chequeo de `isfinite` aguas
+  abajo — la propiedad Hypothesis encontró el caso).
+  **Por qué sin cablear**: mismas tres razones que el bootstrap (costo aquí es
+  trivial, pero cablearla a la etiqueta "Significancia" del `validator.py`
+  cambiaría el comportamiento y **el contrato de 41 claves** de
+  `calculate_ea_metrics`; y qué umbral de PSR gatea qué es una decisión de
+  política que necesita datos reales). **Diferido**: MinTRL (Minimum Track
+  Record Length, "cuántos trades hasta que el Sharpe sea significativo") —
+  necesita el cuantil normal inverso (`norm.ppf`) y **no hay `erfinv` en la
+  stdlib**; agregarlo requeriría una aproximación racional (Acklam) con su
+  propio test contra scipy. PSR sola es stdlib pura y es la pieza de valor.
 - **`calculate_bootstrap_risk` existe y está deliberadamente SIN CABLEAR**:
   bootstrap iid sobre el P&L por trade (`rng.choice(..., replace=True)`,
   `np.random.default_rng`) que devuelve bandas percentiles de max DD% y
