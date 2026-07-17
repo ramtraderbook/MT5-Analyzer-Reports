@@ -14,6 +14,7 @@ cutoffs.
 import math
 
 import pytest
+from flask import url_for
 
 from incubation_validator import (
     SPP_ADJUSTMENT_ENABLED,
@@ -27,7 +28,7 @@ from incubation_validator import (
     evaluate_cp3,
     evaluate_incubation,
 )
-from incubation_domain import evaluate_ea, metric_summary_for_tooltip
+from incubation_domain import build_verdict_card, evaluate_ea, metric_summary_for_tooltip
 from validator import CONFIG, calculate_validator_score
 
 
@@ -881,3 +882,402 @@ def test_validator_stagnation_factors_unchanged():
         result = calculate_validator_score(bt=bt, mc_retest={}, mc_trades={}, spp=spp, live=live)
         assert result["stagn_label"] == expected_label
         assert result["stagn_estado"] == expected_estado
+
+
+# ── 18. JD-5 view-model audit (C1-C8) ───────────────────────────────────────
+
+
+def test_reference_save_blank_backtest_preserves_existing_not_wiped():
+    """C1: parse_reference_form allows a fully-blank required section
+    through with ZERO errors (it only errors a required section that has
+    SOME value entered). `incubation_reference_save` used to assign
+    `backtest = payload["backtest"]` with no merge-preserve, unlike MC/SPP
+    (`... or existing...`), so a re-save that left Backtest blank silently
+    wiped the 12 mandatory backtest fields -- and the top-level
+    timeframe/bt_period sourced from that same dict."""
+    import ea_analyzer
+    from flask import session as flask_session
+
+    existing_backtest = {
+        "net_profit": 6338.81, "total_trades": 487, "win_rate": 52.37,
+        "profit_factor": 1.72, "max_dd_pct": 10.97, "ret_dd_ratio": 9.32,
+        "sqn_score": 1.08, "expectancy": 9.33, "max_consec_losses": 8,
+        "avg_bars_trade": 15, "payout_ratio": 1.52, "stagnation_days": 287,
+        "bt_period": "2017.10.02 - 2026.01.28", "timeframe": "H1",
+    }
+    store = {
+        "IncEA": {
+            "date_added": "2020-01-01",
+            "backtest": dict(existing_backtest),
+            "mc_manipulation": {"confidence_95": {"win_rate": 40}},
+        }
+    }
+    config = {"mappings": {"IncEA": {"active": True}}}
+
+    form = {
+        # Backtest left entirely blank on this re-save -- MC Manipulation
+        # 95% is filled, satisfying the "at least one MC95" rule, so
+        # parse_reference_form yields ZERO errors for the blank backtest.
+        "mc_manipulation_95_max_dd_pct": "10.63",
+        "mc_manipulation_95_profit_factor": "1.57",
+        "mc_manipulation_95_win_rate": "51.04",
+        "mc_manipulation_95_stagnation_days": "217",
+        "mc_manipulation_95_ret_dd_ratio": "7.56",
+        "mc_manipulation_95_sqn_score": "1.20",
+        "mc_manipulation_95_avg_trade": "7.51",
+        "mc_manipulation_95_max_consec_losses": "10",
+        "mc_manipulation_95_payout_ratio": "1.40",
+        "mc_manipulation_95_expectancy": "7.51",
+        "mc_manipulation_95_simulations": "1000",
+        "mc_manipulation_95_method": "Randomize",
+    }
+
+    saved = {}
+
+    with ea_analyzer.app.test_request_context(
+        "/incubation/reference_data/save/IncEA", method="POST", data=form
+    ):
+        flask_session["analysis_mode"] = "incubation"
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: saved.update(data))
+
+            ea_analyzer.incubation_reference_save("IncEA")
+
+    assert saved["IncEA"]["backtest"] == existing_backtest
+    assert saved["IncEA"]["timeframe"] == "H1"
+    assert saved["IncEA"]["bt_period"] == "2017.10.02 - 2026.01.28"
+
+
+def test_dashboard_score_reflects_current_checkpoint_not_stale_higher_slot():
+    """C2: current_result_from_entry() prefers cp3 > cp2 > cp1 regardless of
+    the checkpoint just evaluated. A stale cp3 score sitting in the store
+    must not overwrite a CURRENT CP1 score_display -- the engine returned
+    score=None for this CP1 CONTINUAR result and the row must show that,
+    not a leftover "72.50" from an earlier CP3 evaluation."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": []}
+    entry = {
+        "date_added": "2020-01-01",
+        "backtest": {"a": 1},
+        "mc_manipulation": {"confidence_95": {"a": 1}},
+        "checkpoints": {
+            "cp1": None,
+            "cp2": None,
+            "cp3": {"current_checkpoint": "CP3", "checkpoint": "CP3", "verdict": "APROBAR", "score": 72.5},
+        },
+    }
+    store = {"IncEA": entry}
+    fake_bundle = {
+        "ea_name": "IncEA",
+        "metrics": {"total_trades": 10},
+        "entry": entry,
+        "config": config,
+        "reference_ready": True,
+        "evaluation": {
+            "current_checkpoint": "CP1",
+            "verdict": "CONTINUAR",
+            "score": None,
+            "details": {"gates": {}},
+        },
+        "trades": [],
+    }
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+            mp.setattr(ea_analyzer, "evaluate_ea", lambda *a, **k: fake_bundle)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["verdict"] == "CONTINUAR"
+    assert row["score"] != "72.50"
+    assert row["score"] == "—"
+
+
+def test_build_verdict_card_flattens_category_scores_to_scalars():
+    """C3: incubation_validator.py stores category_scores as a
+    dict-of-dicts ({"score","weight","details"} per category -- see
+    evaluate_cp3), but the CP3 template does `val|int` /
+    `"%.0f"|format(val)` directly on each value, which raises TypeError on
+    a raw dict. Verified pre-fix: `"%.0f" % {"score": 82.5, ...}` raises
+    TypeError."""
+    evaluation = {
+        "current_checkpoint": "CP3",
+        "verdict": "APROBAR",
+        "score": 82.5,
+        "days_incubating": 10,
+        "details": {
+            "category_scores": {
+                "deviation": {"score": 82.5, "weight": 0.4, "details": {}},
+                "risk": {"score": 90.0, "weight": 0.3, "details": {}},
+            },
+        },
+    }
+
+    card = build_verdict_card(evaluation)
+
+    assert card["category_scores"] == {"deviation": 82.5, "risk": 90.0}
+    # The exact template expressions that crashed pre-fix must now succeed.
+    for val in card["category_scores"].values():
+        assert "%.0f" % val == f"{val:.0f}"
+        assert int(val) >= 0
+
+
+def test_dashboard_cp1_all_gates_passing_shows_4_of_4_not_3_of_4():
+    """C4: the "frequency" gate dict is {"status","expected","actual"} with
+    NO "passed" key (incubation_validator.py's _hard_gates), so
+    `hg.get("frequency", {}).get("passed")` is always falsy. A fully-passing
+    CP1 EA (all 4 gates green, including frequency status "OK") must show
+    "Gates 4/4", not "Gates 3/4"."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": []}
+    entry = {"date_added": "2020-01-01", "backtest": {"a": 1}, "mc_manipulation": {"confidence_95": {"a": 1}}}
+    store = {"IncEA": entry}
+    fake_bundle = {
+        "ea_name": "IncEA",
+        "metrics": {"total_trades": 10},
+        "entry": entry,
+        "config": config,
+        "reference_ready": True,
+        "evaluation": {
+            "current_checkpoint": "CP1",
+            "verdict": "CONTINUAR",
+            "score": None,
+            "details": {
+                "gates": {
+                    "dd_extreme": {"passed": True},
+                    "win_rate_binomial": {"passed": True},
+                    "max_consec_losses": {"passed": True},
+                    "frequency": {"status": "OK"},
+                }
+            },
+        },
+        "trades": [],
+    }
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+            mp.setattr(ea_analyzer, "evaluate_ea", lambda *a, **k: fake_bundle)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["status_label"] == "Gates 4/4"
+
+
+def test_dashboard_cp2_hard_gate_failure_does_not_show_bandas_ok():
+    """C5: the CP2 hard-gate branch returns failing_count: None and
+    metrics_evaluation: {} -- bands were NEVER evaluated
+    (incubation_validator.py evaluate_cp2). `details.get("failing_count")
+    or 0` collapses None to 0 -> falsy -> the affirmative label
+    "Bandas MC OK", fabricating an engine conclusion for an ELIMINAR
+    verdict."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": []}
+    entry = {"date_added": "2020-01-01", "backtest": {"a": 1}, "mc_manipulation": {"confidence_95": {"a": 1}}}
+    store = {"IncEA": entry}
+    fake_bundle = {
+        "ea_name": "IncEA",
+        "metrics": {"total_trades": 25},
+        "entry": entry,
+        "config": config,
+        "reference_ready": True,
+        "evaluation": {
+            "current_checkpoint": "CP2",
+            "verdict": "ELIMINAR",
+            "score": None,
+            "details": {
+                "failing_count": None,
+                "metrics_evaluation": {},
+                "hard_gate_failures": ["dd_extreme"],
+            },
+        },
+        "trades": [],
+    }
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+            mp.setattr(ea_analyzer, "evaluate_ea", lambda *a, **k: fake_bundle)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["verdict"] == "ELIMINAR"
+    assert row["status_label"] != "Bandas MC OK"
+    assert "dd_extreme" in row["status_label"]
+
+
+def test_metric_summary_for_tooltip_cp2_hard_gate_failure_not_none_failing():
+    """C5 (tooltip half): `details.get("failing_count", 0)` never fires its
+    default because the key EXISTS with value None -- the tooltip inherited
+    the same fabricated-OK gap as the dashboard label."""
+    evaluation = {
+        "current_checkpoint": "CP2",
+        "verdict": "ELIMINAR",
+        "details": {"failing_count": None, "hard_gate_failures": ["dd_extreme"]},
+    }
+
+    summary = metric_summary_for_tooltip(evaluation)
+
+    assert summary != "Failing metrics: None/7"
+    assert "dd_extreme" in summary
+
+
+def test_dashboard_zero_trade_ea_with_complete_reference_is_not_no_data():
+    """C6: has_reference used to come from the evaluate_ea bundle, but
+    evaluate_ea() returns None whenever the EA has zero matched trades --
+    even when the store entry's reference data is fully loaded. A
+    zero-trade EA with complete reference data must not be reported as
+    "NO DATA" / missing reference data."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": []}  # no trades matched yet
+    entry = {
+        "date_added": "2020-01-01",
+        "backtest": {"win_rate": 55, "total_trades": 300, "bt_period": "2015.01.01 - 2020.01.01"},
+        "mc_manipulation": {"confidence_95": {"max_dd_pct": 10.0}},
+    }
+    store = {"IncEA": entry}
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["has_reference"] is True
+    assert row["no_data"] is False
+    assert row["verdict"] != "NO DATA"
+    assert dashboard["pending_bt_mc"] == 0
+
+
+def test_dashboard_zero_trade_row_does_not_link_to_redirecting_strategy_page():
+    """C9: the C6 "Sin trades" row linked to incubation_strategy, but that
+    route calls evaluate_ea() -- which returns None for a zero-trade EA --
+    and immediately redirects back to the dashboard with a flash. The row
+    must link somewhere that actually renders in this state."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": []}  # no trades matched yet
+    entry = {
+        "date_added": "2020-01-01",
+        "backtest": {"win_rate": 55, "total_trades": 300},
+        "mc_manipulation": {"confidence_95": {"max_dd_pct": 10.0}},
+    }
+    store = {"IncEA": entry}
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+            strategy_url = url_for("incubation_strategy", ea_name="IncEA")
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["status_label"] == "Sin trades"
+    assert row["url"] != strategy_url
+
+
+def test_dashboard_pre_cp1_eliminar_respects_engine_verdict_not_esperando_trades():
+    """C7: the cp == "PRE_CP1" branch used to assign "Esperando trades"
+    unconditionally, ignoring that the engine's PRE_CP1 evaluation can
+    return verdict ELIMINAR on a frequency-deadline breach."""
+    import ea_analyzer
+
+    config = {"mappings": {"IncEA": {"magic": "1", "alias": "", "active": True}}}
+    parsed_data = {"closed_trades": []}
+    entry = {"date_added": "2020-01-01", "backtest": {"a": 1}, "mc_manipulation": {"confidence_95": {"a": 1}}}
+    store = {"IncEA": entry}
+    fake_bundle = {
+        "ea_name": "IncEA",
+        "metrics": {"total_trades": 2},
+        "entry": entry,
+        "config": config,
+        "reference_ready": True,
+        "evaluation": {
+            "current_checkpoint": "PRE_CP1",
+            "verdict": "ELIMINAR",
+            "score": None,
+            "details": {"freq_deadline": True, "deadline_days": 30, "bt_monthly": 10, "actual_monthly": 1},
+        },
+        "trades": [],
+    }
+
+    with ea_analyzer.app.test_request_context():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: parsed_data)
+            mp.setattr(ea_analyzer, "load_incubation_config", lambda: config)
+            mp.setattr(ea_analyzer, "load_incubation_store", lambda: store)
+            mp.setattr(ea_analyzer, "save_incubation_store", lambda data: None)
+            mp.setattr(ea_analyzer, "evaluate_ea", lambda *a, **k: fake_bundle)
+
+            dashboard = ea_analyzer._build_incubation_dashboard()
+
+    row = next(r for r in dashboard["rows"] if r["name"] == "IncEA")
+    assert row["verdict"] == "ELIMINAR"
+    assert row["status_label"] != "Esperando trades"
+    assert row["status_class"] == "verdict-eliminate"
+
+
+def test_metric_summary_for_tooltip_cp1_sin_datos_states_missing_reason_not_fabricated_gates():
+    """C8: metric_summary_for_tooltip is applied to SIN DATOS evaluations
+    too. A CP1 SIN DATOS carries gates:{} and no real counts, so it used to
+    yield "Hard gates: 0/0 passed" -- contradicting the SIN DATOS verdict
+    shown in the same cell."""
+    evaluation = {
+        "current_checkpoint": "CP1",
+        "verdict": "SIN DATOS",
+        "missing": ["live.max_dd_pct", "backtest.win_rate"],
+        "details": {"gates": {}},
+    }
+
+    summary = metric_summary_for_tooltip(evaluation)
+
+    assert summary != "Hard gates: 0/0 passed"
+    assert "SIN DATOS" in summary
+
+
+def test_metric_summary_for_tooltip_pre_cp1_sin_datos_states_missing_reason_not_pending():
+    """C8: a PRE_CP1 SIN DATOS result falls through to the generic
+    "PENDING" return, contradicting the SIN DATOS verdict shown in the same
+    cell."""
+    evaluation = {
+        "current_checkpoint": "PRE_CP1",
+        "verdict": "SIN DATOS",
+        "missing": ["backtest.total_trades"],
+        "details": {"missing": ["backtest.total_trades"]},
+    }
+
+    summary = metric_summary_for_tooltip(evaluation)
+
+    assert summary != "PENDING"
+    assert "SIN DATOS" in summary

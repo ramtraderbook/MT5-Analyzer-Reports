@@ -53,6 +53,7 @@ from incubation_domain import (
     build_verdict_card,
     checkpoint_for_trades,
     compute_spp_ratios,
+    count_cp1_hard_gates,
     current_result_from_entry,
     days_since_first_trade,
     evaluate_ea,
@@ -638,7 +639,14 @@ def _build_incubation_dashboard():
             days = days_since_first_trade(evaluation_bundle["trades"] if evaluation_bundle else [])
             checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
 
-            has_reference = evaluation_bundle["reference_ready"] if evaluation_bundle else False
+            # JD-5 C6: has_reference used to come from the evaluate_ea bundle,
+            # but evaluate_ea() returns None whenever the EA has zero matched
+            # trades -- even when the store entry's reference data is fully
+            # loaded (evaluation_bundle is then None too). Derive readiness
+            # from the store entry itself, via the same reference_ready()
+            # helper the strategy detail page already uses, so a zero-trade
+            # EA with complete reference data is not reported as missing it.
+            has_reference = reference_ready(entry)
             if not has_reference:
                 pending_bt_mc += 1
                 pending_count += 1
@@ -666,17 +674,40 @@ def _build_incubation_dashboard():
                     status_label = f"SIN DATOS ({len(missing)})" if missing else "SIN DATOS"
                     status_class = "verdict-no-data"
                 elif cp == "PRE_CP1":
-                    status_label = "Esperando trades"
-                    status_class = "verdict-pending"
+                    if verdict == "ELIMINAR":
+                        # JD-5 C7: PRE_CP1 can be eliminated by the engine on a
+                        # frequency-deadline breach (evaluate_incubation); do
+                        # not assert "still waiting for trades" for an EA the
+                        # engine already eliminated.
+                        status_label = "Frecuencia perdida"
+                        status_class = "verdict-eliminate"
+                    else:
+                        status_label = "Esperando trades"
+                        status_class = "verdict-pending"
                 elif cp == "CP1":
                     hg = details.get("gates", {})
-                    gate_keys = ["dd_extreme", "win_rate_binomial", "max_consec_losses", "frequency"]
-                    passed = sum(1 for k in gate_keys if hg.get(k, {}).get("passed"))
-                    status_label = f"Gates {passed}/{len(gate_keys)}"
+                    # JD-5 C4: count via the shared helper (matches the
+                    # tooltip's rule for the "frequency" gate, which never
+                    # carries a "passed" key) so a fully-passing CP1 EA shows
+                    # 4/4 here, not "3/4".
+                    passed, total = count_cp1_hard_gates(hg)
+                    status_label = f"Gates {passed}/{total}"
                     status_class = "verdict-continue" if verdict == "CONTINUAR" else "verdict-eliminate"
                 elif cp == "CP2":
-                    failing_count = details.get("failing_count") or 0
-                    status_label = f"{failing_count} métricas fuera" if failing_count else "Bandas MC OK"
+                    failing_count = details.get("failing_count")
+                    if failing_count is None:
+                        # JD-5 C5: the CP2 hard-gate branch never evaluates
+                        # bands (metrics_evaluation:{}, failing_count: None) --
+                        # do not assert "Bandas MC OK" for bands the engine
+                        # never checked. Surface the hard-gate failure instead.
+                        hard_gate_failures = details.get("hard_gate_failures") or []
+                        status_label = (
+                            "Hard gates: " + ", ".join(hard_gate_failures)
+                            if hard_gate_failures
+                            else "Hard gate failed"
+                        )
+                    else:
+                        status_label = f"{failing_count} métricas fuera" if failing_count else "Bandas MC OK"
                     status_class = "verdict-observe" if verdict == "OBSERVAR" else ("verdict-eliminate" if verdict == "ELIMINAR" else "verdict-continue")
                 elif cp == "CP3":
                     status_label = f"Score {score_display}"
@@ -701,6 +732,23 @@ def _build_incubation_dashboard():
                     pending_count += 1
                 elif verdict == "SIN DATOS":
                     sin_datos_count += 1
+            elif has_reference:
+                # JD-5 C6: reference data is complete but the EA has zero
+                # matched trades yet, so evaluate_ea() returned None before
+                # ever reaching a verdict. Keep this "no trades yet" state
+                # visually and textually distinct from "reference data
+                # missing" -- do not run the full engine evaluation here,
+                # that is out of scope for this fix.
+                verdict = "PENDING"
+                tooltip = "Sin trades registrados todavía para esta estrategia."
+                status_label = "Sin trades"
+                status_class = "verdict-pending"
+                # JD-5 C9: no enlazar a incubation_strategy, que para una EA sin
+                # trades hace evaluate_ea() -> None y rebota al dashboard con un
+                # flash. Llevar a los datos de referencia de esta EA, que sí
+                # existen y son lo único revisable en este estado.
+                url = url_for("incubation_reference_edit", ea_name=ea_name)
+                pending_count += 1
 
             # F5 correction: SIN DATOS is deliberately never persisted into a
             # cp1/cp2/cp3 slot (design §1), so `current_result_from_entry`
@@ -712,7 +760,13 @@ def _build_incubation_dashboard():
             # placeholder set above ("--") survives.
             if evaluation and verdict != "SIN DATOS":
                 checkpoint_record = current_result_from_entry(evaluation_bundle["entry"])
-                if checkpoint_record:
+                # JD-5 C2: current_result_from_entry() prefers cp3 > cp2 >
+                # cp1 regardless of the checkpoint just evaluated, so a
+                # stale higher-slot score (e.g. a leftover CP3 result) would
+                # overwrite a CURRENT CP1/CP2 score_display that the engine
+                # never computed. Only trust the stored record when it is
+                # actually for the checkpoint being rendered right now.
+                if checkpoint_record and checkpoint_record.get("current_checkpoint") == cp:
                     score_display = (
                         f"{checkpoint_record.get('score'):.2f}"
                         if isinstance(checkpoint_record.get("score"), (int, float))
@@ -1371,7 +1425,14 @@ def incubation_reference_save(ea_name):
     checkpoints = existing.get("checkpoints") or {"cp1": None, "cp2": None, "cp3": None}
     date_added = existing.get("date_added") or str(date.today())
 
-    backtest = payload["backtest"]
+    # JD-5 C1: a fully-blank Backtest submission parses to {} with ZERO
+    # form errors (parse_reference_form only errors a required section
+    # when it has SOME value), so an unguarded assignment here silently
+    # wipes the 12 mandatory backtest fields on every re-save that leaves
+    # this section blank. Preserve the existing backtest the same way
+    # MC/SPP already do below, so timeframe/bt_period (sourced from this
+    # same dict a few lines down) are protected too.
+    backtest = payload["backtest"] or existing.get("backtest", {})
     mc_manipulation = payload["mc_manipulation"]
     mc_retest = payload["mc_retest"]
     existing_manip = existing.get("mc_manipulation") or existing.get("monte_carlo") or {}
