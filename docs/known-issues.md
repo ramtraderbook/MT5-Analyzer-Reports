@@ -490,3 +490,138 @@ duros. Lo que sigue quedó registrado y no tocado.
   También: `static/style.css:3489-3494` sigue cargando las reglas
   `.val-add-bt-link`, ya muertas, que dejó la eliminación del punto 1 —
   `style.css` estaba fuera del alcance de JD-6.
+
+## 14. Oráculo ejecutable (P-A) — hallazgos revelados y NO corregidos
+
+Arnés en `tests/oracle/` (8 archivos, ~3.500 líneas): caracterización +
+propiedades (Hypothesis) + diferencial contra oráculo independiente
+(`empyrical` para Sharpe, `scipy.stats.binom.cdf` para el binomial, oráculos
+derivados a mano para el resto). **Cero ediciones de producción**: el arnés
+observa, no arregla. Suite: 266 → 519 tests, 15 `xfail(strict=True)`, uno por
+cada hallazgo abierto que queda visible sin romper el verde.
+
+Nota de alcance: la premisa de partida ("validator.py, incubation_validator.py
+y la API pública de metrics.py tienen cero cobertura") era **falsa** —
+`calculate_validator_score` ya tenía 17 llamadas en tests, `evaluate_cp3` 15,
+`get_all_validator_results` 8. La única con cero cobertura real era
+`calculate_portfolio_metrics`. Lo que sí faltaba por completo era la capa de
+propiedades y la de oráculo diferencial.
+
+### A. Puede cambiar un veredicto
+
+- **A1 — CP3 muestra un score y decide con otro.** `evaluate_cp3` resuelve el
+  veredicto con el `final_score` SIN redondear (`incubation_validator.py:1165`)
+  pero publica `round(final_score, 2)` (`:1170`). Repro ejecutado: categorías
+  deviation=54.44 / risk=65.0 / coherence=100.0 / sample=60.0 → score crudo
+  64.998 → `OBSERVAR`, mientras la UI muestra **65.0**, que es exactamente la
+  banda de `APROBAR`. El operador lee aprobado y el motor dice observar.
+  Test: `test_cp3_score_display_contradicts_verdict_at_65_boundary`.
+- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:353-354`
+  parte con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que el trade no
+  cae en ninguna partición: `winning_trades + losing_trades < total_trades` y su
+  P&L se evapora de `net_profit` sin error ni SIN DATOS. Repro ejecutado: 3
+  trades (100, NaN, -50) → total=3, wins=1, losses=1 (suma 2), net_profit=50.0.
+  Toda métrica y todo veredicto aguas abajo se calculan sobre una base corrupta.
+- **A3 — `payout_ratio` inflado ~2x por trades de P&L cero.** La misma partición
+  `p <= 0` cuenta los ceros como pérdidas: `avg_loss = gross_loss/losing_trades`
+  se achica y el payout sube. Verificado: `avg_loss` -80/4 = -20 frente al -80/2
+  = -40 de la definición estándar → payout 5.0 en vez de 2.5. `payout_ratio`
+  pesa 20% dentro de EDGE en el validador y 0.15 en la desviación de CP3.
+- **A4 — SQN sin el cap de Van Tharp.** El repo usa `sqrt(n)*mean/std`; el
+  estándar es `sqrt(min(n,100))*mean/std`. Con n=150: 1.769 vs 1.444 — cruza la
+  frontera de `SQN_LABELS` en 1.6, o sea "Debajo promedio" contra "Pobre". El
+  código y su propia doc coinciden en no tener el cap (no es un bug nuevo), pero
+  la etiqueta que ve el operador se aparta del estándar de la industria para
+  muestras grandes.
+
+### B. Crashes (fallan fuerte, no mienten)
+
+- **B1** — `validator.py:99-100`: `float(live.get("total_trades") or 0)` lanza
+  `ValueError` no capturado con un string no numérico. Es el único campo de
+  `live` que no pasa por `_safe_float` (los otros 9 sí).
+- **B2** — `validator.py:134`: `int(trades_live)` → `ValueError` con NaN,
+  `OverflowError` con ±inf.
+- **B3** — `validator.py:434` y `:353-354`: **`ZeroDivisionError` por underflow**
+  (hallazgo nuevo, encontrado por Hypothesis, no previsto por la auditoría
+  previa). Dos variantes, la segunda más grave:
+  - *Entrada subnormal*: un `weeks_operating` o `bt.trades_total` subnormal
+    (5e-324, 1e-323) pasa la guarda `> 0`, pero la división intermedia
+    (`/4.33`, `/months`) **hace underflow a 0.0 exacto** y la siguiente
+    división explota.
+  - *Cociente que hace underflow* (más amplio): **no hacen falta subnormales**.
+    `bt.trades_total = 2.49e-238` y `bt.months = 4.61e+204` son floats
+    perfectamente normales y ambos `> 0`, pero su **cociente** cae por debajo
+    del subnormal mínimo y da `0.0` exacto (`:353`), y `:354` explota. La
+    lección general: **la guarda `x > 0 and y > 0` no garantiza `x / y > 0`**.
+    Ninguna validación de rango sobre los operandos por separado lo evita.
+- **B4** — `incubation_validator._safe_int(float("inf"))` → `OverflowError` no
+  capturado: el `except (TypeError, ValueError)` (`:49-55`) no lo cubre.
+  Alcanzable vía `total_trades` y `max_consec_losses` en cualquier checkpoint.
+- **B5** — `_wins_from_metrics` (`:118-125`): sin `winning_trades` y con
+  `win_rate=NaN` → `ValueError` (`_safe_float` deja pasar el NaN intacto).
+- **B6** — `metrics.py`: `KeyError` si falta `net_pnl`/`close_time`/`direction`/
+  `symbol`; `ValueError` en `fromisoformat` con un `close_time` malformado;
+  `TypeError` con un `net_pnl` no numérico.
+
+### C. Datos silenciosamente equivocados
+
+- **C1** — Todos los trades sin fecha → curva de equity vacía → drawdown **0.0**
+  reportado sobre pérdidas reales (`metrics.py:74-76, 131-132`).
+- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:118`, `:155`).
+- **C3** — Fecha de pico malformada → `_calc_stagnation` devuelve **0** días, o
+  sea el mejor valor posible salido de un fallo de parseo (`:162-170`).
+- **C4** — `_hard_gates`: `expected_monthly == 0` (no `None`) no satisface ni la
+  rama `is None` ni la `> 0`, y la frecuencia queda en **"OK"** (`:361-368`).
+- **C5** — `_nd_result` usa `setdefault`: al llegar por `validator.py:555`, los
+  números reales (`wr_live`, `payout_var`, `freq_pct`, `edge_erosion`…)
+  sobreviven al lado de las etiquetas `"N/D"`. Ya listado en §6.
+- **C6** — Zona ALERTA vacía cuando `mc_retest.max_dd == mc_trades.max_dd`
+  (§4, quirk conocido y deliberado).
+- **C7** — WFE redondea **antes** de bandear (`:673-674`): 120.04 → 120.0 → `OK`
+  en vez de `ALERTA`.
+- **C8** — Contratos de forma incompatibles: `evaluate_cp1` devuelve 6 claves en
+  éxito y 13 en SIN DATOS; las formas PRE_CP1 ELIMINAR/PENDING **omiten**
+  `mc_source`, que la forma SIN DATOS sí trae como `{}`.
+
+### D. Documentación que contradice al código
+
+- **D1** — `metrics-formulas.md:386-391` afirma que el p-valor binomial usa
+  `scipy.binom.cdf` con fallback a aproximación normal. **No existe**: el código
+  es `math.comb` exacto, sin scipy y sin fallback. Un oráculo construido desde
+  la doc diverge 0.05–0.17 en N chico (wins=2,n=5,p=0.5 → código 0.500, doc
+  0.327). El código está bien; **la doc está mal**.
+- **D2** — `decision-logic.md:155-160` documenta la frecuencia como una cola;
+  el código es de **dos colas** (`validator.py:444-447`). Con freq_pct=413% la
+  doc dice `OK` y el código dice `FUERA`.
+- **D3** — `metrics-formulas.md:297` dice que el reloj arranca en el primer
+  trade; el código prioriza `date_added` (`incubation_validator.py:100-115`).
+- **D4** — `decision-logic.md:331` dice "cuatro referencias" y enumera tres.
+- **D5** — `decision-logic.md:128` documenta solo las bandas OK del payout;
+  las de ALERTA y el corto-circuito `payout >= 1e9 → OK` no están.
+- **D6** — `docs/design/decision-engine-no-data-contract.md` está citado desde
+  `validator.py:187,211,501` e `incubation_validator.py:476,498` — y **no
+  existe**. El contrato SIN DATOS que ambos motores dicen implementar no tiene
+  especificación legible en el repo.
+
+### E. Hipótesis refutada por el arnés
+
+- El split de redondeo score/veredicto **no se puede alcanzar en `validator.py`**
+  (sí en CP3, ver A1). Se sospechaba que un score crudo de 69.96 podía
+  publicarse como 70.0 con veredicto `MONITOREAR`. Enumerando con `Fraction`
+  las 701 combinaciones alcanzables de `(s_riesgo, s_edge, s_caracter, s_desv)`
+  — recordando que los tres primeros son sumas ponderadas de sub-scores, no
+  valores de `{0,5,10}` — el score crudo cae en una grilla exacta de múltiplos
+  de 0.125. El punto inmediatamente inferior a 70 es **69.875**, que redondea a
+  69.9: mismo lado que la comparación. El intervalo `[69.95, 70)` está vacío, y
+  el `[44.95, 45)` también, así que ninguna de las dos bandas puede partirse.
+  Pinneado como caracterización, no como defecto
+  (`test_char_validator.py:585`).
+
+  **Pero la estructura del defecto SÍ está**: `validator.py:614` publica
+  `round(score, 1)` mientras `:625-628` deciden con el `score` crudo —
+  exactamente el mismo patrón que en CP3, donde sí explota. Acá no explota sólo
+  porque la grilla no tiene puntos en el intervalo peligroso, y el margen es de
+  **un paso de grilla (0.125)**, no de una distancia cómoda. Es una coincidencia
+  aritmética, no un diseño: cualquier cambio futuro en los pesos de `CONFIG`
+  mueve la grilla y puede abrir el hueco sin que nadie toque la lógica del
+  veredicto.
