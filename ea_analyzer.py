@@ -652,6 +652,60 @@ def index():
     )
 
 
+def _canonical_trade(t: dict) -> dict:
+    """
+    Return a copy of trade dict `t` with every datetime value normalized to
+    its ISO string form (via .isoformat()); all other values pass through
+    unchanged.
+
+    Needed because cached trades (loaded from JSON via load_cache) carry
+    open_time/close_time as ISO strings — _serialize_parsed_data() converted
+    them on the way to disk — while merge_trades() is new-wins, so any
+    overlapping trade in a fresh merge carries the freshly-parsed datetime
+    objects that parser.py always produces. Comparing those dicts with raw
+    equality would report a change on type alone even when the values are
+    identical, so both sides must be normalized to the same canonical form
+    before comparison.
+    """
+    return {
+        k: (v.isoformat() if isinstance(v, datetime) else v)
+        for k, v in t.items()
+    }
+
+
+def _merge_changed_content(existing_trades: list, merged_trades: list) -> bool:
+    """
+    True if merging produced any real content change vs existing_trades —
+    either new position_ids were added, OR an existing position_id's trade
+    dict was replaced with different field values (e.g. a broker
+    correction re-upload: same position_id, updated commission/net_pnl).
+
+    False only when merged_trades is content-identical to existing_trades
+    (the legitimate "same file re-uploaded, nothing changed" fast path).
+
+    A plain count comparison (len(merged) - len(existing) == 0) is NOT
+    enough: a corrections-only re-upload has the same position_ids, so
+    the count never changes even though field values did — silently
+    discarding the "new data wins" merge that merge_trades() performs.
+
+    Trades are compared via _canonical_trade() on BOTH sides, normalizing
+    any datetime value to its ISO string form. This is required because the
+    cache round-trip (JSON) turns open_time/close_time into ISO strings,
+    while a fresh merge carries datetime objects for the same field — the
+    types differ even when the values are identical, and a raw dict
+    equality check would wrongly report a change (defeating this exact
+    fast path) without it.
+    """
+    if len(merged_trades) != len(existing_trades):
+        return True
+    existing_by_id = {t["position_id"]: _canonical_trade(t) for t in existing_trades}
+    for t in merged_trades:
+        pid = t["position_id"]
+        if pid not in existing_by_id or existing_by_id[pid] != _canonical_trade(t):
+            return True
+    return False
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     cleanup_old_caches()
@@ -703,7 +757,7 @@ def upload():
             from parser import merge_trades
             merged_inc = merge_trades(existing_trades_inc, new_data["closed_trades"])
             added_count_inc = len(merged_inc) - len(existing_trades_inc)
-            if added_count_inc == 0:
+            if not _merge_changed_content(existing_trades_inc, merged_inc):
                 return redirect(url_for("incubation_dashboard"))
             merged_ea_names_inc = sorted(set(
                 t["comment"] for t in merged_inc
@@ -744,8 +798,11 @@ def upload():
         merged_trades = merge_trades(existing_trades, new_data["closed_trades"])
         added_count = len(merged_trades) - len(existing_trades)
 
-        # Same file / no new trades: keep the current session data and reopen the app.
-        if added_count == 0:
+        # Same file re-uploaded with truly nothing changed: keep the current
+        # session data and reopen the app. A corrections-only re-upload
+        # (same position_ids, updated fields) must NOT hit this fast path —
+        # added_count alone can't detect that, so check real content change.
+        if not _merge_changed_content(existing_trades, merged_trades):
             return redirect(url_for("dashboard"))
 
         # Rebuild ea_names from merged trades

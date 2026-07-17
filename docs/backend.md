@@ -93,7 +93,7 @@ Usuario sube .xlsx
 ```
 
 ### Append mode
-Cada carga de archivo **agrega** trades al cache existente (no reemplaza). `merge_trades()` elimina duplicados por `position_id`. El resultado está ordenado por `close_time` ascendente.
+Cada carga de archivo **agrega** trades al cache existente (no reemplaza). `merge_trades()` elimina duplicados por `position_id`, tanto entre `existing` y `new_trades` como DENTRO de `new_trades` (un mismo upload no puede duplicar un position_id). Cuando un `position_id` colisiona, el trade **nuevo** reemplaza al existente (permite que correcciones del broker en un re-upload se reflejen en el cache); dentro de `new_trades`, gana la última ocurrencia. El resultado está ordenado por `close_time` ascendente (orden estable, `None`/no parseable al final).
 
 ---
 
@@ -112,16 +112,16 @@ ORDERS    → mapeo order_id → comment (nombre del EA)
 JOIN: position_id == order_id
 ```
 
-Los comentarios del tipo `[sl 1234.5]` o `[tp 1234.5]` son generados automáticamente por MT5 y se descartan (`SYSTEM_COMMENT_PREFIX = "["`). Solo se conservan los comentarios que no empiecen por `[`.
+Los comentarios de sistema generados automáticamente por MT5 (`[sl 1234.5]`, `[tp 1234.5]`, `[so: ...]`, `[out 1234.5]`, `[expiration]`) se descartan mediante `_is_system_comment()`, un matcher regex preciso (`^\[(sl|tp|so|out|expiration)\b`, case-insensitive). Esto evita descartar nombres de EA legítimos que también empiezan por `[` (ej. `"[GridMaster v2]"`, `"[Ichimoku_Bot]"`). La constante `SYSTEM_COMMENT_PREFIX = "["` se mantiene solo por compatibilidad, ya no se usa para filtrar.
 
 ### Columnas duplicadas en POSITIONS
-Las columnas `Time` y `Price` aparecen **dos veces** en POSITIONS (open/close). `_get_column_map()` solo almacena la última ocurrencia, por eso las posiciones de estas columnas se hardcodean:
+Las columnas `Time` y `Price` aparecen **dos veces** en POSITIONS (open/close). `_get_column_map()` solo almacena la última ocurrencia, pero `_get_column_map_all()` guarda TODAS las ocurrencias en orden de aparición; `_parse_positions()` resuelve Time#1/Time#2 y Price#1/Price#2 por orden de aparición real en el header, y solo cae a posiciones fijas (1, 6, 9, 10) si el header genuinamente carece de esas ocurrencias:
 
 ```python
-time_open_col   = 1    # primera columna
-price_open_col  = 6    # columna 6
-time_close_col  = 9    # columna 9
-price_close_col = 10   # columna 10
+time_open_col   = 1    # fallback si el header no tiene 1ª ocurrencia de "Time"
+price_open_col  = 6    # fallback si el header no tiene 1ª ocurrencia de "Price"
+time_close_col  = 9    # fallback si el header no tiene 2ª ocurrencia de "Time"
+price_close_col = 10   # fallback si el header no tiene 2ª ocurrencia de "Price"
 ```
 
 ### Trades sin match en ORDERS

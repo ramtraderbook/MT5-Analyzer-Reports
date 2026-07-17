@@ -1,7 +1,19 @@
+from datetime import datetime
 from io import BytesIO
+
+import pytest
 
 
 def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_path):
+    """
+    F1/F2 regression: `existing_data` simulates load_cache() — cache trades
+    are always ISO strings (_serialize_parsed_data() converts them on the
+    way to disk). `parsed_same_file` simulates the REAL parse_mt5_report(),
+    which ALWAYS returns datetime objects for open_time/close_time
+    (parser.py's _parse_date never returns a string) — mocking it with a
+    string here would mask the exact type mismatch this fast path must
+    tolerate. Both represent the same instant.
+    """
     import ea_analyzer
 
     existing_data = {
@@ -10,6 +22,7 @@ def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_p
                 "position_id": 101,
                 "comment": "MyEA",
                 "net_pnl": 10.0,
+                "open_time": "2026-01-01T09:00:00",
                 "close_time": "2026-01-01T12:00:00",
             }
         ]
@@ -20,7 +33,8 @@ def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_p
                 "position_id": 101,
                 "comment": "MyEA",
                 "net_pnl": 10.0,
-                "close_time": "2026-01-01T12:00:00",
+                "open_time": datetime(2026, 1, 1, 9, 0, 0),
+                "close_time": datetime(2026, 1, 1, 12, 0, 0),
             }
         ],
         "ea_names": ["MyEA"],
@@ -66,6 +80,177 @@ def test_upload_same_file_reopens_dashboard_without_appending(monkeypatch, tmp_p
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/dashboard")
     assert saved_configs == []
+
+
+def test_merge_changed_content_detects_corrections_only_reupload():
+    """
+    R6: added_count alone can't detect a corrections-only re-upload (same
+    position_ids, updated fields) — _merge_changed_content must return
+    True in that case so the upload route doesn't silently discard the
+    "new data wins" merge. Named shape from the ledger: pos 555 goes from
+    commission=-2.00/net_pnl=17.80 to commission=-1.00/net_pnl=18.80.
+    """
+    import ea_analyzer
+
+    existing_trades = [
+        {"position_id": 555, "commission": -2.00, "net_pnl": 17.80, "comment": "MyEA"},
+    ]
+    # merge_trades() would replace pos 555 with the corrected trade (new data wins)
+    merged_corrected = [
+        {"position_id": 555, "commission": -1.00, "net_pnl": 18.80, "comment": "MyEA"},
+    ]
+
+    assert ea_analyzer._merge_changed_content(existing_trades, merged_corrected) is True
+
+
+def test_merge_changed_content_false_for_identical_reupload():
+    """
+    R6: the legitimate fast path — re-uploading the exact same file with
+    no new trades and no field changes — must still short-circuit.
+
+    F1/F2 regression: `existing_trades` simulates the cache (ISO strings
+    for open_time/close_time — load_cache()'s shape), while
+    `merged_identical` simulates what merge_trades() actually hands back
+    for an unchanged position_id (new-wins: the freshly-parsed trade,
+    which always carries datetime objects for those same fields). Without
+    the F1 fix, this comparison reports a change on type alone even
+    though the values represent the same instant.
+    """
+    import ea_analyzer
+
+    existing_trades = [
+        {
+            "position_id": 555,
+            "commission": -2.00,
+            "net_pnl": 17.80,
+            "comment": "MyEA",
+            "open_time": "2026-01-10T09:00:00",
+            "close_time": "2026-01-10T12:00:00",
+        },
+    ]
+    merged_identical = [
+        {
+            "position_id": 555,
+            "commission": -2.00,
+            "net_pnl": 17.80,
+            "comment": "MyEA",
+            "open_time": datetime(2026, 1, 10, 9, 0, 0),
+            "close_time": datetime(2026, 1, 10, 12, 0, 0),
+        },
+    ]
+
+    assert ea_analyzer._merge_changed_content(existing_trades, merged_identical) is False
+
+
+def test_merge_changed_content_datetime_vs_iso_string_equivalence():
+    """
+    F1 direct regression: cached trades (load_cache()'s shape) hold ISO
+    strings for open_time/close_time — _serialize_parsed_data() converts
+    them on the way to disk. merge_trades() is new-wins, so the merged
+    trade for an unchanged position_id carries the freshly-parsed trade,
+    which always has datetime objects for those same fields (parser.py's
+    _parse_date never returns a string). _merge_changed_content() must
+    treat those as equal — comparing raw dicts would report a change on
+    type alone even though the underlying instant is identical, defeating
+    the "same file re-uploaded, nothing changed" fast path.
+    """
+    import ea_analyzer
+    from parser import merge_trades
+
+    cached = [
+        {
+            "position_id": 555,
+            "net_pnl": 17.8,
+            "close_time": "2026-01-10T12:00:00",
+            "open_time": "2026-01-10T09:00:00",
+        }
+    ]
+    fresh = [
+        {
+            "position_id": 555,
+            "net_pnl": 17.8,
+            "close_time": datetime(2026, 1, 10, 12, 0),
+            "open_time": datetime(2026, 1, 10, 9, 0),
+        }
+    ]
+
+    merged = merge_trades(cached, fresh)
+
+    assert ea_analyzer._merge_changed_content(cached, merged) is False
+
+
+def test_upload_live_mode_saves_corrections_only_reupload(monkeypatch, tmp_path):
+    """
+    R6 route-level regression: a correction-only re-upload (same
+    position_id, updated commission/net_pnl) has added_count == 0, but
+    must NOT hit the early "nothing changed" return — it must proceed to
+    save the corrected data, or the cache keeps the stale value forever.
+    """
+    import ea_analyzer
+    import parser
+
+    existing_data = {
+        "closed_trades": [
+            {
+                "position_id": 555,
+                "comment": "MyEA",
+                "commission": -2.00,
+                "net_pnl": 17.80,
+                "close_time": "2026-01-01T12:00:00",
+            }
+        ]
+    }
+    parsed_correction = {
+        "closed_trades": [
+            {
+                "position_id": 555,
+                "comment": "MyEA",
+                "commission": -1.00,
+                "net_pnl": 18.80,
+                "close_time": "2026-01-01T12:00:00",
+            }
+        ],
+        "ea_names": ["MyEA"],
+        "total_closed": 1,
+        "unknown_trades": 0,
+        "account": {},
+        "open_positions": [],
+    }
+
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr(ea_analyzer, "UPLOAD_FOLDER", str(uploads_dir))
+    monkeypatch.setattr(ea_analyzer, "cleanup_old_caches", lambda: None)
+    monkeypatch.setattr(ea_analyzer, "load_cache", lambda cache_key: existing_data)
+    monkeypatch.setattr(parser, "parse_mt5_report", lambda filepath: parsed_correction)
+
+    saved_caches = []
+    monkeypatch.setattr(
+        ea_analyzer,
+        "save_cache",
+        lambda data: saved_caches.append(data) or "new-cache-key",
+    )
+    monkeypatch.setattr(ea_analyzer, "save_config", lambda config: None)
+    monkeypatch.setattr(ea_analyzer, "invalidate_metrics_cache", lambda: None)
+    monkeypatch.setattr(ea_analyzer, "_delete_cache_file", lambda *a, **k: None)
+
+    client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["cache_key"] = "existing-cache"
+
+    response = client.post(
+        "/upload",
+        data={"file": (BytesIO(b"dummy"), "correction.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/mapping")
+    assert len(saved_caches) == 1
+    saved_trade = saved_caches[0]["closed_trades"][0]
+    assert saved_trade["commission"] == pytest.approx(-1.00)
+    assert saved_trade["net_pnl"] == pytest.approx(18.80)
 
 
 def test_upload_incubation_mode_routes_to_mapping(monkeypatch, tmp_path):
