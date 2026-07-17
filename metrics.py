@@ -18,6 +18,12 @@ MIN_COEFFICIENT_OF_VARIATION = 0.01
 # "(orientativo)" note but the label is withheld. Same threshold both guards.
 MIN_TRADES_FOR_SQN_LABEL = 20
 
+# Minimum trades before the Probabilistic Sharpe Ratio is estimable. PSR plugs
+# in the sample skewness and (4th-moment) kurtosis, both of which are noise
+# below ~20 observations — the "probability" would be fiction. Same floor and
+# same reasoning as SQN's label guard and the bootstrap.
+MIN_TRADES_FOR_PSR = 20
+
 # Bootstrap Monte Carlo error on a quantile falls as 1/sqrt(B), so 1000 paths
 # (arch's default for SPA/StepM/MCS -- the closest thing to an authoritative
 # default found in a maintained library, docs/research/prior-art.md §5.1) is
@@ -389,6 +395,153 @@ def _calc_sharpe(net_pnl_list):
     if std_r <= abs(mean_r) * MIN_COEFFICIENT_OF_VARIATION:
         return None
     return round(mean_r / std_r, 2)
+
+
+def _standardized_moments(arr, mean_r):
+    """
+    Biased (population) skewness and NON-EXCESS kurtosis of `arr`.
+
+    Standardized by the population std (ddof=0), i.e. m3/m2**1.5 and m4/m2**2.
+    Matches scipy.stats.skew(arr) and scipy.stats.kurtosis(arr, fisher=False)
+    to floating point — that equivalence is what lets the oracle harness
+    validate calculate_psr against scipy without importing it in production.
+    A normal distribution gives skew 0 and kurtosis 3 (non-excess).
+
+    Returns (None, None) when the moments are not computable, at either end of
+    the magnitude range — the CV guard on std(ddof=1) catches neither:
+    - UNDERFLOW: m2 can be positive-but-denormal (inputs ~1e-160) so its
+      1.5/2.0 powers underflow to exactly 0.0 → division by zero.
+    - OVERFLOW: extreme-magnitude inputs (~1e160) overflow the 3rd/4th powers
+      to inf, so the standardized moments come out non-finite (nan/inf).
+    Signalling in both cases keeps the caller on its structured "not estimable"
+    path — and, importantly, a non-finite skew/kurt returned here would slip
+    past the caller's `bracket <= 0` guard (nan <= 0 is False), so catching it
+    at the source is what makes that guard sufficient downstream.
+    """
+    # Overflow on extreme-magnitude inputs is expected and handled (non-finite
+    # results are rejected below), so silence numpy's warning rather than leak
+    # it to the caller for a case this function converts to a clean signal.
+    with np.errstate(over="ignore", invalid="ignore"):
+        m2 = float(np.mean((arr - mean_r) ** 2))
+        denom_skew = m2 ** 1.5
+        denom_kurt = m2 ** 2
+        if not (denom_skew > 0.0 and denom_kurt > 0.0):
+            return None, None
+        m3 = float(np.mean((arr - mean_r) ** 3))
+        m4 = float(np.mean((arr - mean_r) ** 4))
+    skew = m3 / denom_skew
+    kurtosis = m4 / denom_kurt
+    if not (math.isfinite(skew) and math.isfinite(kurtosis)):
+        return None, None
+    return skew, kurtosis
+
+
+def calculate_psr(net_pnl_list, sr_benchmark=0.0):
+    """
+    Probabilistic Sharpe Ratio (Bailey & López de Prado, 2012): the
+    probability that the true Sharpe exceeds `sr_benchmark`, given the
+    observed Sharpe, the sample size, and the return distribution's skew and
+    kurtosis. PSR(0) > 0.95 reads as "the Sharpe is positive at the 95%
+    confidence level, accounting for non-normality and small samples".
+
+    Why this exists: the validator answers "is this edge real?" with hand-set
+    tolerance bands that merely widen at low N (validator.py). PSR makes that
+    sample-size adjustment principled — a published statistic instead of a
+    tuned threshold. See docs/research/prior-art.md §5.2.
+
+        PSR(SR*) = Φ( (SR - SR*) · sqrt(n-1)
+                      / sqrt(1 - skew·SR + ((kurt-1)/4)·SR²) )
+
+    Conventions, each a documented CHOICE (the paper's derivation is
+    asymptotic and does not pin finite-sample ddof — do not read these as
+    mandated):
+    - SR uses the sample std (ddof=1), matching _calc_sharpe, so PSR is the
+      probability that THE SHARPE WE REPORT is real. Computed here at full
+      precision, not from _calc_sharpe's 2dp-rounded return.
+    - skew is biased/population; kurtosis is NON-EXCESS (normal = 3). This is
+      the exact fault line of the quantstats bug, which feeds pandas' EXCESS
+      kurtosis into a (kurt-3)/4 term and so subtracts 3 twice, systematically
+      inflating PSR (its bracket is always the correct one minus 0.75·SR²).
+      Matching scipy.stats defaults lets the oracle cross-check us.
+    - Denominator n-1 (Bessel), per the original 2012 paper. Some secondary
+      sources use n; the difference is O(1/n). Documented divergence, not a
+      bug.
+    - Φ via math.erf (0.5·(1+erf(x/√2))): no scipy in production, same as the
+      binomial gate's pure math.comb.
+    - PSR is atemporal and unitless — NEVER annualized (quantstats multiplies
+      it by √252, returning "probabilities" above 1). SR and SR* stay in the
+      same per-trade units; our Sharpe is already non-annualized.
+
+    Returns the repo's structured "not estimable" shape rather than a bare
+    number, matching calculate_bootstrap_risk:
+        {"available": False, "reason": "..."}          when unavailable
+        {"available": True, "psr": <p in [0,1]>, "sr": <float>,
+         "skew": <float>, "kurtosis": <float, non-excess>,
+         "sr_benchmark": <float>, "trades": <int>}      otherwise
+
+    Unavailable when: empty/None input; fewer than MIN_TRADES_FOR_PSR trades;
+    a non-finite value present; a degenerate variance (same CV guard as
+    _calc_sharpe — SR is not estimable); moments that under/overflow (see
+    _standardized_moments); or a non-positive variance bracket.
+
+    On the bracket guard: the moment inequality kurt >= skew² + 1 (Cauchy–
+    Schwarz) means 1 - skew·SR + ((kurt-1)/4)·SR² = (1 - skew·SR/2)² +
+    ((kurt - skew² - 1)/4)·SR² >= 0 for any real sample, so it is NOT driven
+    negative by "extreme" skew/kurtosis. It reaches exactly 0 only at the
+    degenerate two-point-distribution boundary (kurt = skew²+1 and skew·SR = 2),
+    where the standard error would be 0 and the z-score would divide by zero;
+    the `<= 0` guard catches that boundary (and any floating-point cancellation
+    just below it). With finite moments and bracket > 0, the resulting PSR is
+    always finite and in [0,1] — no separate isfinite(psr) check is needed.
+    """
+    if not net_pnl_list:
+        return {"available": False, "reason": "sin trades"}
+
+    n = len(net_pnl_list)
+    if n < MIN_TRADES_FOR_PSR:
+        return {
+            "available": False,
+            "reason": f"insuficientes datos (n={n} < {MIN_TRADES_FOR_PSR})",
+        }
+
+    arr = np.array(net_pnl_list, dtype=float)
+    if not np.all(np.isfinite(arr)):
+        return {"available": False, "reason": "valores no finitos"}
+
+    # Same overflow tolerance as _standardized_moments: extreme-magnitude
+    # inputs (~1e300) can overflow the mean/variance to inf; that is detected
+    # (finiteness guard below) and converted to a clean signal, so numpy's
+    # warning is silenced rather than leaked.
+    with np.errstate(over="ignore", invalid="ignore"):
+        mean_r = float(np.mean(arr))
+        std_r = float(np.std(arr, ddof=1))
+    if not (math.isfinite(mean_r) and math.isfinite(std_r)):
+        return {"available": False, "reason": "momentos no estimables"}
+    if std_r <= abs(mean_r) * MIN_COEFFICIENT_OF_VARIATION:
+        return {"available": False, "reason": "varianza degenerada"}
+
+    sr = mean_r / std_r
+    skew, kurtosis = _standardized_moments(arr, mean_r)
+    if skew is None:
+        return {"available": False, "reason": "momentos no estimables"}
+
+    bracket = 1.0 - skew * sr + ((kurtosis - 1.0) / 4.0) * sr ** 2
+    if bracket <= 0:
+        return {"available": False, "reason": "bracket de varianza no positivo"}
+
+    se = math.sqrt(bracket / (n - 1))
+    z = (sr - sr_benchmark) / se
+    psr = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+    return {
+        "available": True,
+        "psr": round(psr, 4),
+        "sr": round(sr, 4),
+        "skew": round(skew, 4),
+        "kurtosis": round(kurtosis, 4),
+        "sr_benchmark": sr_benchmark,
+        "trades": n,
+    }
 
 
 def _calc_sqn(net_pnl_list):

@@ -953,3 +953,92 @@ def test_bootstrap_risk_chunked_stream_matches_all_at_once_oracle(n):
     assert result["max_dd_pct_p50"] == pytest.approx(oracle_p50, abs=TOL_BOOTSTRAP_STREAM_IDENTITY)
     assert result["max_dd_pct_p95"] == pytest.approx(oracle_p95, abs=TOL_BOOTSTRAP_STREAM_IDENTITY)
     assert result["max_dd_pct_p99"] == pytest.approx(oracle_p99, abs=TOL_BOOTSTRAP_STREAM_IDENTITY)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PSR (metrics.calculate_psr) vs scipy
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Mismo patron que el binomial: produccion usa math.erf + momentos numpy, SIN
+# scipy; el oraculo valida contra scipy.stats (norm.cdf, skew, kurtosis) — una
+# implementacion independiente de la misma convencion. Fuente de la formula:
+# Bailey & Lopez de Prado, "The Sharpe Ratio Efficient Frontier" (2012),
+# verificada contra el paper. Ver docs/research/prior-art.md §5.2.
+
+# calculate_psr redondea psr a 4dp (metrics.py). math.erf vs scipy.stats.norm.cdf
+# coinciden a <=4e-17; los momentos numpy vs scipy.stats.skew/kurtosis coinciden
+# exactamente. Todo el error real es el redondeo a 4dp de produccion.
+TOL_PSR = 5e-5
+
+
+def oracle_psr_scipy(net_pnl_list, sr_benchmark=0.0):
+    """Oraculo PSR independiente via scipy.stats. Misma convencion que
+    metrics.calculate_psr: SR con std ddof=1, skew biased (default de scipy),
+    kurtosis NO-excess (fisher=False), denominador n-1, Phi = norm.cdf."""
+    arr = np.array(net_pnl_list, dtype=float)
+    n = len(arr)
+    sr = float(np.mean(arr)) / float(np.std(arr, ddof=1))
+    skew = float(st.skew(arr))                       # biased/poblacional
+    kurt = float(st.kurtosis(arr, fisher=False))     # NO-excess (normal=3)
+    bracket = 1.0 - skew * sr + ((kurt - 1.0) / 4.0) * sr ** 2
+    se = math.sqrt(bracket / (n - 1))
+    return float(st.norm.cdf((sr - sr_benchmark) / se))
+
+
+def doc_psr_quantstats_kurtosis_bug(net_pnl_list, sr_benchmark=0.0):
+    """El 'camino roto' de quantstats: alimenta la kurtosis EXCESS (normal=0)
+    a un termino (kurt-3)/4, restando 3 dos veces. Su bracket queda siempre en
+    el correcto menos 0.75*SR^2, inflando la PSR. Documentado aca solo para
+    fijar por contraste que produccion NO hace esto."""
+    arr = np.array(net_pnl_list, dtype=float)
+    n = len(arr)
+    sr = float(np.mean(arr)) / float(np.std(arr, ddof=1))
+    skew = float(st.skew(arr))
+    kurt_excess = float(st.kurtosis(arr, fisher=True))  # EXCESS (normal=0) -- el error
+    bracket = 1.0 + 0.5 * sr ** 2 - skew * sr + ((kurt_excess - 3.0) / 4.0) * sr ** 2
+    se = math.sqrt(bracket / (n - 1))
+    return float(st.norm.cdf((sr - sr_benchmark) / se))
+
+
+@pytest.mark.parametrize("seed", [1, 7, 42, 100, 2026])
+@pytest.mark.parametrize("srb", [0.0, 0.1, -0.1])
+def test_psr_matches_scipy_oracle(seed, srb):
+    """calculate_psr (math.erf + momentos numpy) coincide con el oraculo
+    scipy.stats a la tolerancia de redondeo de 4dp, sobre muestras variadas
+    (con skew y kurtosis no triviales) y varios umbrales SR*."""
+    rng = np.random.default_rng(seed)
+    # mezcla asimetrica y con colas para que skew/kurt no sean triviales
+    pnls = list(rng.normal(5.0, 100.0, 150) + rng.exponential(20.0, 150) - 20.0)
+    result = metrics.calculate_psr(pnls, sr_benchmark=srb)
+    assert result["available"] is True
+    assert result["psr"] == pytest.approx(oracle_psr_scipy(pnls, srb), abs=TOL_PSR)
+
+
+def test_psr_moments_match_scipy_exactly():
+    """Los momentos de produccion (skew biased, kurtosis no-excess) deben
+    coincidir con scipy.stats.skew / kurtosis(fisher=False) — es la premisa
+    que hace valido el oraculo. Se prueba a traves del resultado publicado."""
+    rng = np.random.default_rng(3)
+    pnls = list(rng.normal(2.0, 50.0, 200) + rng.gamma(2.0, 10.0, 200))
+    result = metrics.calculate_psr(pnls)
+    arr = np.array(pnls)
+    assert result["skew"] == pytest.approx(float(st.skew(arr)), abs=5e-5)
+    assert result["kurtosis"] == pytest.approx(float(st.kurtosis(arr, fisher=False)), abs=5e-5)
+
+
+def test_psr_does_not_replicate_quantstats_kurtosis_bug():
+    """Fija que NO cometemos el doble-resta-3 de quantstats. Sobre una muestra
+    casi normal con Sharpe apreciable, el bracket buggy (correcto - 0.75*SR^2)
+    infla la PSR; nuestra PSR debe seguir al oraculo correcto, NO al buggy."""
+    # SR y n en la zona SENSIBLE de la PSR (~0.15 Sharpe, n=100): fuera de ahi
+    # (n grande o SR alto) la PSR satura en ~1.0 y ambos brackets colapsan al
+    # mismo valor, escondiendo el bug. mean=15/n=100 da |buggy-correct|~1.7e-3.
+    rng = np.random.default_rng(11)
+    pnls = list(rng.normal(15.0, 100.0, 100))  # casi normal, SR ~0.15, sin saturar
+    ours = metrics.calculate_psr(pnls)["psr"]
+    correct = oracle_psr_scipy(pnls)
+    buggy = doc_psr_quantstats_kurtosis_bug(pnls)
+    assert ours == pytest.approx(correct, abs=TOL_PSR)
+    # el camino buggy es medible y distinto (infla): confirmamos que divergen
+    assert abs(buggy - correct) > TOL_PSR
+    assert abs(ours - buggy) > TOL_PSR
