@@ -57,6 +57,8 @@ El `peor_DD_1mes_BT` es el peor drawdown en cualquier ventana de 1 mes del backt
 
 `weeks_live` sigue siendo correcto —y se sigue usando— para la frecuencia y la detección de inactividad; simplemente ya no es el input del escalado de DD.
 
+> **Pendiente conocido**: como `dd_limit` crece con los trades, un EA que opera muy por encima del ritmo de su backtest compra margen de drawdown (+17.5 pts por llegar a `dd_estado = OK` contra −8.25 por perder `freq_estado`: neto +9.25 a favor de portarse mal). Está medido y documentado en [`known-issues.md`](known-issues.md#1-sobre-operar-compra-margen-de-drawdown--bloqueado-por-datos), incluida la solución acordada y las dos trampas que tiene implementarla. **Leerlo antes de tocar este bloque.**
+
 | Estado | Condición |
 |---|---|
 | OK | `DD_live ≤ DD_limite` |
