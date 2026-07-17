@@ -12,6 +12,7 @@ from parser import (
     SYSTEM_COMMENT_PREFIX,
     _is_system_comment,
     _to_float,
+    _to_price_or_none,
     _parse_date,
     _find_section_rows,
     _parse_orders,
@@ -251,6 +252,69 @@ def test_to_float_rejects_bool_passthrough():
     assert _to_float(True) == 0.0
     assert _to_float(False) == 0.0
     assert _to_float(True, default=-1.0) == -1.0
+
+
+def test_to_price_or_none_zero_is_unset_regardless_of_cell_type():
+    """
+    En MT5, S/L = 0 (o T/P = 0) significa "sin stop/target", no un precio
+    de cero. El sentinel de ausencia llega en varias formas y TODAS deben
+    dar None — antes el guard `if sl_val` sobre el valor crudo hacía que
+    el 0.0 numérico (falsy) diera None pero el string "0" (truthy) parseara
+    a 0.0 y se tratara como precio real. known-issues.md §10.
+    """
+    # Todas las representaciones de "sin stop" -> None
+    assert _to_price_or_none(0.0) is None          # numérico (ya era correcto)
+    assert _to_price_or_none(0) is None
+    assert _to_price_or_none("0") is None           # el bug: antes daba 0.0
+    assert _to_price_or_none("0.0") is None
+    assert _to_price_or_none("0,0") is None          # coma decimal EU
+    assert _to_price_or_none("0,00") is None
+    assert _to_price_or_none("") is None
+    assert _to_price_or_none("   ") is None
+    assert _to_price_or_none(None) is None
+
+
+def test_to_price_or_none_preserves_real_prices():
+    """Un precio válido es estrictamente positivo y pasa sin cambios."""
+    assert _to_price_or_none(1.23456) == pytest.approx(1.23456)
+    assert _to_price_or_none("3000.5") == pytest.approx(3000.5)
+    assert _to_price_or_none(1.2345) == pytest.approx(1.2345)
+    # columna de precio -> coma ambigua se resuelve como decimal
+    assert _to_price_or_none("1,2345") == pytest.approx(1.2345)
+
+
+def test_to_price_or_none_rejects_nonpositive_and_garbage():
+    """
+    Un precio no puede ser <= 0. Un negativo (celda malformada, p. ej. un
+    paréntesis de contabilidad) o basura no-parseable se trata como unset
+    en vez de propagar un precio inválido — no adivinar es mejor que
+    adivinar mal, la misma política que el resto de parser.py.
+    """
+    assert _to_price_or_none("(12.34)") is None     # negativo -> unset
+    assert _to_price_or_none(-5.0) is None
+    assert _to_price_or_none("invalid") is None
+    assert _to_price_or_none("###") is None
+
+
+def test_parse_positions_sl_zero_string_becomes_none_end_to_end():
+    """
+    Cierre end-to-end del bug: un export con S/L = "0" (string) debe dar
+    sl=None, no sl=0.0. Fila con S/L string "0" y T/P con precio real, para
+    probar los dos lados en una sola posición. known-issues.md §10.
+    """
+    ws = _build_ws([
+        ["Time", "Position", "Symbol", "Type", "Volume", "Price", "S / L", "T / P",
+         "Time", "Price", "Commission", "Swap", "Profit"],
+        ["2026.01.02 10:00:00", 1001, "EURUSD", "buy", "0.10", "1.10000",
+         "0", "1.15000", "2026.01.02 14:00:00", "1.10500", "0", "0", "50.0"],
+    ])
+
+    trades = _parse_positions(ws, header_row=1, data_start=2, end_row=2)
+
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["sl"] is None, f"S/L='0' string debe dar None, dio {t['sl']!r}"
+    assert t["tp"] == pytest.approx(1.15), "un T/P real debe preservarse"
 
 
 def test_parse_positions_eu_locale_comma_ambiguity_end_to_end():
