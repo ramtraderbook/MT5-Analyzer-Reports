@@ -164,7 +164,7 @@ volvió alcanzable en un caso nuevo.
   probabilidad de brecha contra `RUIN_THRESHOLDS_PCT`. Nadie en producción la
   llama; solo los tests. **Esto NO es el mismo caso que `_calc_risk_of_ruin`**,
   que se eliminó por dead code con cero call sites (pinneado en
-  `tests/test_metrics.py:393-397`) — aquella era privada, sin racional y nadie
+  `tests/test_metrics.py:397-401`) — aquella era privada, sin racional y nadie
   sabía por qué estaba. Las tres razones de esta, todas verificadas:
   1. **Costo medido**: la cifra de memoria original de esta entrada
      (**"~160 MB de pico con 2000"**) estaba **mal por 7x** — medido con
@@ -174,9 +174,11 @@ volvió alcanzable en un caso nuevo.
      temporal de `np.concatenate`, todos co-residentes hasta el `return`).
      Se corrigió procesando los paths en chunks acotados por
      `BOOTSTRAP_MEMORY_BUDGET_MB=64` (ver `metrics.py`, comentario de la
-     constante): re-medido tras el chunking, el pico es **27 MB en n=50,
-     67 MB en n=200, 73 MB en n=500, 73 MB en n=2000** — deja de crecer con
-     `n` y nunca se acerca a los 1121 MB previos. El resultado es
+     constante): re-medido con `tracemalloc` tras el chunking, tres corridas
+     cada uno con varianza cero entre corridas, el pico es **29 MB en n=50,
+     71 MB en n=200, 77 MB en n=500, 77 MB en n=2000** — deja de crecer con
+     `n` y nunca se acerca a los 1121 MB previos (~14x menor en n=2000). El
+     resultado es
      numéricamente **idéntico** al de antes para el mismo seed (mismo `rng`
      creado una sola vez antes del loop, mismo stream de draws), verificado
      directamente contra la formulación sin chunking. Tiempo: 10 ms con 50
@@ -256,7 +258,7 @@ volvió alcanzable en un caso nuevo.
   of trades involved."* — nótese "an adjustment for the number of trades"
   **sin ningún techo mencionado**. SQN se define sobre R-multiples (retorno
   normalizado por el riesgo inicial de cada trade), no sobre P&L crudo en
-  moneda. `_calc_sqn` (`metrics.py:393-424`) recibe `net_pnl` crudo; lo mismo
+  moneda. `_calc_sqn` (`metrics.py:394-425`) recibe `net_pnl` crudo; lo mismo
   hacen backtrader, backtesting.py y vectorbt (tres implementaciones
   verificadas, ninguna usa R-multiples).
 
@@ -542,7 +544,7 @@ duros. Lo que sigue quedó registrado y no tocado.
   marcaron de forma independiente. Las tarjetas explicativas hardcodean
   constantes que viven en el motor: los cortes de color de SQN 2.0/1.6
   (`dashboard.html:126-142`, `strategy.html:130-146`,
-  `incubation_strategy.html:263-268` vs `metrics.py:76-84`); los umbrales de
+  `incubation_strategy.html:263-268` vs `metrics.py:77-85`); los umbrales de
   trades de checkpoint 5/20/40 y los cortes de CP3 65/45
   (`incubation_strategy.html:44-49,75-76` e
   `incubation_dashboard.html:88-153` vs `incubation_domain.py:353-360`,
@@ -598,7 +600,7 @@ Arnés en `tests/oracle/` (8 archivos, ~3.500 líneas): caracterización +
 propiedades (Hypothesis) + diferencial contra oráculo independiente
 (`empyrical` para Sharpe, `scipy.stats.binom.cdf` para el binomial, oráculos
 derivados a mano para el resto). **Cero ediciones de producción**: el arnés
-observa, no arregla. Suite: 266 → 519 tests, 15 `xfail(strict=True)`, uno por
+observa, no arregla. Suite: 266 → 519 tests, 17 `xfail(strict=True)`, uno por
 cada hallazgo abierto que queda visible sin romper el verde.
 
 Nota de alcance: la premisa de partida ("validator.py, incubation_validator.py
@@ -617,7 +619,7 @@ propiedades y la de oráculo diferencial.
   64.998 → `OBSERVAR`, mientras la UI muestra **65.0**, que es exactamente la
   banda de `APROBAR`. El operador lee aprobado y el motor dice observar.
   Test: `test_cp3_score_display_contradicts_verdict_at_65_boundary`.
-- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:558-559`
+- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:559-560`
   parte con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que el trade no
   cae en ninguna partición: `winning_trades + losing_trades < total_trades` y su
   P&L se evapora de `net_profit` sin error ni SIN DATOS. Repro ejecutado: 3
@@ -667,10 +669,10 @@ propiedades y la de oráculo diferencial.
 ### C. Datos silenciosamente equivocados
 
 - **C1** — Todos los trades sin fecha → curva de equity vacía → drawdown **0.0**
-  reportado sobre pérdidas reales (`metrics.py:113-115, 170-171`).
-- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:157`, `:194`).
+  reportado sobre pérdidas reales (`metrics.py:114-116, 171-172`).
+- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:158`, `:195`).
 - **C3** — Fecha de pico malformada → `_calc_stagnation` devuelve **0** días, o
-  sea el mejor valor posible salido de un fallo de parseo (`:367-375`).
+  sea el mejor valor posible salido de un fallo de parseo (`:368-376`).
 - **C4** — `_hard_gates`: `expected_monthly == 0` (no `None`) no satisface ni la
   rama `is None` ni la `> 0`, y la frecuencia queda en **"OK"** (`:361-368`).
 - **C5** — `_nd_result` usa `setdefault`: al llegar por `validator.py:555`, los

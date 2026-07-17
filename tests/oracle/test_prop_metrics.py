@@ -75,7 +75,7 @@ def test_metrics_ranges(trades, capital, frozen_clock):
     max_dd_pct/max_dd_dollar >= 0; weeks_operating >= 0; stagnation_days >= 0
     (entero); sqn/sharpe_ratio/ret_dd/recovery_factor None o float finito;
     profit_factor/payout_ratio son "∞" (str) o un float finito >= 0 (unión de
-    tipos verificada contra metrics.py:431-434 y documentada como inocua en
+    tipos verificada contra metrics.py:637-640 y documentada como inocua en
     docs/known-issues.md §7)."""
     result = metrics.calculate_ea_metrics("MyEA", trades, make_config(capital=capital))
 
@@ -133,7 +133,7 @@ def test_no_crash_on_well_formed_trades_with_extreme_config(trades, capital, fro
 @given(trades=st.just([]))
 @settings(max_examples=1, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_no_crash_on_empty_trades(trades, frozen_clock):
-    """Lista vacía -> _empty_metrics (:669), no un crash por índice/división."""
+    """Lista vacía -> _empty_metrics (:875), no un crash por índice/división."""
     result = metrics.calculate_ea_metrics("MyEA", trades, make_config())
     assert result["total_trades"] == 0
     assert result["win_rate"] == 0.0
@@ -155,8 +155,8 @@ def trade_missing_one_required_key(draw):
 @pytest.mark.xfail(strict=True, reason=(
     "COUNTEREXAMPLE: un trade sin 'direction', 'symbol', 'net_pnl' o 'close_time' "
     "-> KeyError no capturado dentro de calculate_ea_metrics (t[...] en vez de "
-    "t.get(...): metrics.py:344 net_pnl, :350 close_time, :384-385 direction, "
-    ":423 symbol). Repro mínimo: calculate_ea_metrics("
+    "t.get(...): metrics.py:550 net_pnl, :556 close_time, :590-591 direction, "
+    ":629 symbol). Repro mínimo: calculate_ea_metrics("
     "'EA', [{'net_pnl': 1.0, 'close_time': datetime(2026,1,1), 'symbol': "
     "'EURUSD'}], {}) (falta 'direction') -> KeyError('direction')."
 ))
@@ -182,7 +182,7 @@ bad_iso_text = st.text(min_size=1, max_size=20).filter(lambda s: not _is_valid_i
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @pytest.mark.xfail(strict=True, reason=(
     "COUNTEREXAMPLE: close_time='<cadena no ISO>' -> ValueError no capturado vía "
-    "datetime.fromisoformat (metrics.py:339 en sort_key, también :71/:92/:311/:497). "
+    "datetime.fromisoformat (metrics.py:545 en sort_key, también :111/:132/:517/:700). "
     "Repro mínimo: calculate_ea_metrics('EA', "
     "[{'net_pnl': 1.0, 'close_time': 'not-a-date', 'direction': 'buy', "
     "'symbol': 'EURUSD'}], {}) -> ValueError: Invalid isoformat string."
@@ -198,7 +198,7 @@ def test_malformed_close_time_string_crashes(bad, frozen_clock):
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @pytest.mark.xfail(strict=True, reason=(
     "COUNTEREXAMPLE: net_pnl=<string o None> -> TypeError no capturado. "
-    "metrics.py:353-354 compara `p > 0` / `p <= 0` directamente sobre "
+    "metrics.py:559-560 compara `p > 0` / `p <= 0` directamente sobre "
     "net_pnl_list sin convertir a float -- comparar str/None con int lanza "
     "TypeError. Repro mínimo: calculate_ea_metrics('EA', [{'net_pnl': 'abc', "
     "'close_time': datetime(2026,1,1), 'direction': 'buy', 'symbol': 'EURUSD'}], "
@@ -224,7 +224,7 @@ def trades_with_one_nan_pnl(draw):
 @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @pytest.mark.xfail(strict=True, reason=(
     "COUNTEREXAMPLE: un trade con net_pnl=float('nan') NO crashea, pero "
-    "desaparece silenciosamente de AMBAS particiones win/loss (metrics.py:353-354 "
+    "desaparece silenciosamente de AMBAS particiones win/loss (metrics.py:559-560 "
     "`p > 0` / `p <= 0` son ambas False para NaN), así que "
     "winning_trades + losing_trades < total_trades, y su P&L se esfuma de "
     "net_profit sin ningún error ni señal de SIN DATOS. Repro mínimo: "

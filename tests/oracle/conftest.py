@@ -11,7 +11,7 @@ Tres capas:
 Todos los datos son inventados y hardcodeados. Ningún .xlsx real.
 
 Determinismo: metrics.py e incubation_validator.py llaman a date.today() /
-datetime.now() en 9 sitios en total (verificado por grep: metrics.py:168,317;
+datetime.now() en 9 sitios en total (verificado por grep: metrics.py:374,523;
 incubation_validator.py:353,1089,1191,1229,1258,1278,1302). Ambos módulos
 hacen `from datetime import date, datetime`, por lo que el monkeypatch va
 sobre el NOMBRE IMPORTADO EN EL MÓDULO (metrics.date, incubation_validator.date),

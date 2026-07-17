@@ -50,11 +50,12 @@ RUIN_THRESHOLDS_PCT = (10.0, 20.0, 30.0, 50.0)
 # keeps a chunk comfortably small without making the loop overhead dominate
 # at realistic n.
 #
-# Re-measured with tracemalloc after chunking, same iterations=10000, seed=42
-# (docs/known-issues.md §7): n=50 -> 27 MB peak (fits in one chunk, same as
-# before -- the budget never forces chunking for small n), n=200 -> 67 MB,
-# n=500 -> 73 MB, n=2000 -> 73 MB. Peak plateaus near the budget instead of
-# growing with n; it never approaches the previous 1121 MB.
+# Re-measured with tracemalloc after chunking, same iterations=10000, seed=42,
+# three runs each with zero variance between runs (docs/known-issues.md §7):
+# n=50 -> 29 MB peak (fits in one chunk, same as before -- the budget never
+# forces chunking for small n), n=200 -> 71 MB, n=500 -> 77 MB, n=2000 -> 77
+# MB. Peak plateaus near the budget instead of growing with n; it never
+# approaches the previous 1121 MB (~14x lower at n=2000).
 BOOTSTRAP_MEMORY_BUDGET_MB = 64
 
 
@@ -262,7 +263,7 @@ def calculate_bootstrap_risk(
 
     DELIBERATELY NOT WIRED -- this is NOT dead code, and the distinction from
     _calc_risk_of_ruin (deleted for having zero call sites, pinned by
-    tests/test_metrics.py:393-397) is a deliberate capability with zero
+    tests/test_metrics.py:397-401) is a deliberate capability with zero
     consumers today. Full rationale (COST/CONTRACT/POLICY) lives in
     docs/known-issues.md §7 -- read it there, not here, so the two never
     drift out of sync.
