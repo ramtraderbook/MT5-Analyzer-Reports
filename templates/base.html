@@ -135,12 +135,14 @@
       <span>Switch to Live</span>
     </a>
     <form method="POST" action="{{ url_for('incubation_reset') }}" onsubmit="return confirm('Reset incubation cache only?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="nav-link sb-upload-link sb-link-button">
         <span class="sb-nav-icon">&#8635;</span>
         <span>Reset Incubation</span>
       </button>
     </form>
     <form method="POST" action="{{ url_for('incubation_reset_all') }}" onsubmit="return confirm('This will wipe all incubation data. Continue?') && confirm('Last chance: delete incubation_store.json too?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="nav-link sb-upload-link sb-link-button sb-link-danger">
         <span class="sb-nav-icon">&#9888;</span>
         <span>Reset All</span>

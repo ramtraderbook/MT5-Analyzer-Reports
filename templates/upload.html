@@ -15,6 +15,7 @@
 
   <div class="upload-card">
     <form id="upload-form" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" id="analysis-mode-input" name="analysis_mode" value="{{ analysis_mode|default('live') }}">
 
       <div class="analysis-mode-selector">
@@ -88,10 +89,12 @@
     <div class="history-actions">
       <form method="POST" action="{{ url_for('reset_history') }}" style="display:inline"
         onsubmit="return confirm('¿Resetear trades Live?\n\nSe borrarán los trades cargados y el historial de archivos.\nLos mappings de EAs y datos de Backtest/Validator se mantienen.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn-reset-history">Resetear trades</button>
       </form>
       <form method="POST" action="{{ url_for('reset_all_live') }}" style="display:inline"
         onsubmit="return confirm('⚠ RESET COMPLETO LIVE\n\nSe eliminarán:\n• Todos los trades\n• Historial de archivos\n• Mappings de EAs\n• Datos de Backtest / Validator\n\nEsto no se puede deshacer. ¿Continuar?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn-reset-all">Reset completo</button>
       </form>
     </div>
@@ -127,10 +130,12 @@
     <div class="history-actions">
       <form method="POST" action="{{ url_for('incubation_reset') }}" style="display:inline"
         onsubmit="return confirm('¿Resetear trades de Incubación?\n\nSe borrarán los trades y el historial de archivos.\nLos mappings de EAs y datos BT/MC/SPP se mantienen.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn-reset-history">Resetear trades</button>
       </form>
       <form method="POST" action="{{ url_for('incubation_reset_all') }}" style="display:inline"
         onsubmit="return confirm('⚠ RESET COMPLETO INCUBACIÓN\n\nSe eliminarán:\n• Todos los trades\n• Historial de archivos\n• Mappings de EAs\n• Datos BT/MC/SPP de referencia\n• Historial de checkpoints\n\nEsto no se puede deshacer. ¿Continuar?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn-reset-all">Reset completo</button>
       </form>
     </div>

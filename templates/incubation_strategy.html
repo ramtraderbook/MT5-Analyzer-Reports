@@ -188,6 +188,7 @@
     <div class="inc-action-buttons">
         <div class="inc-action-btn-group">
             <form method="POST" action="{{ force_eval_url }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn-secondary">Force Evaluate</button>
             </form>
             <div class="inc-btn-hint">
@@ -536,6 +537,7 @@
 <script>
   const INC_EA_NAME = {{ ea_name | tojson }};
   const RESET_URL = {{ reset_url | tojson }};
+  const CSRF_TOKEN = {{ csrf_token() | tojson }};
   const INC_EQUITY_SERIES = {{ inc_equity_series | tojson }};
   const INC_DISTRIBUTION_DATA = {{ inc_distribution | tojson }};
 
@@ -592,6 +594,7 @@
           <div class="inc-modal-actions">
             <button type="button" class="btn-secondary" id="inc-modal-cancel">Cancel</button>
             <form method="POST" action="${RESET_URL}">
+              <input type="hidden" name="csrf_token" value="${CSRF_TOKEN}">
               <button type="submit" class="btn-danger">Reset</button>
             </form>
           </div>

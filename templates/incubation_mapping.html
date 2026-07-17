@@ -37,6 +37,7 @@
 </div>
 
 <form action="{{ url_for('incubation_mapping_save') }}" method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="map-card">
         <div class="map-card-header">
             <div class="section-header" style="margin-bottom: 0">

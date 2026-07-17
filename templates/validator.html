@@ -122,6 +122,7 @@
                                 style="display: inline"
                                 onsubmit="return confirm('¿Eliminar datos BT del magic {{ row.magic }}?\n\nLos datos live de MT5 se mantienen.\nSolo se borran los datos de Backtest ingresados.')"
                             >
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button
                                     type="submit"
                                     class="val-btn-delete"
