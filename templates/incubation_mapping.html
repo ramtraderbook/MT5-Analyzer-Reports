@@ -20,6 +20,20 @@
                     / {{ ea_list|length }}</span
                 >
             </span>
+            {% if unknown_trades > 0 %}
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip map-warn-chip">
+                <span class="map-warn-icon">&#x26A0;</span>
+                {{ unknown_trades }} trade(s) sin identificar
+            </span>
+            {% endif %}
+            {% if malformed_cells and malformed_cells > 0 %}
+            <span class="dash-meta-div">·</span>
+            <span class="dash-meta-chip map-warn-chip" title="Celdas de dinero (comisión/swap/profit) ilegibles se leyeron como 0. Reexporta el reporte desde MT5 para corregir los P&amp;L afectados.">
+                <span class="map-warn-icon">&#x26A0;</span>
+                {{ malformed_cells }} celda(s) de dinero ilegible(s) — reexporta el reporte
+            </span>
+            {% endif %}
         </div>
     </div>
 </header>
