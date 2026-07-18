@@ -461,6 +461,27 @@ def fmt_dt(dt_val, fmt="%d/%m/%Y %H:%M"):
     return str(dt_val) if dt_val else ""
 
 
+def asset_version(filename):
+    """Stable cache-busting token for a static asset: its mtime as an int.
+
+    Read at request time so no filesystem access happens at import. Returns a
+    constant fallback when the file is missing or unreadable, so a bad path can
+    never break template rendering.
+    """
+    try:
+        return int(os.path.getmtime(os.path.join(STATIC_DIR, filename)))
+    except OSError:
+        return 0
+
+
+# Expose display helpers to every template render, including fragment renders
+# that go straight through app.jinja_env (context processors only run for
+# render_template within a request). Registering the callables here does no
+# filesystem work at import time; each only touches disk when a template calls
+# it at render time.
+app.jinja_env.globals.update(asset_version=asset_version, fmt_dt=fmt_dt)
+
+
 def build_sidebar_eas(parsed_data, config, active_ea=None, ea_colors=None):
     sidebar_eas = []
     mappings = config.get("mappings", {})

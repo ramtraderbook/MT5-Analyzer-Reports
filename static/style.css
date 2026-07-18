@@ -3574,15 +3574,6 @@ code {
     color: var(--text-muted);
     font-style: italic;
 }
-.val-add-bt-link {
-    color: var(--accent);
-    text-decoration: none;
-    font-size: 0.78rem;
-}
-.val-add-bt-link:hover {
-    text-decoration: underline;
-}
-
 .val-edit-link {
     color: var(--text-primary);
     text-decoration: none;

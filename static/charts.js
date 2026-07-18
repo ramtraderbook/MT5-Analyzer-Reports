@@ -649,7 +649,7 @@ function renderHourChart(divId, hourPnl) {
       type: "linear",
       tickformat: "d",
       dtick: 2,
-      title: { text: "Hora (UTC)", font: { color: "#8b949e", size: 11 } },
+      title: { text: "Hora (servidor)", font: { color: "#8b949e", size: 11 } },
     },
     yaxis: {
       tickprefix: "$",

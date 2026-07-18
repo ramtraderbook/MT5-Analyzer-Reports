@@ -676,23 +676,25 @@ duros. Lo que sigue quedó registrado y no tocado.
   se calculaban y nunca se pasaban a la plantilla — **✅ RESUELTO vía §12e** (ya
   cableados y renderizados; `pending_count` desdoblado).
 
-- **Menores verificados**: `templates/incubation_reference_data.html` es
-  código muerto — ninguna ruta lo renderiza (el endpoint
-  `incubation_reference_data` renderiza `incubation_reference.html`,
-  `ea_analyzer.py:1332-1340`). `validator.html:409` usa `colspan="11"` en una
-  tabla de 12 columnas. `incubation_strategy.html:444` renderiza el timestamp
-  ISO crudo con microsegundos mientras toda otra fecha de la página es
-  `dd/mm/yyyy`. `base.html:10,183` hace cache-busting de css/js con
-  `?v={{ range(10000,99999)|random }}`, regenerado en cada request, lo que
-  anula el cacheo del navegador de forma permanente. `charts.js:586`
-  hardcodea la etiqueta del eje "Hora (UTC)" mientras las horas vienen de
-  datetimes naive del servidor del broker sin ninguna conversión de zona
-  horaria en todo el pipeline — la etiqueta afirma una zona horaria que el
-  dato no garantiza (no se puede probar solo con el código; hace falta el
-  offset del broker).
-  También: `static/style.css:3489-3494` sigue cargando las reglas
-  `.val-add-bt-link`, ya muertas, que dejó la eliminación del punto 1 —
-  `style.css` estaba fuera del alcance de JD-6.
+- **Menores verificados — ✅ RESUELTO**: se cerró el grupo entero.
+  `templates/incubation_reference_data.html` (código muerto — ninguna ruta lo
+  renderizaba; el endpoint `incubation_reference_data` renderiza
+  `incubation_reference.html`) **eliminado**. El `colspan="11"` de
+  `validator.html` → **`12`** (la tabla tiene 12 columnas, contadas). El
+  timestamp ISO crudo con microsegundos de `incubation_strategy.html` ahora se
+  formatea con `fmt_dt` a `dd/mm/yyyy`, como el resto de la página. El
+  cache-busting `?v={{ range(10000,99999)|random }}` de `base.html`, que se
+  regeneraba en cada request y anulaba el cacheo del navegador de forma
+  permanente, se reemplazó por `?v={{ asset_version('...') }}`: el helper
+  `asset_version` (`ea_analyzer.py`) devuelve el mtime del archivo leído en
+  tiempo de request (estable, cambia solo si el archivo cambia; fallback a 0 si
+  falta; sin acceso a disco en import). La etiqueta "Hora (UTC)" de `charts.js`,
+  que afirmaba una zona horaria que el dato (datetimes naive del servidor del
+  broker, sin conversión de TZ en todo el pipeline) no garantiza, ahora dice
+  **"Hora (servidor)"** — honesta sin necesitar el offset del broker. Las reglas
+  CSS muertas `.val-add-bt-link` de `static/style.css` (que dejó la eliminación
+  original del botón "Agregar EA") **eliminadas** — el botón restaurado en §13a
+  no las usa.
 
 ## 14. Oráculo ejecutable (P-A) — hallazgos revelados y NO corregidos
 
