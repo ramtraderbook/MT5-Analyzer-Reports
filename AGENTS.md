@@ -129,6 +129,12 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 
 **Veredictos:** CONTINUAR ≥ 70 · MONITOREAR ≥ 45 · ELIMINAR < 45 · SIN DATOS (guard)
 
+**Sensibilidad de pesos (2E):** los pesos de categorías (35/30/15/20) son un port
+de una planilla, sin base empírica. `verdict_weight_sensitive()` perturba cada
+peso ±20% (renormalizando), y si el veredicto score-driven se da vuelta, la fila
+del validador muestra el marcador "sensible a pesos". No cambia ningún veredicto;
+es honestidad sobre cuándo el score depende de esos pesos arbitrarios.
+
 **DD_límite:** `Peor_DD_1Mes × sqrt(trades_live / (bt_trades / bt_months))`
 
 **Datos Live:** auto-calculados desde `calculate_ea_metrics()`

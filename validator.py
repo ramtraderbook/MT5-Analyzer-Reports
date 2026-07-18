@@ -58,6 +58,80 @@ def _pts(estado: str) -> int:
     return CONFIG["pts_fuera"]
 
 
+def _band_verdict(score):
+    """The score-driven verdict, ignoring the DD/PF overrides."""
+    if score >= CONFIG["thresh_continuar"]:
+        return "CONTINUAR"
+    if score >= CONFIG["thresh_monitorear"]:
+        return "MONITOREAR"
+    return "ELIMINAR"
+
+
+def score_verdict_is_weight_sensitive(s_riesgo, s_edge, s_caracter, s_desv, rel=0.2):
+    """True if the score-driven verdict would change under a +/-`rel` shift of
+    any single category weight.
+
+    The category weights (35/30/15/20) are a port of a spreadsheet with no
+    empirical grounding, so a verdict that rests on their exact values is a
+    coin-toss dressed as a precise score. Each weight is scaled by a factor in
+    {1-rel, 1, 1+rel}; the set is renormalized to its original total so the
+    score keeps its 0-100 scale; the banded verdict is compared to the
+    unperturbed one. Read-only -- never changes a verdict.
+    """
+    subs = (s_riesgo, s_edge, s_caracter, s_desv)
+    if any(s is None for s in subs):
+        return False
+
+    base_weights = (
+        CONFIG["w_riesgo"],
+        CONFIG["w_edge"],
+        CONFIG["w_caracter"],
+        CONFIG["w_desv"],
+    )
+    total = sum(base_weights)
+
+    def verdict_for(weights):
+        wsum = sum(weights)
+        if wsum <= 0:
+            return None
+        norm = total / wsum  # renormalize so the score stays on the 0-100 scale
+        score = sum(w * norm * s for w, s in zip(weights, subs)) / 10.0
+        return _band_verdict(round(score, 1))
+
+    base_verdict = verdict_for(base_weights)
+    factors = (1.0 - rel, 1.0, 1.0 + rel)
+    for f0 in factors:
+        for f1 in factors:
+            for f2 in factors:
+                for f3 in factors:
+                    weights = (
+                        base_weights[0] * f0,
+                        base_weights[1] * f1,
+                        base_weights[2] * f2,
+                        base_weights[3] * f3,
+                    )
+                    if verdict_for(weights) != base_verdict:
+                        return True
+    return False
+
+
+def verdict_weight_sensitive(analysis):
+    """Read-only honesty flag for a validator result: True when the score-driven
+    CONTINUAR/MONITOREAR/ELIMINAR verdict would flip under a +/-20% shift of any
+    category weight. False for SIN DATOS, missing sub-scores, or a verdict forced
+    by the DD/PF overrides (which do not depend on the weights)."""
+    if not analysis or analysis.get("sin_datos"):
+        return False
+    score = analysis.get("score")
+    subs = [analysis.get(k) for k in ("s_riesgo", "s_edge", "s_caracter", "s_desv")]
+    if score is None or any(s is None for s in subs):
+        return False
+    # Only meaningful when the score actually drove the verdict, not an override.
+    if analysis.get("veredicto") != _band_verdict(round(score, 1)):
+        return False
+    return score_verdict_is_weight_sensitive(*subs)
+
+
 def load_validator_store() -> dict:
     return load_local_json(VALIDATOR_STORE_PATH, {})
 

@@ -39,6 +39,7 @@ from validator import (
     load_validator_store,
     save_validator_store,
     timeframe_to_hours,
+    verdict_weight_sensitive,
 )
 from local_json import load_local_json, save_local_json
 from trade_matching import trade_matches_ea
@@ -2348,6 +2349,10 @@ def validator():
     sidebar_eas = build_sidebar_eas(parsed_data, config)
 
     rows = get_all_validator_results(parsed_data, config, store)
+    # 2E: flag verdicts that would flip under a +/-20% shift of the (ungrounded)
+    # category weights, so a coin-toss score is not shown as if it were precise.
+    for row in rows:
+        row["weight_sensitive"] = verdict_weight_sensitive(row.get("analysis"))
 
     return render_template(
         "validator.html",

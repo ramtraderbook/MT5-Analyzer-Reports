@@ -422,6 +422,23 @@ code {
     cursor: help;
 }
 
+/* "sensible a pesos": the verdict flips under a +/-20% shift of the ungrounded
+   category weights. Distinct from "al límite" (proximity to a cut) -- this is
+   about the score resting on the exact weights (2E). */
+.val-weight-sensitive {
+    display: inline-block;
+    margin-top: 3px;
+    padding: 1px 6px;
+    font-size: 0.58rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent2);
+    border: 1px dashed var(--accent2);
+    border-radius: 8px;
+    cursor: help;
+}
+
 .kpi-progress-bar {
     height: 3px;
     background: var(--border);

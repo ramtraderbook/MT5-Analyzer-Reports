@@ -379,6 +379,13 @@
                                 >al límite</span
                             >
                             {% endif %}
+                            {% if row.weight_sensitive %}
+                            <span
+                                class="val-weight-sensitive"
+                                title="El veredicto se da vuelta si los pesos de las categorías (Riesgo/Edge/Carácter/Desviación, portados de una planilla y sin base empírica) se mueven ±20%. El score depende de esos pesos, no es tan firme como parece."
+                                >sensible a pesos</span
+                            >
+                            {% endif %}
                             {% if a.desv_flag == 'DESV' %}
                             <span class="val-desv-flag">&#9888; DESV</span>
                             {% endif %}

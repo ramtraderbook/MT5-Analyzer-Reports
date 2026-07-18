@@ -531,3 +531,18 @@ def test_borderline_marker_only_when_score_drives_a_near_cut_verdict(score, vere
         f"borderline mismatch for score={score} veredicto={veredicto}: "
         f"got {'al límite' in out}, expected {expected}"
     )
+
+
+# ── Contract 11: the "sensible a pesos" marker (2E) shows iff the row is flagged
+#    weight-sensitive -- a coin-toss score must not look precise ───────────────
+
+_WSENS_FRAG = re.search(
+    r'\{% if row\.weight_sensitive %\}.*?\{% endif %\}', _VALIDATOR_HTML, re.DOTALL
+).group(0)
+
+
+@pytest.mark.parametrize("flag,shown", [(True, True), (False, False)])
+def test_weight_sensitive_marker_shows_only_when_flagged(flag, shown):
+    with app.test_request_context("/"):
+        out = app.jinja_env.from_string(_WSENS_FRAG).render(row={"weight_sensitive": flag})
+    assert ("sensible a pesos" in out) is shown
