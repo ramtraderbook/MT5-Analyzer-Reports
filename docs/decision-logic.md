@@ -125,7 +125,17 @@ Con pocos trades, la variabilidad estadística es alta → tolerancias más ampl
 ```
 payout_var = ((payout_live - payout_BT) / payout_BT) × 100
 ```
-Tolerancias: ±40% (< 30 trades), ±30% (30-49), ±25% (≥ 50).
+**Sentinela ∞ → OK**: si `payout_live ≥ 1e9` (cero trades perdedores, que `metrics.fmt_pf()` reporta como "∞" y `_safe_float` mapea al sentinela finito grande `1e9`), un payout infinito no puede representar una desviación respecto al BT, así que se resuelve OK de inmediato (`payout_var = None`) en vez de leerse como FUERA.
+
+En caso contrario, con `payout_BT` presente y distinto de 0, el estado sale de la desviación absoluta `|payout_var|` contra una tolerancia dependiente del número de trades:
+
+| Trades | OK | ALERTA | FUERA |
+|---|---|---|---|
+| < 30 | `\|payout_var\| ≤ 40` | `\|payout_var\| ≤ 60` | `\|payout_var\| > 60` |
+| 30-49 | `\|payout_var\| ≤ 30` | `\|payout_var\| ≤ 50` | `\|payout_var\| > 50` |
+| ≥ 50 | `\|payout_var\| ≤ 25` | `\|payout_var\| ≤ 40` | `\|payout_var\| > 40` |
+
+Si faltan `payout_live` o `payout_BT` (o `payout_BT = 0`), el estado es **N/D**.
 
 #### Edge Erosion
 ```
@@ -151,12 +161,14 @@ edge_erosion = ((expectancy_live - spp_expectancy_median) / spp_expectancy_media
 bt_freq_per_month  = bt_trades / bt_months
 live_freq_per_month = trades_live / (weeks_live / 4.33)
 freq_pct = (live_freq_per_month / bt_freq_per_month) × 100
+freq_dev = |freq_pct - 100|
 ```
+El chequeo es **de dos colas** sobre la desviación respecto al 100%: tanto operar de menos como operar de más se penalizan (ej: 413% del ritmo BT → FUERA, no OK).
 | Estado | Condición |
 |---|---|
-| OK | `freq_pct ≥ 70%` |
-| ALERTA | `freq_pct ≥ 50%` |
-| FUERA | `freq_pct < 50%` |
+| OK | `freq_dev ≤ 30` (equivale a `70% ≤ freq_pct ≤ 130%`) |
+| ALERTA | `freq_dev ≤ 50` (equivale a `50% ≤ freq_pct ≤ 150%`) |
+| FUERA | `freq_dev > 50` (`freq_pct < 50%` o `freq_pct > 150%`) |
 
 > En incubación, la frecuencia es solo un WARNING (no elimina), pero en Live Validator contribuye al score.
 
@@ -328,7 +340,7 @@ failing_count ≥ 3 → ELIMINAR
 
 #### Función de scoring por métrica
 
-Para cada métrica, se calcula un score de 0 a 100 comparando el valor live contra cuatro referencias (BT, MC50, MC95):
+Para cada métrica, se calcula un score de 0 a 100 comparando el valor live contra tres referencias (BT, MC50, MC95):
 
 ```
 Si higher_is_better:
