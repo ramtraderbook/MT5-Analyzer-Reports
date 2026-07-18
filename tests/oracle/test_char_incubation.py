@@ -84,25 +84,19 @@ def test_hard_gate_max_consec_losses_le():
     assert g_fail["max_consec_losses"]["passed"] is False
 
 
-def test_hard_gate_frequency_expected_monthly_zero_is_silently_ok():
+def test_hard_gate_frequency_expected_monthly_zero_is_sin_datos():
     """
-    DEFECT-PIN: `_hard_gates` (incubation_validator.py:333) resuelve
-    bt_total via `_safe_int(backtest.total_trades, 0) or total_trades` -- si
-    backtest.total_trades es 0/ausente, se sustituye SILENCIOSAMENTE por el
-    conteo de trades LIVE. Con total_trades live tambien en 0,
-    calculate_monthly_frequency(0, periodo_valido) devuelve 0.0 (no None).
-    El chequeo de warning es `elif expected_monthly>0`, asi que
-    expected_monthly==0.0 no cae ni en la rama "SIN DATOS" (is None) ni en
-    la rama de warning (>0) -- freq_warning queda en su default "OK",
-    disfrazando una referencia de frecuencia completamente vacia como una
-    frecuencia sana. Pinneado porque es el comportamiento actual
-    (incubation_validator.py:333, 361-368), NO porque sea correcto.
+    C4 FIX: cuando expected_monthly resuelve a 0.0 (backtest.total_trades 0/
+    ausente y trades live tambien en 0 -> calculate_monthly_frequency(0, ...)
+    == 0.0), el chequeo ya NO deja freq_warning en "OK". Un 0.0 es tan inusable
+    como None (el ratio queda indefinido), asi que declara "SIN DATOS" en vez
+    de disfrazar una referencia de frecuencia vacia como sana.
     """
     lm = dict(total_trades=0, winning_trades=0, win_rate=0.0, max_dd_pct=5.0, max_consec_losses=2)
     ref = _ref_for_gates(backtest=dict(win_rate=55.0, total_trades=0,
                                         bt_period="2025.01.01 - 2025.12.31"))
     g = iv._hard_gates(lm, ref)
-    assert g["frequency"] == {"status": "OK", "expected": 0.0, "actual": 0.0}
+    assert g["frequency"] == {"status": "SIN DATOS", "expected": 0.0, "actual": 0.0}
 
 
 def test_hard_gate_frequency_sin_datos_when_period_unparseable():
@@ -493,27 +487,23 @@ def test_pre_cp1_sin_datos_when_backtest_reference_missing():
     assert r["mc_source"] == {}
 
 
-def test_pre_cp1_eliminar_and_pending_shapes_omit_mc_source_key_entirely():
+def test_pre_cp1_eliminar_and_pending_shapes_include_mc_source_key():
     """
-    DEFECT-PIN: la forma SIN DATOS de PRE_CP1 (:1214-1230) SI setea
-    "mc_source": {}, pero las formas ELIMINAR (:1241-1259) y PENDING
-    (:1261-1279) de PRE_CP1 no incluyen la clave "mc_source" EN ABSOLUTO --
-    ni siquiera como {} -- porque son literales de diccionario separados
-    que nunca pasan por el `result.get("mc_source", {})` del retorno
-    unificado (:1301). Un consumidor que hace r["mc_source"] sin .get()
-    crashea sobre estas dos formas especificamente. Pinneado porque es el
-    comportamiento actual, NO porque sea correcto.
+    C8 FIX: las tres formas de PRE_CP1 (SIN DATOS, ELIMINAR, PENDING) ahora
+    incluyen "mc_source": {}, de modo que todas son shape-compatibles. Antes
+    ELIMINAR y PENDING omitian la clave por completo y un consumidor que hacia
+    r["mc_source"] sin .get() crasheaba sobre esas dos formas.
     """
     ref_eliminar = make_reference(date_added="2026-01-02")
     lm = make_live_metrics(total_trades=2, winning_trades=1, trades=[])
     r_eliminar = iv.evaluate_incubation("EA", lm, ref_eliminar)
     assert r_eliminar["verdict"] == "ELIMINAR"
-    assert "mc_source" not in r_eliminar
+    assert r_eliminar["mc_source"] == {}
 
     ref_pending = make_reference(date_added="2026-07-10")
     r_pending = iv.evaluate_incubation("EA", lm, ref_pending)
     assert r_pending["verdict"] == "PENDING"
-    assert "mc_source" not in r_pending
+    assert r_pending["mc_source"] == {}
 
     # contraste: la forma SIN DATOS de PRE_CP1 SI la incluye
     ref_sd = {"date_added": "2026-01-02"}
