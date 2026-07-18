@@ -353,48 +353,38 @@ bad_numeric_text = st.text(min_size=1, max_size=20).filter(_is_bad_numeric_strin
 
 @given(bad=bad_numeric_text)
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: live={'total_trades': '<cadena no numérica>'} -> ValueError "
-    "no capturado en validator.py:99 `float(live.get('total_trades') or 0)` "
-    "(este campo NO pasa por _safe_float, a diferencia de los otros 9 campos "
-    "de `live`). Repro mínimo: calculate_validator_score(make_bt(), make_mc(), "
-    "make_mc(), make_spp(), {'total_trades': 'abc', ...}) "
-    "-> ValueError: could not convert string to float: 'abc'. "
-    "Mismo defecto en validator.py:100 para weeks_operating (probado aquí también)."
-))
-def test_total_trades_non_numeric_string_crashes(bad, frozen_clock):
+def test_total_trades_non_numeric_string_is_sin_datos(bad, frozen_clock):
+    """B1 FIX: total_trades no numérico ya pasa por _finite_or_none -> None ->
+    SIN DATOS naming live.total_trades, en vez de un ValueError sin capturar."""
     live = make_live(total_trades=bad)
-    validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    result = validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    assert isinstance(result, dict)
+    assert result["sin_datos"] is True
+    assert "live.total_trades" in result["missing"]
 
 
 @given(bad=bad_numeric_text)
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: live={'weeks_operating': '<cadena no numérica>'} -> ValueError "
-    "no capturado en validator.py:100 `float(live.get('weeks_operating') or 0)`. "
-    "Repro mínimo: calculate_validator_score(make_bt(), make_mc(), make_mc(), "
-    "make_spp(), {'total_trades': 10, 'weeks_operating': 'xyz'}) "
-    "-> ValueError: could not convert string to float: 'xyz'."
-))
-def test_weeks_operating_non_numeric_string_crashes(bad, frozen_clock):
+def test_weeks_operating_non_numeric_string_does_not_crash(bad, frozen_clock):
+    """B1/B2 FIX: weeks_operating no numérico ya pasa por _safe_float (None ->
+    0.0), en vez de un ValueError sin capturar. No crashea; devuelve un dict."""
     live = make_live(total_trades=10, weeks_operating=bad)
-    validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    result = validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    assert isinstance(result, dict)
+    assert result["sin_datos"] in (True, False)
 
 
 @given(bad=st.sampled_from([float("nan"), float("inf"), float("-inf")]))
 @settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: live={'total_trades': float('nan')} -> ValueError "
-    "'cannot convert float NaN to integer' en validator.py:134 `tl = int(trades_live)`; "
-    "float('inf')/float('-inf') -> OverflowError en la misma línea. Ninguno de "
-    "los dos pasa por _safe_float (que sí maneja NaN/inf con gracia, :692-713) "
-    "porque total_trades usa `float(live.get(...) or 0)` directo (:99). "
-    "Repro mínimo: calculate_validator_score(make_bt(), make_mc(), make_mc(), "
-    "make_spp(), {'total_trades': float('nan')})."
-))
-def test_total_trades_nan_or_inf_crashes(bad, frozen_clock):
+def test_total_trades_nan_or_inf_is_sin_datos(bad, frozen_clock):
+    """B2 FIX: total_trades NaN/±inf ya coacciona a None vía _finite_or_none
+    (un COUNT no puede ser infinito) -> SIN DATOS, en vez de un ValueError/
+    OverflowError en `int(trades_live)`."""
     live = make_live(total_trades=bad)
-    validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    result = validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    assert isinstance(result, dict)
+    assert result["sin_datos"] is True
+    assert "live.total_trades" in result["missing"]
 
 
 # DETERMINISTIC, not @given: an earlier version of this test drew
@@ -410,26 +400,24 @@ def test_total_trades_nan_or_inf_crashes(bad, frozen_clock):
 # values makes the repro reproducible on every run instead of dependent on
 # which example Hypothesis happens to draw.
 @pytest.mark.parametrize("weeks", [5e-324, 1e-323], ids=["k=1", "k=2"])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE (verified by direct execution, not just found once by "
-    "Hypothesis): live={'weeks_operating': <float subnormal, 5e-324 or "
-    "1e-323>} -> ZeroDivisionError not caught in validator.py:434 "
-    "`live_freq_per_month = trades_live / (weeks_live / 4.33)`. weeks_live "
-    "passes the guard `weeks_live > 0` (:432, both values are > 0) but "
-    "`weeks_live / 4.33` UNDERFLOWS TO EXACTLY 0.0 for these two values only "
-    "(the subnormal is too small to survive the 64-bit float division), and "
-    "the following division by that 0.0 crashes. WHY ONLY k=1/k=2: larger "
-    "subnormals (1.5e-323, 2e-323, ...) round DOWN to a nonzero subnormal "
-    "(5e-324) instead of to 0.0, so they survive the division and do not "
-    "crash -- verified: 1.5e-323/4.33 == 5e-324 != 0.0. Requires bt.trades_total "
-    "and bt.months truthy (bt_trades and bt_months and bt_months>0) to reach "
-    "that branch -- the default make_bt() satisfies this. Repro: "
-    "calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), "
-    "make_live(total_trades=5, weeks_operating=weeks))."
-))
-def test_weeks_operating_subnormal_crashes(weeks, frozen_clock):
+def test_weeks_operating_subnormal_is_sin_datos(weeks, frozen_clock):
+    """B3 site2 FIX: un weeks_operating subnormal pasa `weeks_live > 0` pero
+    `weeks_live / 4.33` hace underflow a EXACTAMENTE 0.0. Antes eso dividía por
+    cero; ahora el cociente degenerado deja freq_estado=N/D -> SIN DATOS en el
+    gate de completitud, sin crashear."""
     live = make_live(total_trades=5, weeks_operating=weeks)
-    validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    result = validator.calculate_validator_score(make_bt(), make_mc(), make_mc(), make_spp(), live)
+    assert isinstance(result, dict)
+    assert result["sin_datos"] is True
+    # W6 FIX: the freq_estado block must name the underflow cause (the mirror of
+    # the dd_estado fallback), so the reason never ships an empty causes list and
+    # the SIN DATOS contract ("name what is missing") holds. The subnormal-weeks
+    # case has bt.* present and weeks_live > 0, so only the `if not causes`
+    # fallback can name it.
+    assert "freq_estado" in result["missing"]
+    causes = [m for m in result["missing"] if m != "freq_estado"]
+    assert causes, "freq_estado SIN DATOS must name at least one cause field"
+    assert "causa:" in result["accion"]
 
 
 # DETERMINISTIC, not @given: same rationale as test_weeks_operating_subnormal_crashes
@@ -439,27 +427,16 @@ def test_weeks_operating_subnormal_crashes(weeks, frozen_clock):
 # narrower survival window than the /4.33 path above, because dividing by
 # 2.0 loses one fewer bit of the subnormal than dividing by 4.33).
 @pytest.mark.parametrize("trades_total", [5e-324], ids=["k=1"])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE (verified by direct execution): bt={'trades_total': "
-    "5e-324} -> ZeroDivisionError not caught in validator.py:354 "
-    "`dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / bt_freq_mes)`. "
-    "bt_trades passes the guard `bt_trades > 0` (:341, 5e-324>0 is True) but "
-    "`bt_freq_mes = bt_trades / bt_months` (:353, bt_months=2.0) UNDERFLOWS "
-    "TO EXACTLY 0.0 for this one value only, and the following division by "
-    "that 0.0 crashes. WHY ONLY k=1: 1e-323/2.0 == 5e-324 != 0.0 (verified), "
-    "so it survives -- the /2.0 path has a narrower crash window than the "
-    "/4.33 path in test_weeks_operating_subnormal_crashes (only k=1, not "
-    "k=1 and k=2). Same underlying mechanism (a subnormal numerator "
-    "survives a `>0` guard but not the intermediate division), a different "
-    "bt field and code branch (scaled DD, not frequency). Repro: "
-    "calculate_validator_score(make_bt(trades_total=5e-324, months=2.0), "
-    "make_mc(), make_mc(), make_spp(), make_live(total_trades=5, "
-    "weeks_operating=1.0))."
-))
-def test_bt_trades_total_subnormal_crashes(trades_total, frozen_clock):
+def test_bt_trades_total_subnormal_is_sin_datos(trades_total, frozen_clock):
+    """B3 site1 FIX: bt.trades_total subnormal pasa `bt_trades > 0` pero
+    `bt_freq_mes = bt_trades / bt_months` hace underflow a EXACTAMENTE 0.0. Antes
+    eso dividía por cero en el DD escalado; ahora la referencia degenerada deja
+    dd_estado=N/D -> SIN DATOS, sin crashear."""
     bt = make_bt(trades_total=trades_total, months=2.0)
     live = make_live(total_trades=5, weeks_operating=1.0)
-    validator.calculate_validator_score(bt, make_mc(), make_mc(), make_spp(), live)
+    result = validator.calculate_validator_score(bt, make_mc(), make_mc(), make_spp(), live)
+    assert isinstance(result, dict)
+    assert result["sin_datos"] is True
 
 
 # DETERMINISTIC, not @given: Hypothesis encontró este caso con una semilla
@@ -469,24 +446,14 @@ def test_bt_trades_total_subnormal_crashes(trades_total, frozen_clock):
     [(2.48829416752246e-238, 4.605831368114236e+204), (1e-200, 1e200)],
     ids=["hypothesis-found", "hand-derived"],
 )
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE (encontrado por Hypothesis con una semilla nueva, más "
-    "amplio que el caso subnormal): dos floats PERFECTAMENTE NORMALES -- "
-    "ninguno subnormal, ambos > 0 -- cuyo COCIENTE hace underflow a 0.0 "
-    "exacto. bt.trades_total=2.49e-238 y bt.months=4.61e+204 pasan la guarda "
-    "`bt_trades > 0 and bt_months > 0` (validator.py:341), pero "
-    "`bt_freq_mes = bt_trades / bt_months` (:353) da EXACTAMENTE 0.0 porque "
-    "el resultado cae por debajo del subnormal mínimo (~5e-324), y "
-    "`trades_live / bt_freq_mes` (:354) explota con ZeroDivisionError. "
-    "POR QUÉ IMPORTA MÁS QUE EL CASO SUBNORMAL: acá el underflow lo produce "
-    "la DIVISIÓN, no la entrada, así que ninguna validación de rango sobre "
-    "los operandos por separado lo evita -- `allow_subnormal=False` no "
-    "ayuda. La guarda `x > 0 and y > 0` NO garantiza `x / y > 0`. "
-    "Repro: calculate_validator_score(make_bt(trades_total=2.48829416752246e-238, "
-    "months=4.605831368114236e+204), make_mc(), make_mc(), make_spp(), "
-    "make_live(total_trades=5, weeks_operating=1.0))."
-))
-def test_bt_freq_quotient_underflow_crashes(trades_total, months, frozen_clock):
+def test_bt_freq_quotient_underflow_is_sin_datos(trades_total, months, frozen_clock):
+    """B3 site1 FIX (caso general del cociente): dos floats PERFECTAMENTE
+    NORMALES, ambos > 0, cuyo COCIENTE `bt_trades / bt_months` hace underflow a
+    0.0 exacto. La guarda `x > 0 and y > 0` NO garantiza `x / y > 0`; ahora se
+    comprueba el cociente intermedio: degenerado -> dd_estado=N/D -> SIN DATOS,
+    sin ZeroDivisionError."""
     bt = make_bt(trades_total=trades_total, months=months)
     live = make_live(total_trades=5, weeks_operating=1.0)
-    validator.calculate_validator_score(bt, make_mc(), make_mc(), make_spp(), live)
+    result = validator.calculate_validator_score(bt, make_mc(), make_mc(), make_spp(), live)
+    assert isinstance(result, dict)
+    assert result["sin_datos"] is True
