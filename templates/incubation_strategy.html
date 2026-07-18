@@ -321,7 +321,6 @@
                     <span class="chart-icon">&#x1F4C9;</span>
                     <h2 class="chart-title">Drawdown</h2>
                 </div>
-                <div id="inc-dd-time-selector"></div>
             </div>
             <div id="inc-dd-chart" class="chart-container" style="height: 420px"></div>
         </div>
@@ -525,8 +524,8 @@
                 {% for t in trades %}
                 <tr class="{% if t.is_win %}row-win{% else %}row-loss{% endif %}">
                     <td class="mono">{{ t.num }}</td>
-                    <td class="mono">{{ t.open_time }}</td>
-                    <td class="mono">{{ t.close_time }}</td>
+                    <td class="mono" data-sort-value="{{ t.open_time_iso }}">{{ t.open_time }}</td>
+                    <td class="mono" data-sort-value="{{ t.close_time_iso }}">{{ t.close_time }}</td>
                     <td class="{% if t.direction == 'BUY' %}cell-profit{% else %}cell-loss{% endif %}">{{ t.direction }}</td>
                     <td class="mono th-right">{{ "%.2f"|format(t.volume) }}</td>
                     <td class="mono th-right">{{ t.open_price }}</td>
@@ -573,10 +572,8 @@
       renderIncubationEAEquity('inc-equity-chart', 'inc-dd-chart', INC_EA_NAME);
     }
 
+    // Single shared range selector controls BOTH equity and drawdown charts.
     renderTimeRangeSelector('inc-equity-time-selector', function(days) {
-      renderIncubationEAEquity('inc-equity-chart', 'inc-dd-chart', INC_EA_NAME, days);
-    });
-    renderTimeRangeSelector('inc-dd-time-selector', function(days) {
       renderIncubationEAEquity('inc-equity-chart', 'inc-dd-chart', INC_EA_NAME, days);
     });
 

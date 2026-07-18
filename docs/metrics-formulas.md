@@ -301,11 +301,11 @@ Este cambio resuelve un acoplamiento que existía cuando el escalado usaba `week
 monthly_frequency = total_trades / meses_transcurridos
 ```
 
-Donde `meses_transcurridos = días_desde_primer_trade / 30.44`.
+Donde `meses_transcurridos = días_incubando / 30.44`.
 
 Para el **backtest**: se calcula a partir de `bt_period` (ej: "2020.01.01 - 2024.12.31") y el total de trades.
 
-Para el **live/incubación**: se calcula desde la fecha del primer trade hasta hoy.
+Para el **live/incubación**: el reloj de incubación arranca en `date_added` (la fecha estampada al guardar la referencia, que es el reloj autoritativo) y corre hasta hoy. La fecha del primer trade se usa solo como fallback legacy cuando `date_added` está ausente o no se puede parsear. Así, un EA sin trades igual envejece contra el deadline de frecuencia mientras `date_added` esté presente.
 
 La frecuencia es crítica para detectar si un EA está "operando menos de lo normal", lo que puede indicar que el broker no está ejecutando las señales, condiciones de mercado desfavorables, o que el EA está en un período atípico.
 
@@ -404,11 +404,12 @@ Donde:
 - `N` = total trades live
 - `p_BT` = win rate del backtest / 100 (probabilidad esperada)
 
-Se usa la CDF de la distribución binomial. Si `scipy` está disponible, usa `binom.cdf(wins, N, p_BT)`. Si no, aproximación normal:
+Se usa la CDF exacta de la distribución binomial, calculada en Python puro con `math.comb` (sin dependencia de `scipy` y sin fallback por aproximación normal). Es la suma de los términos de la PMF binomial desde `k = 0` hasta `k = wins`:
 
 ```
-z = (wins - N×p) / √(N×p×(1-p))
-p_valor ≈ 0.5 × (1 + erf(z / √2))
+p_valor = Σ_{k=0}^{wins} C(N, k) × p_BT^k × (1 - p_BT)^(N - k)
 ```
+
+donde `C(N, k) = math.comb(N, k)` es el coeficiente binomial.
 
 **Hard gate**: si `p_valor < 0.03`, la win rate es tan baja que hay menos del 3% de probabilidad de que sea solo mala suerte → se activa el gate de eliminación.

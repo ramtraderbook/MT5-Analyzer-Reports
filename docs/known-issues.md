@@ -345,7 +345,7 @@ regresión. (Es el mismo hallazgo que §14-C5 — ver referencia cruzada.)
 
 ---
 
-## 8. El JOIN POSITIONS↔ORDERS es válido solo si la orden de apertura está en el rango exportado
+## 8. El JOIN POSITIONS↔ORDERS es válido solo si la orden de apertura está en el rango exportado — ✅ RESUELTO
 
 Confirmado por los dos jueces de JD-3 (`parser.py`). El JOIN es
 `position_id == order_id`, y eso funciona porque MT5 asigna al `position_id` el
@@ -364,9 +364,12 @@ información simplemente no fue exportada. Un fallback por
 `open_time`+`symbol`+`volume` sería adivinar, y adivinar mal la atribución de
 un EA es peor que decir `"Unknown"`.
 
-**Para destrabar**: el contador `unknown_trades` ya existe y es honesto. Falta
-que la UI lo muestre de forma visible al cargar el archivo, con el consejo de
-re-exportar incluyendo la fecha de apertura. Es un cambio de UI, no de parser.
+**✅ RESUELTO**: el contador `unknown_trades` ahora se muestra en la UI. El modo
+live ya se había cerrado en el batch anterior (`templates/mapping.html`); este
+batch agregó los chips de `unknown_trades` + `malformed_cells` a
+`templates/incubation_mapping.html` (la ruta ya pasaba los valores). El
+comportamiento del parser/JOIN no cambió: un trade cuya orden de apertura no
+entró al rango exportado sigue siendo un honesto `"Unknown"`.
 
 ---
 
@@ -485,45 +488,56 @@ parseo/validación de su formulario. Los ocho defectos que podían mostrar una
 conclusión distinta a la que calculó el motor —o borrar datos obligatorios en
 silencio— se corrigieron. Lo que sigue quedó registrado y no tocado.
 
-- **Las secciones MC y SPP no se pueden vaciar desde el formulario**. `mc_*` y
-  `spp` se guardan con `payload or existing`, así que si el usuario borra a
-  propósito una sección para eliminar datos cargados por error, el dict vacío es
-  falsy y los valores viejos reviven. El guardado no avisa nada y esos datos
-  siguen alimentando veredictos que el usuario cree haber quitado. El único
-  camino de borrado hoy es el botón Delete, que elimina la entrada entera. Es el
-  reverso exacto de C1: ahí el problema era que el backtest **no** se preservaba;
-  acá es que MC/SPP se preservan cuando no deberían. Cerrarlo bien pide distinguir
-  "campo no enviado" de "campo vaciado a propósito", que es un cambio de contrato
-  del formulario, no un parche.
-- **`incubation_reference_data` marca "datos cargados" sin MC50**. La lista usa un
-  chequeo propio (`has_bt and (manip.confidence_95 or retest.confidence_95)`) que
-  duplica a mano la regla de `reference_ready()`. Por eso una entrada sin MC50
-  aparece como completa y recién se convierte en SIN DATOS cuando la EA llega a 20
-  trades y el motor exige las claves `mc50.*`. Además trata como alternativas
-  (OR) las dos secciones MC95 que AGENTS.md declara obligatorias por separado. El
-  arreglo natural es llamar a `reference_ready()` —ya importado en el archivo— pero
-  eso cambia qué EAs figuran como listas en la UI y conviene decidirlo con datos
-  reales a la vista.
-- **La columna "Días" usa otro reloj que el motor**. El dashboard calcula los días
-  con `days_since_first_trade()` (primer trade cerrado) mientras el motor cuenta
-  desde `date_added` (design C7). Para una EA agregada hace 60 días cuyo primer
-  trade cerró hace 5, la fila muestra 5 al lado de un veredicto que el motor
-  calculó con `days_incubating = 60`, y la página de estrategia muestra las dos
-  cifras a la vez. La evaluación ya trae `days_incubating`; unificar es fácil, pero
-  cambia una cifra visible en todas las filas y merece confirmarse antes.
-- **Claves legacy y helpers duplicados**. `entry.get("mc_manipulation") or
-  entry.get("monte_carlo")` está copiado textual en tres lugares
-  (`incubation_reference_data`, `..._edit`, `..._save`), y cada guardado sigue
-  reescribiendo la clave vieja `monte_carlo` por compatibilidad. `fmt_dt` está
-  definido tres veces: las copias de `incubation_strategy` y `strategy` son
-  idénticas, y la del dashboard live derivó (le falta la rama `isinstance(...,
-  datetime)`). Hoy no rompe nada porque el cache guarda fechas como strings ISO
-  (AGENTS.md), pero es deriva esperando pasar.
-- **Contadores muertos en el view-model**. `_build_incubation_dashboard` calcula
-  `observar_count`, `continuar_count` y `pending_count`, pero la ruta solo pasa
-  cinco contadores a la plantilla y esos tres no se renderizan. `pending_count`
-  además mezcla dos significados: EAs sin datos de referencia y EAs con veredicto
-  PENDING.
+- **Las secciones MC y SPP no se pueden vaciar desde el formulario — ✅ RESUELTO**.
+  `mc_*` y `spp` se guardaban con `payload or existing`, así que si el usuario
+  borraba a propósito una sección para eliminar datos cargados por error, el dict
+  vacío era falsy y los valores viejos revivían. El guardado no avisaba nada y
+  esos datos seguían alimentando veredictos que el usuario creía haber quitado.
+  **✅ RESUELTO**: el formulario de referencia ahora manda una intención explícita
+  de vaciado por sección e `incubation_reference_save` la respeta —se acabó el
+  `payload or existing` que revivía secciones borradas—, así que "campo no
+  enviado" y "campo vaciado a propósito" quedan distinguidos
+  (`ea_analyzer.py` + la plantilla del formulario de referencia).
+- **`incubation_reference_data` marca "datos cargados" sin MC50 — ✅ RESUELTO PARCIAL**.
+  La lista usaba un chequeo propio (`has_bt and (manip.confidence_95 or
+  retest.confidence_95)`) que duplicaba a mano la regla de `reference_ready()`.
+  **✅ RESUELTO PARCIAL**: se eliminó la duplicación hecha a mano —
+  `incubation_reference_data` ahora llama a `reference_ready()` (fuente única de
+  verdad). **PERO, sé honesto**: la verificación mostró que `reference_ready()` es
+  `backtest AND (mc95_manip OR mc95_retest)` — **no** exige MC50 y trata los dos
+  MC95 como OR. O sea que pasar a usarla fue un cambio **idéntico en conducta**
+  (dedup puro), **no** el "MC50 ahora obligatorio" que esta entrada suponía. La
+  entrada aparece como completa igual que antes; recién se convierte en SIN DATOS
+  cuando la EA llega a 20 trades y el motor exige `mc50.*`. **Queda ABIERTO**: si
+  `reference_ready()` **debería** exigir MC50 / tratar los MC95 como AND es una
+  pregunta de política del **motor** (que es la fuente de verdad, no tocado en
+  este batch).
+- **La columna "Días" usa otro reloj que el motor — ✅ RESUELTO**. El dashboard
+  calculaba los días con `days_since_first_trade()` (primer trade cerrado) mientras
+  el motor cuenta desde `date_added` (design C7). Para una EA agregada hace 60 días
+  cuyo primer trade cerró hace 5, la fila mostraba 5 al lado de un veredicto que el
+  motor calculó con `days_incubating = 60`. **✅ RESUELTO**: la columna `days` de la
+  fila de dashboard/strategy ahora usa el `days_incubating` del motor (desde
+  `date_added`) cuando existe una evaluación, y sólo cae a `days_since_first_trade`
+  para las filas sin evaluación (`ea_analyzer.py`).
+- **Claves legacy y helpers duplicados — ✅ RESUELTO**. `entry.get("mc_manipulation")
+  or entry.get("monte_carlo")` estaba copiado textual en tres lugares, y `fmt_dt`
+  definido tres veces (la copia del dashboard live había derivado: le faltaba la
+  rama `isinstance(..., datetime)`). **✅ RESUELTO**: ahora hay un único `fmt_dt` a
+  nivel de módulo (se conservó la rama `datetime`; se arregló la copia derivada del
+  dashboard) y un helper compartido `_mc_manip`. **Queda como remanente**: la clave
+  legacy `monte_carlo` se sigue escribiendo por compatibilidad, y `reference_ready()`
+  en `incubation_domain.py` todavía tiene su propio fallback mc a mano (cross-module,
+  dejado).
+- **Contadores muertos en el view-model — ✅ RESUELTO**. `_build_incubation_dashboard`
+  calculaba `observar_count`, `continuar_count` y `pending_count`, pero la ruta sólo
+  pasaba cinco contadores a la plantilla y esos tres no se renderizaban;
+  `pending_count` además mezclaba dos significados. **✅ RESUELTO**: `observar_count`/
+  `continuar_count` y una cuenta pending desdoblada ya están cableadas y renderizadas;
+  `pending_count` se separó en "sin referencia" vs `pending_verdict_count`
+  (verdict==PENDING). **Nota**: la cuenta de "sin referencia" resultó idéntica al
+  contador `pending_bt_mc` ya existente, así que sólo se agregó `pending_verdict_count`
+  (sin tarjeta duplicada).
 
 ## 13. Frontend — hallazgos auditados y no corregidos (JD-6)
 
@@ -537,7 +551,7 @@ fuera de orden, el PF rolling en 0.0 renderizado como hueco, el "Score: None",
 el centinela de PF en 1e9 y la leyenda de veredicto que omitía los overrides
 duros. Lo que sigue quedó registrado y no tocado.
 
-- **"+ Agregar EA" fue eliminado, no arreglado**. El botón en
+- **"+ Agregar EA" fue eliminado, no arreglado — ✅ RESUELTO**. El botón en
   `templates/validator.html` apuntaba a
   `url_for('validator_edit', magic='nuevo')`; `validator_edit` indexa el store
   exclusivamente por el parámetro de ruta de la URL
@@ -549,33 +563,30 @@ duros. Lo que sigue quedó registrado y no tocado.
   acotada a frontend, el punto de entrada roto se **eliminó** para que no siga
   comiéndose datos en silencio.
 
-  **Para destrabar**: `validator_edit` tiene que leer el magic de un campo del
-  formulario (`request.form.get('magic')`) y validarlo contra los mappings
-  existentes; recién ahí pueden volver el botón y un input de magic. La
-  funcionalidad de "agregar EA a mano" hoy está **ausente** de la UI — es un
-  trade-off deliberado y reversible, y es el punto más importante de esta
-  sección.
+  **✅ RESUELTO**: se restauró **con validación**. `validator_edit` ahora lee
+  `request.form.get('magic')` y lo valida (presente, entero, un magic mapeado
+  conocido, y que no pise una entrada existente) antes de escribir; una entrada
+  inválida re-renderiza con un error y no escribe nada, preservando los campos que
+  el usuario tipeó. El botón y el input de magic volvieron a
+  `validator.html`/`validator_input.html` (`ea_analyzer.py` + plantillas + tests).
 
-- **Los puntos de color del sidebar nunca se pintan**
-  (`templates/base.html:109-111`). La plantilla lee `ea.color` para
-  `--ea-color` y el fondo del punto, pero `build_sidebar_eas`
-  (`ea_analyzer.py:495-510`) solo emite `name`/`label`/`url`/`active` — `color`
-  nunca está en el dict, así que el punto se renderiza sin color en toda
-  página con sidebar. `all_metrics` ya calcula `ea_colors`
-  (`ea_analyzer.py:1743`) pero nunca lo mergea. Requiere un cambio de backend,
-  fuera del alcance de JD-6.
+- **Los puntos de color del sidebar nunca se pintan — ✅ RESUELTO**
+  (`templates/base.html:109-111`). La plantilla lee `ea.color` para `--ea-color` y
+  el fondo del punto, pero `build_sidebar_eas` sólo emitía
+  `name`/`label`/`url`/`active` — `color` nunca estaba en el dict, así que el punto
+  se renderizaba sin color. **✅ RESUELTO**: `build_sidebar_eas` ahora emite el
+  `color` por EA (mergeado desde `ea_colors`) en las rutas de dashboard/strategy/
+  export. **Nota**: las rutas del validador mantienen el fallback `#4FC3F7` (no
+  calculan métricas — deliberado, menor).
 
-- **Inyección de fórmulas en el export** (`templates/export.html:71-109`).
-  `copyExportTable`/`downloadCSV` exportan el texto crudo de las celdas,
-  incluido el nombre del EA, que viene del comment del trade en el archivo
-  subido, sin sanitizar (`parser.py:551`). Un nombre que empiece con `=`, `+`,
-  `-` o `@` se convierte en fórmula viva al pegarlo o abrirlo en Excel. El
-  camino CSV entrecomilla pero no neutraliza el operador inicial. Se dejó
-  porque el arreglo pertenece a una decisión más amplia sobre sanitizar
-  nombres de EA en el borde del parser, no en cada sink por separado.
-
-  **Para cerrarlo**: prefijar esas celdas con `'` o quitar el operador inicial
-  al exportar.
+- **Inyección de fórmulas en el export — ✅ RESUELTO** (`templates/export.html:71-109`).
+  `copyExportTable`/`downloadCSV` exportaban el texto crudo de las celdas, incluido
+  el nombre del EA (que viene del comment del trade sin sanitizar): un nombre que
+  empiece con `=`, `+`, `-` o `@` se convertía en fórmula viva al pegarlo o abrirlo
+  en Excel. **✅ RESUELTO** (sink-only, por decisión): `copyExportTable`/`downloadCSV`
+  neutralizan las celdas que empiezan con `=`, `+`, `-` o `@` prefijándolas con `'`.
+  **Explícito**: éste es el fix del **sink** solamente; sanitizar en el borde del
+  parser (cada superficie) se dejó de lado deliberadamente.
 
 - **El export copia 12 columnas pero la instrucción dice 10**
   (`templates/export.html:8-9` vs `:43-54`). La página dice "Copia estos
@@ -584,28 +595,22 @@ duros. Lo que sigue quedó registrado y no tocado.
   la letra desalinea cada métrica dos columnas. Cosmético pero engañoso;
   necesita una decisión de producto sobre cuál de las dos es la correcta.
 
-- **El ordenamiento de tablas rompe las fechas** (`static/charts.js`,
-  `sortTableByColumn`). La función quita `[$%,+∞]` y hace `parseFloat` de la
-  celda, así que una fecha `dd/mm/yyyy HH:MM`
-  (`strategy.html:386-387`, `incubation_strategy.html:497-498`, formateada por
-  `ea_analyzer.py:1850-1858`) se interpreta como su día del mes —
-  `02/09/2025` ordena antes que `16/03/2025`. Las celdas `∞` y `N/A` además
-  caen a un `localeCompare` contra celdas numéricas, un comparador
-  inconsistente.
+- **El ordenamiento de tablas rompe las fechas — ✅ RESUELTO** (`static/charts.js`,
+  `sortTableByColumn`). La función quitaba `[$%,+∞]` y hacía `parseFloat` de la
+  celda, así que una fecha `dd/mm/yyyy HH:MM` se interpretaba como su día del mes —
+  `02/09/2025` ordenaba antes que `16/03/2025`. **✅ RESUELTO**: las celdas de fecha
+  llevan un `data-sort-value` ISO y `sortTableByColumn` compara sobre esos valores
+  de forma lexicográfica (ISO === cronológico).
 
-  **Para cerrarlo**: emitir valores ISO en atributos `data-*` y ordenar sobre
-  esos.
-
-- **Los dos selectores de rango de `strategy.html` mienten**
+- **Los dos selectores de rango de `strategy.html` mienten — ✅ RESUELTO**
   (`templates/strategy.html:453-458`, lo mismo en
-  `incubation_strategy.html:563-568`). Los gráficos de equity y drawdown
-  tienen cada uno su propio selector de rango, pero ambos callbacks
-  re-renderizan LOS DOS gráficos (`renderEAEquity` escribe en los divs de
-  equity y de dd), mientras que la clase "activo" solo se setea en el
-  selector clickeado (`charts.js`). Al clickear 7D en uno cambian los dos
-  gráficos, pero el otro selector sigue marcando ALL — su propio estado
-  activo contradice a su propio gráfico. Necesita una decisión: un selector
-  compartido, o dos genuinamente independientes.
+  `incubation_strategy.html:563-568`). Los gráficos de equity y drawdown tenían cada
+  uno su propio selector de rango, pero ambos callbacks re-renderizaban LOS DOS
+  gráficos mientras la clase "activo" sólo se seteaba en el selector clickeado: al
+  clickear 7D en uno cambiaban los dos gráficos, pero el otro selector seguía
+  marcando ALL. **✅ RESUELTO** (selector compartido, por decisión): se eliminó el
+  selector de drawdown duplicado; un único selector de rango compartido maneja los
+  gráficos de equity y de drawdown, con el estado activo correcto.
 
 - **`if (!res.ok) return;` se traga todos los errores HTTP** (`static/charts.js`,
   ~9 sitios de llamada). Un fetch fallido o con sesión expirada deja el
@@ -668,7 +673,8 @@ duros. Lo que sigue quedó registrado y no tocado.
   sidebar y los gráficos, que usan el alias. `streak_data[].color` se envía y
   se recalcula del lado del cliente (`charts.js:475`). `long_wins`/`short_wins`
   se envían y nunca se usan. `observar_count`/`continuar_count`/`pending_count`
-  se calculan y nunca se pasan a la plantilla (ya registrado en §12).
+  se calculaban y nunca se pasaban a la plantilla — **✅ RESUELTO vía §12e** (ya
+  cableados y renderizados; `pending_count` desdoblado).
 
 - **Menores verificados**: `templates/incubation_reference_data.html` es
   código muerto — ninguna ruta lo renderiza (el endpoint
@@ -694,7 +700,7 @@ Arnés en `tests/oracle/` (8 archivos, ~3.500 líneas): caracterización +
 propiedades (Hypothesis) + diferencial contra oráculo independiente
 (`empyrical` para Sharpe, `scipy.stats.binom.cdf` para el binomial, oráculos
 derivados a mano para el resto). El arnés nació observando sin arreglar, pero la
-mayoría de los defectos que reveló ya se cerraron en este batch. Suite: **667
+mayoría de los defectos que reveló ya se cerraron en este batch. Suite: **674
 passed, 1 xfailed** — el único `xfail(strict=True)` que queda es la divergencia
 deliberada del cap de SQN (A4, decisión de política), no un bug abierto.
 
@@ -801,19 +807,21 @@ propiedades y la de oráculo diferencial.
 
 ### D. Documentación que contradice al código
 
-- **D1** — `metrics-formulas.md:386-391` afirma que el p-valor binomial usa
-  `scipy.binom.cdf` con fallback a aproximación normal. **No existe**: el código
-  es `math.comb` exacto, sin scipy y sin fallback. Un oráculo construido desde
-  la doc diverge 0.05–0.17 en N chico (wins=2,n=5,p=0.5 → código 0.500, doc
-  0.327). El código está bien; **la doc está mal**.
-- **D2** — `decision-logic.md:155-160` documenta la frecuencia como una cola;
-  el código es de **dos colas** (`validator.py:444-447`). Con freq_pct=413% la
-  doc dice `OK` y el código dice `FUERA`.
-- **D3** — `metrics-formulas.md:297` dice que el reloj arranca en el primer
-  trade; el código prioriza `date_added` (`incubation_validator.py:100-115`).
-- **D4** — `decision-logic.md:331` dice "cuatro referencias" y enumera tres.
-- **D5** — `decision-logic.md:128` documenta solo las bandas OK del payout;
-  las de ALERTA y el corto-circuito `payout >= 1e9 → OK` no están.
+- **D1 — ✅ RESUELTO.** La doc afirmaba que el p-valor binomial usa
+  `scipy.binom.cdf` con fallback a aproximación normal; el código es `math.comb`
+  exacto, sin scipy y sin fallback. El código estaba bien: la doc ahora describe el
+  binomial como `math.comb` exacto sin scipy (`metrics-formulas.md` §19).
+- **D2 — ✅ RESUELTO.** La doc documentaba la frecuencia como una cola; el código es
+  de dos colas. El código estaba bien: la doc ahora documenta la frecuencia como
+  desviación de dos colas respecto de 100 (`decision-logic.md`).
+- **D3 — ✅ RESUELTO.** La doc decía que el reloj arranca en el primer trade; el
+  código prioriza `date_added`. El código estaba bien: la doc ahora documenta el
+  reloj como `date_added`-primero (`metrics-formulas.md` §14).
+- **D4 — ✅ RESUELTO.** La doc decía "cuatro referencias" y enumeraba tres. El código
+  estaba bien: las referencias a "cuatro" pasaron a "tres" (`decision-logic.md`).
+- **D5 — ✅ RESUELTO.** La doc documentaba sólo las bandas OK del payout. El código
+  estaba bien: se agregaron las bandas de ALERTA del payout y el centinela
+  `∞`/`1e9 → OK` (`decision-logic.md`).
 
 ### E. Hipótesis refutada por el arnés
 

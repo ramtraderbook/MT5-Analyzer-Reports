@@ -444,9 +444,27 @@ def _ea_is_active(ea_name, config):
     return config.get("mappings", {}).get(ea_name, {}).get("active", True)
 
 
-def build_sidebar_eas(parsed_data, config, active_ea=None):
+def _mc_manip(entry):
+    """Monte Carlo Trades Manipulation block, honoring the legacy 'monte_carlo' key."""
+    return entry.get("mc_manipulation") or entry.get("monte_carlo") or {}
+
+
+def fmt_dt(dt_val, fmt="%d/%m/%Y %H:%M"):
+    """Format a trade timestamp (ISO string or datetime object) for display."""
+    if isinstance(dt_val, str):
+        try:
+            return datetime.fromisoformat(dt_val).strftime(fmt)
+        except Exception:
+            return dt_val
+    if isinstance(dt_val, datetime):
+        return dt_val.strftime(fmt)
+    return str(dt_val) if dt_val else ""
+
+
+def build_sidebar_eas(parsed_data, config, active_ea=None, ea_colors=None):
     sidebar_eas = []
     mappings = config.get("mappings", {})
+    ea_colors = ea_colors or {}
     for ea_name in parsed_data.get("ea_names", []):
         # Skip inactive EAs
         if not mappings.get(ea_name, {}).get("active", True):
@@ -457,6 +475,7 @@ def build_sidebar_eas(parsed_data, config, active_ea=None):
                 "label": get_display_label(ea_name, config),
                 "url": url_for("strategy", name=quote(ea_name, safe="")),
                 "active": (ea_name == active_ea),
+                "color": ea_colors.get(ea_name, "#4FC3F7"),
             }
         )
     return sidebar_eas
@@ -570,7 +589,9 @@ def _build_incubation_dashboard():
     aprobar_count = 0
     observar_count = 0
     continuar_count = 0
-    pending_count = 0
+    # EAs whose computed verdict is PENDING -- distinct from pending_bt_mc,
+    # which counts EAs missing reference data entirely.
+    pending_verdict_count = 0
     sin_datos_count = 0
     active_mappings = config.get("mappings", {})
     store_dirty = False
@@ -588,7 +609,15 @@ def _build_incubation_dashboard():
             metrics = evaluation_bundle["metrics"] if evaluation_bundle else None
             evaluation = evaluation_bundle["evaluation"] if evaluation_bundle else None
             total_trades = int(metrics.get("total_trades") or 0) if metrics else 0
-            days = days_since_first_trade(evaluation_bundle["trades"] if evaluation_bundle else [])
+            # Align "Días" with the engine, which counts incubation days from
+            # date_added (days_incubating). Fall back to the first-trade delta
+            # only when there is no evaluation to read it from.
+            if evaluation is not None:
+                days = evaluation.get("days_incubating", 0)
+            else:
+                days = days_since_first_trade(
+                    evaluation_bundle["trades"] if evaluation_bundle else []
+                )
             checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
 
             # JD-5 C6: has_reference used to come from the evaluate_ea bundle,
@@ -601,7 +630,6 @@ def _build_incubation_dashboard():
             has_reference = reference_ready(entry)
             if not has_reference:
                 pending_bt_mc += 1
-                pending_count += 1
 
             verdict = "NO DATA"
             score_display = "—"
@@ -681,7 +709,7 @@ def _build_incubation_dashboard():
                 elif verdict == "CONTINUAR":
                     continuar_count += 1
                 elif verdict == "PENDING":
-                    pending_count += 1
+                    pending_verdict_count += 1
                 elif verdict == "SIN DATOS":
                     sin_datos_count += 1
             elif has_reference:
@@ -700,7 +728,7 @@ def _build_incubation_dashboard():
                 # flash. Llevar a los datos de referencia de esta EA, que sí
                 # existen y son lo único revisable en este estado.
                 url = url_for("incubation_reference_edit", ea_name=ea_name)
-                pending_count += 1
+                pending_verdict_count += 1
 
             # F5 correction: SIN DATOS is deliberately never persisted into a
             # cp1/cp2/cp3 slot (design §1), so `current_result_from_entry`
@@ -765,7 +793,7 @@ def _build_incubation_dashboard():
         "aprobar_count": aprobar_count,
         "observar_count": observar_count,
         "continuar_count": continuar_count,
-        "pending_count": pending_count,
+        "pending_verdict_count": pending_verdict_count,
         "sin_datos_count": sin_datos_count,
     }
 
@@ -1286,11 +1314,9 @@ def incubation_reference_data():
             continue
 
         entry = store.get(ea_name, {})
-        has_bt = bool(entry.get("backtest"))
-        mc_manipulation = entry.get("mc_manipulation") or entry.get("monte_carlo") or {}
-        mc_retest = entry.get("mc_retest") or {}
-        has_mc95 = bool(mc_manipulation.get("confidence_95")) or bool(mc_retest.get("confidence_95"))
-        has_data = has_bt and has_mc95
+        # Single source of truth for reference readiness (backtest + MC95),
+        # instead of re-deriving it inline here.
+        has_data = reference_ready(entry)
         rows.append(
             {
                 "name": ea_name,
@@ -1333,7 +1359,7 @@ def incubation_reference_edit(ea_name):
     spp_ratios = compute_spp_ratios(entry.get("backtest", {}), entry.get("spp", {}))
 
     warnings = []
-    mc_manipulation = entry.get("mc_manipulation") or entry.get("monte_carlo") or {}
+    mc_manipulation = _mc_manip(entry)
     mc_retest = entry.get("mc_retest") or {}
     if not mc_manipulation.get("confidence_95"):
         warnings.append("Monte Carlo Trades Manipulation 95% no está cargado todavía.")
@@ -1409,7 +1435,7 @@ def incubation_reference_save(ea_name):
     backtest = payload["backtest"] or existing.get("backtest", {})
     mc_manipulation = payload["mc_manipulation"]
     mc_retest = payload["mc_retest"]
-    existing_manip = existing.get("mc_manipulation") or existing.get("monte_carlo") or {}
+    existing_manip = _mc_manip(existing)
     existing_retest = existing.get("mc_retest") or {}
 
     final_mc_manip = {
@@ -1521,7 +1547,13 @@ def incubation_strategy(ea_name):
     mapping = config.get("mappings", {}).get(ea_name, {})
 
     total_trades = int(metrics.get("total_trades") or 0)
-    days = days_since_first_trade(ea_trades)
+    # Align "Días" with the engine (days_incubating from date_added); fall back
+    # to the first-trade delta only when there is no evaluation.
+    days = (
+        evaluation.get("days_incubating", 0)
+        if evaluation
+        else days_since_first_trade(ea_trades)
+    )
     checkpoint_key, checkpoint_label, checkpoint_class = checkpoint_for_trades(total_trades)
     has_reference = reference_ready(entry)
     display_rows = build_comparison_rows(metrics, entry)
@@ -1534,16 +1566,6 @@ def incubation_strategy(ea_name):
     )
     current_score = evaluation.get("score") if evaluation else None
 
-    def fmt_dt(dt_val):
-        if isinstance(dt_val, str):
-            try:
-                return datetime.fromisoformat(dt_val).strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                return dt_val
-        if isinstance(dt_val, datetime):
-            return dt_val.strftime("%d/%m/%Y %H:%M")
-        return str(dt_val) if dt_val else ""
-
     display_trades = []
     for i, t in enumerate(metrics["trades"], 1):
         display_trades.append(
@@ -1551,6 +1573,10 @@ def incubation_strategy(ea_name):
                 "num": i,
                 "open_time": fmt_dt(t.get("open_time")),
                 "close_time": fmt_dt(t.get("close_time")),
+                # Raw ISO for chronological table sorting (dd/mm/yyyy display
+                # would otherwise sort by day-of-month).
+                "open_time_iso": t.get("open_time") or "",
+                "close_time_iso": t.get("close_time") or "",
                 "direction": t.get("direction", "").upper(),
                 "volume": t.get("volume", 0),
                 "open_price": t.get("open_price", 0),
@@ -1624,6 +1650,9 @@ def incubation_dashboard():
         pending_bt_mc=dashboard_data["pending_bt_mc"],
         eliminar_count=dashboard_data["eliminar_count"],
         aprobar_count=dashboard_data["aprobar_count"],
+        observar_count=dashboard_data["observar_count"],
+        continuar_count=dashboard_data["continuar_count"],
+        pending_verdict_count=dashboard_data["pending_verdict_count"],
         sin_datos_count=dashboard_data["sin_datos_count"],
         show_sidebar=True,
         active_page="incubation_dashboard",
@@ -1718,7 +1747,7 @@ def dashboard():
     by_ea = all_metrics["by_ea"]
     ea_colors = all_metrics["ea_colors"]
 
-    sidebar_eas = build_sidebar_eas(parsed_data, config)
+    sidebar_eas = build_sidebar_eas(parsed_data, config, ea_colors=ea_colors)
 
     # Build EA summary rows for the table
     ea_rows = []
@@ -1756,17 +1785,9 @@ def dashboard():
         times = [t["close_time"] for t in trades if t.get("close_time")]
         if times:
             times_sorted = sorted(times)
-
-            def fmt_dt(dt_str):
-                if isinstance(dt_str, str):
-                    try:
-                        return datetime.fromisoformat(dt_str).strftime("%d/%m/%Y")
-                    except Exception:
-                        return dt_str
-                return str(dt_str)
-
-            period_start = fmt_dt(times_sorted[0])
-            period_end = fmt_dt(times_sorted[-1])
+            # Date-only for the period range (no time-of-day), via the shared helper.
+            period_start = fmt_dt(times_sorted[0], fmt="%d/%m/%Y")
+            period_end = fmt_dt(times_sorted[-1], fmt="%d/%m/%Y")
 
     portfolio_monthly_perf = build_monthly_performance(portfolio.get("trades", []))
 
@@ -1820,19 +1841,12 @@ def strategy(name):
 
     m = calculate_ea_metrics(ea_name, ea_trades, config)
 
-    sidebar_eas = build_sidebar_eas(parsed_data, config, active_ea=ea_name)
+    ea_colors = _get_metrics_cached(parsed_data, config).get("ea_colors", {})
+    sidebar_eas = build_sidebar_eas(
+        parsed_data, config, active_ea=ea_name, ea_colors=ea_colors
+    )
 
     # Format trades for template display
-    def fmt_dt(dt_val):
-        if isinstance(dt_val, str):
-            try:
-                return datetime.fromisoformat(dt_val).strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                return dt_val
-        if isinstance(dt_val, datetime):
-            return dt_val.strftime("%d/%m/%Y %H:%M")
-        return str(dt_val) if dt_val else ""
-
     display_trades = []
     for i, t in enumerate(m["trades"], 1):
         display_trades.append(
@@ -1840,6 +1854,10 @@ def strategy(name):
                 "num": i,
                 "open_time": fmt_dt(t.get("open_time")),
                 "close_time": fmt_dt(t.get("close_time")),
+                # Raw ISO for chronological table sorting (dd/mm/yyyy display
+                # would otherwise sort by day-of-month).
+                "open_time_iso": t.get("open_time") or "",
+                "close_time_iso": t.get("close_time") or "",
                 "direction": t.get("direction", "").upper(),
                 "volume": t.get("volume", 0),
                 "open_price": t.get("open_price", 0),
@@ -1890,7 +1908,8 @@ def export():
     all_metrics = _get_metrics_cached(parsed_data, config)
 
     by_ea = all_metrics["by_ea"]
-    sidebar_eas = build_sidebar_eas(parsed_data, config)
+    ea_colors = all_metrics["ea_colors"]
+    sidebar_eas = build_sidebar_eas(parsed_data, config, ea_colors=ea_colors)
 
     export_rows = []
     for ea_name, m in by_ea.items():
@@ -2419,7 +2438,17 @@ def validator_edit(magic):
 
     entry = store.get(str(magic), {})
 
+    # is_add fires whenever the URL magic matches no configured mapping: the
+    # "+ Agregar EA" button's "nuevo" sentinel, but also any unmapped magic
+    # navigated to directly (e.g. /validator/edit/<unmapped-magic>). On that add
+    # path the real magic is typed into the form and MUST be validated before
+    # anything is written; a plain edit of an already-mapped magic keeps using
+    # the trusted URL param.
+    is_add = ea_name is None
+    form_error = None
+
     if request.method == "POST":
+        target_magic = str(magic)
 
         def fv(key, default=None):
             v = request.form.get(key, "").strip()
@@ -2430,6 +2459,10 @@ def validator_edit(magic):
             except ValueError:
                 return default
 
+        # Build the submitted entry up front so it can be reused both to persist
+        # on success and to re-populate the form on a validation error (the user
+        # must not lose already-typed Backtest/MC/SPP data after fixing only the
+        # magic number).
         new_entry = {
             "instrument": request.form.get("instrument", "").strip(),
             "timeframe": request.form.get("timeframe", "H1").strip(),
@@ -2467,7 +2500,56 @@ def validator_edit(magic):
             },
         }
 
-        store[str(magic)] = new_entry
+        if is_add:
+            raw_magic = (request.form.get("magic") or "").strip()
+            norm_magic = None
+            if raw_magic:
+                try:
+                    norm_magic = str(int(raw_magic))
+                except ValueError:
+                    norm_magic = None
+
+            known_magics = set()
+            for mapping in config.get("mappings", {}).values():
+                mv = str(mapping.get("magic", "")).strip()
+                if not mv or mv.lower() == "none":
+                    continue
+                try:
+                    known_magics.add(str(int(mv)))
+                except ValueError:
+                    known_magics.add(mv)
+
+            if not raw_magic:
+                form_error = "Ingresá un Magic Number."
+            elif norm_magic is None:
+                form_error = "El Magic Number debe ser numérico (entero)."
+            elif norm_magic not in known_magics:
+                form_error = "Ese Magic Number no corresponde a ninguna estrategia mapeada."
+            elif norm_magic in store:
+                form_error = "Ya existen datos de Backtest para ese Magic Number."
+            else:
+                target_magic = norm_magic
+
+            if form_error:
+                # Invalid magic on a data-write path: re-render with the error
+                # and write nothing. Feed the submitted values back into the
+                # form (via new_entry) so only the magic needs re-fixing.
+                return render_template(
+                    "validator_input.html",
+                    magic=magic,
+                    ea_name=ea_name,
+                    ea_label=ea_label,
+                    entry=new_entry,
+                    live_preview=None,
+                    sidebar_eas=sidebar_eas,
+                    account=parsed_data.get("account", {}),
+                    is_add=is_add,
+                    form_error=form_error,
+                    show_sidebar=True,
+                    active_page="validator",
+                )
+
+        store[target_magic] = new_entry
         save_validator_store(store)
         return redirect(url_for("validator"))
 
@@ -2508,6 +2590,8 @@ def validator_edit(magic):
         live_preview=live_preview,
         sidebar_eas=sidebar_eas,
         account=parsed_data.get("account", {}),
+        is_add=is_add,
+        form_error=form_error,
         show_sidebar=True,
         active_page="validator",
     )

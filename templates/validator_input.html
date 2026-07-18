@@ -20,12 +20,27 @@
 <form method="POST" action="{{ url_for('validator_edit', magic=magic) }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
+  {% if form_error %}
+  <div class="val-form-error" role="alert"
+       style="margin-bottom:16px;padding:10px 14px;border-radius:6px;
+              background:rgba(255,82,82,0.12);border:1px solid rgba(255,82,82,0.4);
+              color:#FF5252;font-size:0.85rem;">
+    &#9888; {{ form_error }}
+  </div>
+  {% endif %}
+
   <!-- ── Identificación ── -->
   <div class="section val-form-section">
     <div class="section-header">
       <h2 class="section-title">Identificación</h2>
     </div>
     <div class="val-form-grid val-form-grid-3">
+      {% if is_add %}
+      <div class="val-form-group">
+        <label class="val-form-label">Magic Number <span class="val-hint">Debe estar mapeado</span></label>
+        <input type="number" name="magic" class="val-input" placeholder="ej: 22219" value="{{ request.form.get('magic', '') }}" required>
+      </div>
+      {% endif %}
       <div class="val-form-group">
         <label class="val-form-label">Instrumento</label>
         <input type="text" name="instrument" class="val-input" placeholder="SP500, EURUSD..." value="{{ entry.get('instrument', '') }}">
@@ -224,14 +239,14 @@
   <div class="val-form-actions">
     <button type="submit" class="btn-primary">💾 Guardar y Analizar</button>
     <a href="{{ url_for('validator') }}" class="btn-secondary">Cancelar</a>
-    {% if entry %}
+    {% if entry and not is_add %}
     <button type="submit" class="btn-danger" id="val-btn-delete-bt" form="val-delete-bt-form">🗑 Eliminar BT</button>
     {% endif %}
   </div>
 
 </form>
 
-{% if entry %}
+{% if entry and not is_add %}
 <form id="val-delete-bt-form" method="POST" action="{{ url_for('validator_delete', magic=magic) }}" style="display:none">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 </form>

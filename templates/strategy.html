@@ -235,7 +235,6 @@
             <span class="chart-icon">&#x1F4C9;</span>
             <h2 class="chart-title">Drawdown</h2>
         </div>
-        <div id="ea-dd-time-selector"></div>
     </div>
     <div id="ea-dd-chart" class="chart-container" style="height: 280px"></div>
 </div>
@@ -403,8 +402,8 @@
                     class="{% if t.is_win %}row-win{% else %}row-loss{% endif %}"
                 >
                     <td class="mono">{{ t.num }}</td>
-                    <td class="mono">{{ t.open_time }}</td>
-                    <td class="mono">{{ t.close_time }}</td>
+                    <td class="mono" data-sort-value="{{ t.open_time_iso }}">{{ t.open_time }}</td>
+                    <td class="mono" data-sort-value="{{ t.close_time_iso }}">{{ t.close_time }}</td>
                     <td
                         class="{% if t.direction == 'BUY' %}cell-profit{% else %}cell-loss{% endif %}"
                     >
@@ -450,10 +449,8 @@
     document.addEventListener('DOMContentLoaded', function () {
       renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME);
 
+      // Single shared range selector controls BOTH equity and drawdown charts.
       renderTimeRangeSelector('ea-equity-time-selector', function(days) {
-        renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME, days);
-      });
-      renderTimeRangeSelector('ea-dd-time-selector', function(days) {
         renderEAEquity('ea-equity-chart', 'ea-dd-chart', EA_NAME, days);
       });
 
