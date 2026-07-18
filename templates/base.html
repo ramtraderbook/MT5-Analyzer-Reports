@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ range(10000,99999) | random }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_version('style.css') }}">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
 </head>
 <body>
@@ -180,7 +180,7 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="{{ url_for('static', filename='charts.js') }}?v={{ range(10000,99999) | random }}"></script>
+<script src="{{ url_for('static', filename='charts.js') }}?v={{ asset_version('charts.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
