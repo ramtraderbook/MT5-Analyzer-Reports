@@ -243,6 +243,7 @@ def inject_display_thresholds():
             "sqn_bad": 1.6,
             "pf_good": 1.5,
             "pf_bad": 1.0,
+            "borderline_eps": 2.0,
         }
     }
 

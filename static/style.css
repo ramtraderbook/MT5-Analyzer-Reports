@@ -391,6 +391,24 @@ code {
     letter-spacing: 0.02em;
 }
 
+/* "al límite": el score cuelga a menos de eps puntos de un umbral de veredicto,
+   así que el resultado podría dar vuelta con pocos trades más. Distinto de
+   is-tentative (muestra chica) y de orientativo (SQN): borde punteado en tono
+   info, sin desaturar (4E). */
+.val-borderline {
+    display: inline-block;
+    margin-top: 3px;
+    padding: 1px 6px;
+    font-size: 0.58rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    border: 1px dashed var(--accent);
+    border-radius: 8px;
+    cursor: help;
+}
+
 .kpi-progress-bar {
     height: 3px;
     background: var(--border);

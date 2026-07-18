@@ -142,6 +142,16 @@
 
                     {% if row.has_bt and row.analysis %} {% set a = row.analysis
                     %} {% set signif_low = a.signif in ['Baja', 'Muy baja'] %}
+                    {# borderline: el score cuelga a menos de eps de un umbral Y
+                       el veredicto lo dictó el score (no un override DD/PF), de
+                       modo que no se marque "al límite" un ELIMINAR forzado. #}
+                    {% set borderline = false %}
+                    {% if not a.sin_datos and a.score is not none %}
+                        {% set score_verdict = 'CONTINUAR' if a.score >= TH.score_continuar else ('MONITOREAR' if a.score >= TH.score_monitorear else 'ELIMINAR') %}
+                        {% if a.veredicto == score_verdict %}
+                            {% set borderline = (a.score >= TH.score_continuar - TH.borderline_eps and a.score < TH.score_continuar + TH.borderline_eps) or (a.score >= TH.score_monitorear - TH.borderline_eps and a.score < TH.score_monitorear + TH.borderline_eps) %}
+                        {% endif %}
+                    {% endif %}
 
                     <!-- ── 3. LIVE básico ──────────────────────────── -->
                     <td class="th-center val-td-live">
@@ -361,6 +371,13 @@
                             >
                             {% if signif_low and not a.sin_datos %}
                             <span class="val-muestra-chica">muestra chica</span>
+                            {% endif %}
+                            {% if borderline %}
+                            <span
+                                class="val-borderline"
+                                title="El score está a menos de {{ TH.borderline_eps }} puntos del umbral: el veredicto cuelga de un pelo y podría dar vuelta con pocos trades más."
+                                >al límite</span
+                            >
                             {% endif %}
                             {% if a.desv_flag == 'DESV' %}
                             <span class="val-desv-flag">&#9888; DESV</span>

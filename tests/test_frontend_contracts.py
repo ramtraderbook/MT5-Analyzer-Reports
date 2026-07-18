@@ -497,3 +497,37 @@ def test_injected_thresholds_match_the_engine():
     # UI-only color cuts: just assert they are present and ordered sanely.
     assert th["sqn_good"] > th["sqn_bad"] > 0
     assert th["pf_good"] > th["pf_bad"] > 0
+
+
+# ── Contract 10: a verdict whose score hangs within eps of a cut must render an
+#    "al límite" marker -- but ONLY when the score actually drove the verdict, so
+#    a DD/PF-forced ELIMINAR near a cut is never mislabeled borderline (4E) ─────
+
+# The row-level {% set signif_low %} lives outside these fragments; stub it.
+_BORDER_SET = "{% set signif_low = false %}" + re.search(
+    r"\{% set borderline = false %\}.*?\{% endif %\}\s*\{% endif %\}", _VALIDATOR_HTML, re.DOTALL
+).group(0)
+_BORDER_CELL = re.search(
+    r'<span\s+class="val-badge val-\{\{ a\.veredicto.*?al límite</span\s*>\s*\{% endif %\}',
+    _VALIDATOR_HTML, re.DOTALL,
+).group(0)
+_BORDER_FRAG = _BORDER_SET + _BORDER_CELL
+
+
+@pytest.mark.parametrize("score,veredicto,sin_datos,expected", [
+    (71.0, "CONTINUAR", False, True),    # just above the 70 cut, score-driven
+    (68.5, "MONITOREAR", False, True),   # just below the 70 cut, score-driven
+    (46.0, "MONITOREAR", False, True),   # just above the 45 cut, score-driven
+    (78.0, "CONTINUAR", False, False),   # comfortably clear of every cut
+    (57.0, "MONITOREAR", False, False),  # mid-band, far from 70 and 45
+    (71.0, "ELIMINAR", False, False),    # near 70 but DD/PF-forced -> not borderline
+    (None, "SIN DATOS", True, False),    # no score at all
+])
+def test_borderline_marker_only_when_score_drives_a_near_cut_verdict(score, veredicto, sin_datos, expected):
+    a = dict(score=score, veredicto=veredicto, sin_datos=sin_datos, desv_flag="-")
+    with app.test_request_context("/"):
+        out = app.jinja_env.from_string(_BORDER_FRAG).render(TH=_TH, a=a)
+    assert ("al límite" in out) is expected, (
+        f"borderline mismatch for score={score} veredicto={veredicto}: "
+        f"got {'al límite' in out}, expected {expected}"
+    )
