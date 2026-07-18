@@ -419,3 +419,50 @@ def test_csrf_rejects_non_ascii_token_with_400_not_500():
 
     assert client.post("/reset", data={"csrf_token": "ñoño"}).status_code == 400
     assert client.post("/reset", data={"csrf_token": "wrong"}).status_code == 400
+
+
+# ── 1A: importing ea_analyzer must have no filesystem side effects ───────────
+
+
+def test_resolve_secret_key_never_writes_unless_persisting(monkeypatch, tmp_path):
+    """1A: import sets app.secret_key via _resolve_secret_key() with
+    persist_if_created=False, so a fresh checkout that imports the module must
+    never create a .secret_key file. Precedence env -> file -> ephemeral, and
+    only startup (persist_if_created=True) writes the key."""
+    import ea_analyzer
+
+    keyfile = tmp_path / ".secret_key"
+    monkeypatch.setattr(ea_analyzer, "SECRET_KEY_PATH", str(keyfile))
+    monkeypatch.delenv("EA_ANALYZER_SECRET_KEY", raising=False)
+
+    # No env, no file -> ephemeral key, and NOTHING written (the import case).
+    k1 = ea_analyzer._resolve_secret_key(persist_if_created=False)
+    assert len(k1) == 24
+    assert not keyfile.exists()
+
+    # Startup persists the durable key so sessions survive restarts.
+    k2 = ea_analyzer._resolve_secret_key(persist_if_created=True)
+    assert keyfile.exists()
+    assert keyfile.read_bytes() == k2
+
+    # An existing file is read back (persistence across "restarts").
+    assert ea_analyzer._resolve_secret_key() == k2
+
+    # The env var wins and touches no file (the WSGI-friendly source).
+    keyfile.unlink()
+    monkeypatch.setenv("EA_ANALYZER_SECRET_KEY", "from-env")
+    assert ea_analyzer._resolve_secret_key(persist_if_created=True) == b"from-env"
+    assert not keyfile.exists()
+
+
+def test_atomic_write_json_creates_its_directory_on_demand(tmp_path):
+    """1A: directory creation moved out of import into the write sites, so a
+    cache write into a not-yet-existing runtime dir must create it lazily
+    instead of relying on an import-time os.makedirs."""
+    import ea_analyzer
+
+    target = tmp_path / "runtime_cache" / "cache_x.json"
+    assert not target.parent.exists()
+    ea_analyzer._atomic_write_json(str(target), {"ok": 1})
+    assert target.exists()
+    assert '"ok": 1' in target.read_text(encoding="utf-8")

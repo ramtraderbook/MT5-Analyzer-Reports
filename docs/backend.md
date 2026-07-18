@@ -52,7 +52,7 @@ El modo activo se guarda en `session["analysis_mode"]` y persiste mientras dure 
 ## Sesión y cache de trades
 
 ### Secret key persistente
-Al arrancar por primera vez, `ea_analyzer.py` genera 24 bytes aleatorios y los guarda en `.secret_key`. En reinicios posteriores lee ese mismo archivo. Esto garantiza que las cookies de sesión sobreviven a reinicios del servidor.
+`_resolve_secret_key()` resuelve la clave por precedencia: la variable de entorno `EA_ANALYZER_SECRET_KEY` → el archivo `.secret_key` si ya existe → una clave efímera de 24 bytes. **Importar el módulo no escribe nada**: la clave nueva solo se persiste a `.secret_key` en el arranque real (`__main__`), de modo que las cookies de sesión sobreviven a reinicios cuando se corre `python ea_analyzer.py`. Para un despliegue WSGI multi-worker, exportar `EA_ANALYZER_SECRET_KEY` da una clave estable entre workers sin tocar el disco (evita la carrera de escritura descrita en `known-issues.md`). Los directorios de runtime (`uploads`, `runtime_cache`) se crean bajo demanda en cada punto de escritura, tampoco en tiempo de import.
 
 ### Cache de trades en disco
 Los trades parseados **no** se guardan en la cookie (demasiado grandes). Se guardan en archivos JSON:

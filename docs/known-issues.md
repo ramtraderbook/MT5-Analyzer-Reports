@@ -433,12 +433,15 @@ tocarlos.
   Hoy la clave siempre es un UUID generado por el servidor y explotarlo exige
   falsificar la cookie de sesión, o sea que es defensa en profundidad, no un
   agujero abierto. Vale como cinturón si el `.secret_key` alguna vez se filtra.
-- **Carrera del `.secret_key` al importar (solo WSGI multi-worker)**. El bootstrap
-  es un check-then-write sin `O_EXCL`: dos workers pueden generar y escribir
-  claves distintas, o uno puede leer el archivo a medio escribir. Resultado:
-  firmas de sesión inconsistentes y usuarios perdiendo la sesión de forma
-  intermitente. El entrypoint que se envía es monoproceso, así que no aplica al
-  uso documentado.
+- **Carrera del `.secret_key` al importar (solo WSGI multi-worker). ✅ RESUELTO
+  (fix 1A)**. Antes el bootstrap era un check-then-write en tiempo de import: dos
+  workers podían generar y escribir claves distintas, o uno leer el archivo a
+  medio escribir. Ahora **importar no escribe nada**: `_resolve_secret_key()`
+  resuelve la clave por precedencia `EA_ANALYZER_SECRET_KEY` (env) → archivo
+  existente → efímera, y solo el arranque real (`__main__`) persiste una clave
+  nueva. Para WSGI multi-worker, exportar `EA_ANALYZER_SECRET_KEY` da una clave
+  estable entre workers sin tocar el disco — la forma idiomática y sin carrera.
+  Tests: `test_flask_hardening.py::test_resolve_secret_key_never_writes_unless_persisting`.
 
 Contexto de despliegue: `docs/backend.md` contempla explícitamente un despliegue
 WSGI, y por eso los puntos marcados "solo WSGI" siguen abiertos en vez de

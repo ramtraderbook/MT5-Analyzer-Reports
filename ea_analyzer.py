@@ -79,21 +79,38 @@ SECRET_KEY_PATH = os.path.join(APP_DIR, ".secret_key")
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR, static_folder=STATIC_DIR)
 
-# Persistent secret key (survives restarts)
-if os.path.exists(SECRET_KEY_PATH):
-    with open(SECRET_KEY_PATH, "rb") as f:
-        app.secret_key = f.read()
-else:
-    key = os.urandom(24)
-    with open(SECRET_KEY_PATH, "wb") as f:
-        f.write(key)
-    app.secret_key = key
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(TEMPLATES_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(CACHE_DIR, exist_ok=True)
-os.makedirs(os.path.join(APP_DIR, "test_data"), exist_ok=True)
+def _resolve_secret_key(persist_if_created=False):
+    """Resolve the Flask secret key without writing to disk at import time (1A).
+
+    Precedence: the EA_ANALYZER_SECRET_KEY env var (the WSGI-friendly source,
+    stable across workers with no file involved) -> the persisted .secret_key
+    file if it already exists -> a fresh ephemeral key. The ephemeral key is
+    only written to disk when persist_if_created is True, which happens at real
+    startup (__main__) -- never on plain import or under tests, so importing
+    this module has no filesystem side effects."""
+    env_key = os.environ.get("EA_ANALYZER_SECRET_KEY")
+    if env_key:
+        return env_key.encode("utf-8")
+    if os.path.exists(SECRET_KEY_PATH):
+        with open(SECRET_KEY_PATH, "rb") as f:
+            return f.read()
+    key = os.urandom(24)
+    if persist_if_created:
+        with open(SECRET_KEY_PATH, "wb") as f:
+            f.write(key)
+    return key
+
+
+# Set at import so sessions/CSRF work immediately (incl. test_client), but never
+# writing a file here -- the durable key is persisted at startup (see __main__).
+app.secret_key = _resolve_secret_key()
+
+
+def _ensure_dir(path):
+    """Create a runtime directory on demand. Called at each write site instead
+    of at import so that importing this module touches no filesystem (1A)."""
+    os.makedirs(path, exist_ok=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Metrics cache (in-memory, por sesión, TTL 120 segundos)
@@ -393,6 +410,7 @@ def _delete_cache_file(cache_key, prefix):
 
 def _atomic_write_json(path, data):
     """Write JSON to `path` without ever leaving a truncated file on disk."""
+    _ensure_dir(os.path.dirname(path))
     tmp_path = f"{path}.tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -951,6 +969,7 @@ def upload():
     # Save uploaded file — use secure_filename to sanitize client-supplied names
     from werkzeug.utils import secure_filename
     safe_name = secure_filename(file.filename) or "upload.xlsx"
+    _ensure_dir(UPLOAD_FOLDER)
     filepath = os.path.join(UPLOAD_FOLDER, safe_name)
     file.save(filepath)
 
@@ -2695,6 +2714,11 @@ def open_browser():
 
 
 if __name__ == "__main__":
+    # Real startup: persist a durable secret key so sessions survive restarts,
+    # and create the runtime directories up front. Neither happens on import.
+    app.secret_key = _resolve_secret_key(persist_if_created=True)
+    _ensure_dir(UPLOAD_FOLDER)
+    _ensure_dir(CACHE_DIR)
     print("=" * 50)
     print(f"  EA Analyzer - iniciando servidor...")
     print(f"  Abriendo http://localhost:{PORT}")
