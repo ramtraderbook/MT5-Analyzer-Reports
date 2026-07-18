@@ -12,6 +12,7 @@ from parser import (
     SYSTEM_COMMENT_PREFIX,
     _is_system_comment,
     _to_float,
+    _money_float,
     _to_price_or_none,
     _parse_date,
     _find_section_rows,
@@ -676,3 +677,70 @@ def test_parse_open_positions_filters_system_comment_on_primary_read():
 
     assert len(positions) == 1
     assert positions[0]["comment"] == "Unknown"
+
+
+# ── §9: malformed_cells counter (load-with-warning) ──────────────────────────
+
+
+def test_money_float_counts_unreadable_nonempty_cell():
+    """A genuinely unreadable non-empty money cell ('###', 'N/A') parses to 0.0
+    like _to_float but is tallied in the counter (§9)."""
+    counter = [0]
+    assert _money_float("###", counter) == 0.0
+    assert _money_float("N/A", counter) == 0.0
+    assert counter[0] == 2
+
+
+def test_money_float_does_not_count_empty_or_valid_cells():
+    """Empty/None cells (a legitimate 0) and parseable numbers are NOT counted."""
+    counter = [0]
+    assert _money_float(None, counter) == 0.0
+    assert _money_float("", counter) == 0.0
+    assert _money_float("   ", counter) == 0.0
+    assert _money_float("12.34", counter) == pytest.approx(12.34)
+    assert _money_float("0", counter) == 0.0
+    assert _money_float(0.0, counter) == 0.0
+    assert _money_float(-50.0, counter) == pytest.approx(-50.0)
+    assert counter[0] == 0
+
+
+def test_parse_positions_counts_malformed_money_cell():
+    """A malformed money cell (profit='###') is read as 0.0 (file NOT rejected)
+    and counted in the malformed_counter threaded from parse_mt5_report."""
+    ws = _build_ws([
+        ["Time", "Position", "Symbol", "Type", "Volume", "Price", "S / L", "T / P",
+         "Time", "Price", "Commission", "Swap", "Profit"],
+        ["2026.01.02 10:00:00", 1001, "EURUSD", "buy", "0.10", "1.10000",
+         "0", "0", "2026.01.02 14:00:00", "1.10500", "0", "0", "###"],
+    ])
+    counter = [0]
+    trades = _parse_positions(ws, header_row=1, data_start=2, end_row=2,
+                              malformed_counter=counter)
+    assert len(trades) == 1
+    assert trades[0]["net_pnl"] == pytest.approx(0.0)  # unreadable profit -> 0.0
+    assert counter[0] == 1
+
+
+def test_parse_mt5_report_reports_zero_malformed_cells_on_clean_file(tmp_path):
+    """parse_mt5_report returns a malformed_cells key; a clean report reports 0."""
+    import openpyxl
+    from parser import parse_mt5_report
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Positions"])
+    ws.append(["Time", "Position", "Symbol", "Type", "Volume", "Price", "S / L",
+               "T / P", "Time", "Price", "Commission", "Swap", "Profit"])
+    ws.append(["2026.01.02 10:00:00", 1001, "EURUSD", "buy", "0.10", "1.10000",
+               "0", "0", "2026.01.02 14:00:00", "1.10500", "0", "0", "50.0"])
+    ws.append(["Orders"])
+    ws.append(["Open Time", "Order", "Symbol", "Type", "Volume", "Price", "S / L",
+               "T / P", "Time", "State", "Comment"])
+    ws.append(["2026.01.02 10:00:00", 1001, "EURUSD", "buy", "0.10", "1.10000",
+               "0", "0", "2026.01.02 10:00:00", "filled", "MyEA"])
+    path = tmp_path / "clean.xlsx"
+    wb.save(str(path))
+
+    result = parse_mt5_report(str(path))
+    assert "malformed_cells" in result
+    assert result["malformed_cells"] == 0

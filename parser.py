@@ -240,6 +240,29 @@ def _to_float(val, default=0.0, ambiguous_comma="thousands"):
     return result
 
 
+_UNPARSEABLE_MONEY = object()
+
+
+def _money_float(val, malformed_counter=None):
+    """Parse a MONEY cell (commission/swap/profit) to float.
+
+    §9 (load-with-warning): identical value semantics to _to_float(default=0.0),
+    but a NON-EMPTY cell that is genuinely unreadable (e.g. "###", "N/A", a
+    stray label) is also tallied in `malformed_counter` (a single-element list)
+    so parse_mt5_report can surface a malformed_cells count to the UI. The file
+    is NEVER rejected — the user chose to load with a warning — and an empty/
+    absent cell is NOT counted (that is a legitimate 0, not a parse failure).
+    """
+    result = _to_float(val, default=0.0)
+    if malformed_counter is not None and val is not None:
+        s = str(val).strip()
+        # A non-empty cell whose value cannot be parsed as money (the sentinel
+        # default survives every parse path) is a genuine malformed cell.
+        if s and _to_float(val, default=_UNPARSEABLE_MONEY) is _UNPARSEABLE_MONEY:
+            malformed_counter[0] += 1
+    return result
+
+
 def _to_price_or_none(val):
     """
     Parse an MT5 S/L or T/P cell to a positive price, or None if unset.
@@ -365,7 +388,7 @@ def _parse_header(ws):
     return account
 
 
-def _parse_positions(ws, header_row, data_start, end_row):
+def _parse_positions(ws, header_row, data_start, end_row, malformed_counter=None):
     """
     Parse POSITIONS section. Returns list of trade dicts.
     Columns: Time(open), Position, Symbol, Type, Volume, Price(open),
@@ -423,9 +446,9 @@ def _parse_positions(ws, header_row, data_start, end_row):
 
         open_time = _parse_date(ws.cell(row=row_idx, column=time_open_col).value)
         close_time = _parse_date(ws.cell(row=row_idx, column=time_close_col).value)
-        commission = _to_float(ws.cell(row=row_idx, column=commission_col).value)
-        swap = _to_float(ws.cell(row=row_idx, column=swap_col).value)
-        profit = _to_float(ws.cell(row=row_idx, column=profit_col).value)
+        commission = _money_float(ws.cell(row=row_idx, column=commission_col).value, malformed_counter)
+        swap = _money_float(ws.cell(row=row_idx, column=swap_col).value, malformed_counter)
+        profit = _money_float(ws.cell(row=row_idx, column=profit_col).value, malformed_counter)
         net_pnl = profit + commission + swap
 
         sl_val = ws.cell(row=row_idx, column=sl_col).value
@@ -492,7 +515,7 @@ def _parse_orders(ws, header_row, data_start, end_row):
     return order_map
 
 
-def _parse_open_positions(ws, header_row, data_start, end_row):
+def _parse_open_positions(ws, header_row, data_start, end_row, malformed_counter=None):
     """
     Parse OPEN POSITIONS section.
 
@@ -529,11 +552,11 @@ def _parse_open_positions(ws, header_row, data_start, end_row):
             continue
 
         if commission_col is not None:
-            commission = _to_float(ws.cell(row=row_idx, column=commission_col).value)
+            commission = _money_float(ws.cell(row=row_idx, column=commission_col).value, malformed_counter)
         else:
             commission = 0.0
-        swap = _to_float(ws.cell(row=row_idx, column=swap_col).value)
-        profit = _to_float(ws.cell(row=row_idx, column=profit_col).value)
+        swap = _money_float(ws.cell(row=row_idx, column=swap_col).value, malformed_counter)
+        profit = _money_float(ws.cell(row=row_idx, column=profit_col).value, malformed_counter)
 
         if comment_col is not None:
             raw_comment = ws.cell(row=row_idx, column=comment_col).value
@@ -635,9 +658,13 @@ def parse_mt5_report(filepath: str) -> dict:
     # Parse header (account info)
     account = _parse_header(ws)
 
+    # §9: count genuinely-unreadable money cells across all parsed sections so
+    # the UI can warn the user (load-with-warning) without rejecting the file.
+    malformed_counter = [0]
+
     # Parse POSITIONS (closed trades without comments)
     pos_hr, pos_ds, pos_er = bound_map["Positions"]
-    closed_trades = _parse_positions(ws, pos_hr, pos_ds, pos_er)
+    closed_trades = _parse_positions(ws, pos_hr, pos_ds, pos_er, malformed_counter)
 
     # Parse ORDERS (get EA comment for each position)
     ord_hr, ord_ds, ord_er = bound_map["Orders"]
@@ -657,7 +684,7 @@ def parse_mt5_report(filepath: str) -> dict:
     open_positions = []
     if "Open Positions" in bound_map:
         op_hr, op_ds, op_er = bound_map["Open Positions"]
-        open_positions = _parse_open_positions(ws, op_hr, op_ds, op_er)
+        open_positions = _parse_open_positions(ws, op_hr, op_ds, op_er, malformed_counter)
 
     # Parse RESULTS (for validation)
     results_validation = {}
@@ -680,6 +707,7 @@ def parse_mt5_report(filepath: str) -> dict:
         "ea_names": ea_names,
         "results_validation": results_validation,
         "unknown_trades": unknown_count,
+        "malformed_cells": malformed_counter[0],
         "total_closed": len(closed_trades),
         "total_open": len(open_positions),
     }
