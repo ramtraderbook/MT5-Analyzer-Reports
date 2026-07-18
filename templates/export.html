@@ -68,11 +68,22 @@
 
 {% block scripts %}
 <script>
+function neutralizeFormula(text) {
+  // Prevent CSV/TSV formula injection: a leading =, +, -, or @ can make a
+  // pasted/opened cell evaluate as a live Excel formula. Prefix a single quote
+  // so the value is treated as plain text. Sink-only — on-page rendering is
+  // untouched.
+  if (text && /^[=+\-@]/.test(text)) {
+    return "'" + text;
+  }
+  return text;
+}
+
 function copyExportTable() {
   const table = document.getElementById('export-table');
   const rows = Array.from(table.querySelectorAll('tbody tr'));
   const tsv = rows.map(row =>
-    Array.from(row.cells).map(cell => cell.textContent.trim()).join('\t')
+    Array.from(row.cells).map(cell => neutralizeFormula(cell.textContent.trim())).join('\t')
   ).join('\n');
 
   navigator.clipboard.writeText(tsv).then(() => {
@@ -94,7 +105,8 @@ function downloadCSV() {
   const rows = Array.from(table.querySelectorAll('tr'));
   const csv = rows.map(row =>
     Array.from(row.cells).map(cell => {
-      const txt = cell.textContent.trim().replace(/\n/g, ' ').replace(/"/g, '""');
+      const raw = neutralizeFormula(cell.textContent.trim());
+      const txt = raw.replace(/\n/g, ' ').replace(/"/g, '""');
       return `"${txt}"`;
     }).join(',')
   ).join('\n');

@@ -862,8 +862,34 @@ function sortTableByColumn(table, colIdx, dir) {
 
   const rows = Array.from(tbody.querySelectorAll("tr"));
   rows.sort((a, b) => {
-    const aText = (a.cells[colIdx]?.textContent || "").trim();
-    const bText = (b.cells[colIdx]?.textContent || "").trim();
+    const aCell = a.cells[colIdx];
+    const bCell = b.cells[colIdx];
+    const aText = (aCell?.textContent || "").trim();
+    const bText = (bCell?.textContent || "").trim();
+
+    // Prefer an explicit sort key (e.g. ISO dates on dd/mm/yyyy cells) so the
+    // raw display text does not get misparsed by the numeric fallback below.
+    const aSortVal = aCell?.dataset?.sortValue;
+    const bSortVal = bCell?.dataset?.sortValue;
+    if (aSortVal !== undefined && bSortVal !== undefined) {
+      // Only treat the sort key as numeric when the WHOLE trimmed value is a
+      // finite number. parseFloat() would happily read the leading digits of an
+      // ISO-8601 timestamp ("2024-03-01T..." -> 2024) and never return NaN, so
+      // same-year dates would tie and never sort chronologically. ISO strings
+      // must fall through to a string compare, whose lexicographic order is
+      // already chronological order.
+      const isNumericKey = (v) => {
+        const s = String(v).trim();
+        return s !== "" && Number.isFinite(Number(s));
+      };
+      let cmpSort;
+      if (isNumericKey(aSortVal) && isNumericKey(bSortVal)) {
+        cmpSort = Number(aSortVal) - Number(bSortVal);
+      } else {
+        cmpSort = String(aSortVal).localeCompare(String(bSortVal));
+      }
+      return dir === "asc" ? cmpSort : -cmpSort;
+    }
 
     // Try numeric
     const aNum = parseFloat(aText.replace(/[$%,+∞]/g, "").trim());
