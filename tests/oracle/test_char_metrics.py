@@ -32,7 +32,7 @@ EXPECTED_41_KEYS = {
     "weeks_operating", "avg_duration_hours", "stagnation_days",
     "max_consec_wins", "max_consec_losses",
     "avg_consec_wins", "avg_consec_losses",
-    "untimed_trades",
+    "untimed_trades", "non_finite_trades", "breakeven_trades",
     "equity_curve", "drawdown_curve", "trades",
 }
 
@@ -76,51 +76,42 @@ def test_empty_metrics_same_41_key_contract_for_ea_and_portfolio():
     assert empty_portfolio["total_trades"] == 0
 
 
-# ── §7: net_pnl==0 cuenta como LOSS ─────────────────────────────────────────
+# ── §7/A3: net_pnl==0 es BREAKEVEN (ni win ni loss) ─────────────────────────
 
-def test_net_pnl_zero_counts_as_loss_ea_level():
+def test_net_pnl_zero_is_breakeven_neither_win_nor_loss_ea_level():
+    # A3 (approved): net_pnl==0 is excluded from BOTH partitions. win_rate
+    # keeps total_trades as denominator, so a breakeven still lowers it.
     trades = [make_trade(0.0), make_trade(10.0)]
     res = m.calculate_ea_metrics("MyEA", trades, make_config())
-    assert res["losing_trades"] == 1
+    assert res["losing_trades"] == 0
     assert res["winning_trades"] == 1
+    assert res["breakeven_trades"] == 1
     assert res["win_rate"] == 50.0
 
 
-def test_net_pnl_zero_counts_as_loss_portfolio_level():
+def test_net_pnl_zero_is_breakeven_neither_win_nor_loss_portfolio_level():
     trades = [make_trade(0.0, comment="EA1"), make_trade(10.0, comment="EA1")]
     res = m.calculate_portfolio_metrics(trades, make_config(ea_name="EA1"))
-    assert res["losing_trades"] == 1
+    assert res["losing_trades"] == 0
     assert res["winning_trades"] == 1
+    assert res["breakeven_trades"] == 1
 
 
-def test_payout_ratio_zero_pnl_trade_inflation_defect_pin():
-    # DEFECT-PIN: net_pnl==0 cuenta como perdida (metrics.py:560 `p <= 0`),
-    # lo que infla artificialmente losing_trades y por lo tanto ENCOGE
-    # |avg_loss| (denominador mas grande, mismo numerador) -- inflando a su
-    # vez payout_ratio = avg_win/|avg_loss| (metrics.py:572/579-583).
-    # Pinned because it is current behavior, NOT because it is correct.
-    #
-    # trades: 1 ganador (100.0), 2 perdedores reales (-50.0, -30.0), 2
-    # trades en net_pnl==0.0 exactos.
+def test_breakeven_excluded_from_both_partitions_and_payout():
+    # A3 (approved policy change): net_pnl==0 is NEITHER a win NOR a loss, so it
+    # no longer inflates losing_trades nor shrinks |avg_loss| / payout_ratio.
+    # trades: 1 winner (100.0), 2 real losers (-50.0, -30.0), 2 breakeven (0.0).
     trades = make_trades([100.0, 0.0, -50.0, -30.0, 0.0])
     res = m.calculate_ea_metrics("MyEA", trades, make_config(capital=10000.0))
 
     assert res["winning_trades"] == 1
-    assert res["losing_trades"] == 4  # 2 perdedores reales + 2 en net_pnl==0.0
+    assert res["losing_trades"] == 2  # only the two real losers
+    assert res["breakeven_trades"] == 2
     assert res["avg_win"] == 100.0
-    # avg_loss = gross_loss / losing_trades = -80.0 / 4 = -20.0 (produccion)
-    assert res["avg_loss"] == -20.0
-    # payout_ratio reportado = avg_win / |avg_loss| = 100 / 20 = 5.0
-    assert res["payout_ratio"] == 5.0
-
-    # Textbook (particion ESTRICTA < 0, sin los dos trades en 0): avg_loss
-    # real = -80.0 / 2 = -40.0, payout_ratio real = 100 / 40 = 2.5 -- el
-    # valor reportado (5.0) es exactamente 2x el valor textbook (2.5).
-    textbook_avg_loss = -80.0 / 2
-    textbook_payout = 100.0 / abs(textbook_avg_loss)
-    assert textbook_avg_loss == -40.0
-    assert textbook_payout == 2.5
-    assert res["payout_ratio"] == pytest.approx(textbook_payout * 2, rel=1e-9)
+    # avg_loss = gross_loss / losing_trades = -80.0 / 2 = -40.0 (textbook)
+    assert res["avg_loss"] == -40.0
+    # payout_ratio = avg_win / |avg_loss| = 100 / 40 = 2.5 (textbook, no inflation)
+    assert res["payout_ratio"] == 2.5
 
 
 # ── §8: profit_factor / payout_ratio -- union type float|"∞" ───────────────
@@ -194,16 +185,12 @@ def test_max_drawdown_double_round_4dp_then_2dp():
 
 # ── §8 DEFECT-PIN: all-untimed -> curva vacia -> DD 0.0 con perdidas reales ──
 
-def test_all_untimed_trades_yield_empty_equity_curve_and_zero_dd_defect():
+def test_all_untimed_trades_yield_empty_equity_curve_and_sin_datos_dd():
     """
-    DEFECT-PIN: si TODOS los trades tienen close_time=None,
-    _build_equity_curve devuelve [] (metrics.py:114-116), y
-    _calc_max_drawdown([], capital) devuelve (0.0, 0.0, None)
-    (metrics.py:171-172). El resultado es que un EA con perdidas reales y
-    documentadas en net_profit reporta max_dd_dollar=0.0 y max_dd_pct=0.0 --
-    el peor drawdown posible queda invisible porque ningun trade tenia
-    fecha. Pinneado porque es el comportamiento actual
-    (metrics.py:114-116, 171-172; known-issues.md §7), NO porque sea correcto.
+    C1 FIX: si TODOS los trades tienen close_time=None, _build_equity_curve
+    devuelve [] y el drawdown no es estimable. En vez de un 0.0 confiado sobre
+    perdidas reales, el DD se declara SIN DATOS (None) -- el net_profit sigue
+    contabilizando la perdida, pero max_dd_dollar/max_dd_pct son None.
     """
     trades = [_raw_trade(-500.0, position_id=i) for i in range(5)]
     res = m.calculate_ea_metrics("MyEA", trades, make_config())
@@ -211,47 +198,41 @@ def test_all_untimed_trades_yield_empty_equity_curve_and_zero_dd_defect():
     assert res["untimed_trades"] == 5
     assert res["equity_curve"] == []
     assert res["drawdown_curve"] == []
-    assert res["max_dd_dollar"] == 0.0  # ...pero el DD queda en 0 pese a la perdida real
-    assert res["max_dd_pct"] == 0.0
+    assert res["max_dd_dollar"] is None  # ...y el DD se declara SIN DATOS, no 0.0
+    assert res["max_dd_pct"] is None
 
 
 # ── §8 DEFECT-PIN: capital<=0 silencia todo el DD% (no el $) ──────────────
 
-def test_capital_zero_silently_zeroes_dd_pct_but_not_dd_dollar_defect():
+def test_capital_zero_returns_sin_datos_dd_pct_but_keeps_dd_dollar():
     """
-    DEFECT-PIN: con capital<=0 y una serie SIN picos positivos de P&L
-    (peak_pnl se queda en 0.0 durante todo el recorrido), peak_abs =
-    capital + peak_pnl = capital <= 0 en cada punto -> dd_pct se fuerza a
-    0.0 en TODOS los puntos (metrics.py:158, 195), aunque max_dd_dollar SI
-    sigue reflejando la perdida real en dolares. Pinneado porque es el
-    comportamiento actual, NO porque sea correcto -- un capital mal
-    configurado (0 o negativo) hace desaparecer silenciosamente el DD% de
-    la UI sin ningun error.
+    C2 FIX: con capital<=0 el denominador porcentual (capital + peak_pnl) es
+    insignificante y el DD% dejaba de existir en silencio (0.0). Ahora se
+    declara SIN DATOS (None) para el %, mientras max_dd_dollar sigue reflejando
+    la perdida real en dolares.
     """
     trades = make_trades([-100.0, -200.0, -50.0])  # nunca hay pnl positivo
     res = m.calculate_ea_metrics("MyEA", trades, make_config(capital=0.0))
     assert res["max_dd_dollar"] == 350.0  # el dolar SI es real
-    assert res["max_dd_pct"] == 0.0       # pero el % queda silenciosamente en 0
+    assert res["max_dd_pct"] is None      # el % se declara SIN DATOS
 
     res_neg = m.calculate_ea_metrics("MyEA", trades, make_config(capital=-500.0))
     assert res_neg["max_dd_dollar"] == 350.0
-    assert res_neg["max_dd_pct"] == 0.0
+    assert res_neg["max_dd_pct"] is None
 
 
 # ── §8 DEFECT-PIN: fecha de pico malformada -> 0 dias de estancamiento ─────
 
-def test_malformed_peak_date_returns_zero_stagnation_defect():
+def test_malformed_peak_date_returns_sin_datos_stagnation():
     """
-    DEFECT-PIN: _calc_stagnation atrapa (ValueError, TypeError) alrededor de
-    date.fromisoformat() y devuelve 0 -- el MEJOR valor posible -- en vez de
-    None o de propagar el error (metrics.py:368-376). Una fecha de pico
-    corrupta se disfraza silenciosamente de "cero dias sin nuevo maximo".
-    Pinneado porque es el comportamiento actual, NO porque sea correcto.
+    C3 FIX: _calc_stagnation ya no devuelve 0 (el MEJOR valor) ante una fecha
+    de pico corrupta o ausente. Una falla de parseo -> None (SIN DATOS), no un
+    "cero dias sin nuevo maximo" que premia silenciosamente el error.
     """
-    assert m._calc_stagnation("not-a-date") == 0
-    assert m._calc_stagnation("2026-13-45") == 0  # mes/dia invalidos
-    assert m._calc_stagnation(None) == 0
-    assert m._calc_stagnation("") == 0
+    assert m._calc_stagnation("not-a-date") is None
+    assert m._calc_stagnation("2026-13-45") is None  # mes/dia invalidos
+    assert m._calc_stagnation(None) is None
+    assert m._calc_stagnation("") is None
     # contraste: una fecha valida SI calcula dias reales contra el reloj congelado
     assert m._calc_stagnation("2026-07-01") == 15
 

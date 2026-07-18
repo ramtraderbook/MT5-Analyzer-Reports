@@ -13,19 +13,27 @@ net_profit = Σ net_pnl(i)  para todos los trades i
            = gross_profit + gross_loss
 ```
 - `gross_profit` = suma de todos los `net_pnl` > 0
-- `gross_loss` = suma de todos los `net_pnl` ≤ 0 (número negativo)
+- `gross_loss` = suma de todos los `net_pnl` < 0 (número negativo)
+
+> **Breakeven (A3):** un trade con `net_pnl` **exactamente 0** NO es ni ganador ni
+> perdedor. Se excluye de `winning_trades`, `losing_trades`, `avg_win`, `avg_loss`
+> y `payout_ratio`. Se contabiliza aparte en `breakeven_trades`. Un `net_pnl` no
+> finito (NaN/inf) tampoco entra en ninguna partición: se cuenta en
+> `non_finite_trades` (A2) para que `winning + losing + breakeven + non_finite ==
+> total_trades`.
 
 ### Win Rate (tasa de aciertos)
 ```
 win_rate = (trades ganadores / total trades) × 100
 ```
 - Un trade es **ganador** si `net_pnl > 0`
+- El denominador es `total_trades` (los breakeven y no finitos siguen contando en él)
 - Expresado en porcentaje (%)
 
 ### Average Win / Average Loss
 ```
-avg_win  = gross_profit / total trades ganadores
-avg_loss = gross_loss   / total trades perdedores   (resultado negativo)
+avg_win  = gross_profit / total trades ganadores   (net_pnl > 0)
+avg_loss = gross_loss   / total trades perdedores   (net_pnl < 0, resultado negativo)
 ```
 
 ### Expectancy (expectativa por trade)
@@ -203,7 +211,10 @@ Versión simplificada sin tasa libre de riesgo. Mide cuántas desviaciones está
 ### Cálculo
 Se recorre la lista de `net_pnl` en orden cronológico:
 - Si `net_pnl > 0`: incrementa racha de wins, resetea racha de losses
-- Si `net_pnl ≤ 0`: incrementa racha de losses, resetea racha de wins
+- Si `net_pnl < 0`: incrementa racha de losses, resetea racha de wins
+- Si `net_pnl == 0` (breakeven) o no finito: **no cuenta en ninguna racha** e
+  **interrumpe** ambas (A3). Un breakeven entre dos pérdidas corta la racha de
+  pérdidas consecutivas: se excluye de ambas particiones, igual que en win/loss.
 
 ### Métricas derivadas
 ```

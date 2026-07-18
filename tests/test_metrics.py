@@ -621,3 +621,37 @@ def test_psr_more_trades_same_edge_raises_confidence():
     p_small = calculate_psr(unit * 5)["psr"]   # n = 30
     p_large = calculate_psr(unit * 40)["psr"]  # n = 240
     assert p_large > p_small
+
+
+# ── B6: _calc_rolling_metrics hardened against malformed net_pnl ─────────────
+
+
+def _rolling_trade(pnl, idx):
+    return {"net_pnl": pnl, "close_time": f"2026-01-{idx:02d}T10:00:00"}
+
+
+def test_rolling_metrics_missing_net_pnl_key_does_not_crash():
+    """B6 consistency: a trade with no `net_pnl` key must be coerced defensively
+    (NaN -> dropped as non-finite), not raise KeyError inside the window loop."""
+    trades = [{"close_time": f"2026-01-0{i}T10:00:00"} for i in range(1, 5)]
+    trades += [_rolling_trade(10.0, 5), _rolling_trade(-5.0, 6)]
+    # Must not raise; window fits within the 6 trades.
+    result = metrics._calc_rolling_metrics(trades, window=3)
+    assert isinstance(result, list)
+
+
+def test_rolling_metrics_non_numeric_net_pnl_does_not_crash():
+    """A non-numeric net_pnl becomes NaN via _safe_pnl and is excluded from the
+    partition rather than crashing round()/division."""
+    trades = [
+        _rolling_trade(10.0, 1),
+        _rolling_trade("garbage", 2),
+        _rolling_trade(-4.0, 3),
+        _rolling_trade(6.0, 4),
+    ]
+    result = metrics._calc_rolling_metrics(trades, window=2)
+    assert isinstance(result, list)
+    # Every emitted point carries finite expectancy/win_rate (no NaN leaked).
+    for pt in result:
+        assert math.isfinite(pt["expectancy"])
+        assert math.isfinite(pt["win_rate"])
