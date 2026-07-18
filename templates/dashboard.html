@@ -101,9 +101,9 @@
         <div class="kpi-card-top-bar"></div>
         <div class="kpi-label">Max Drawdown</div>
         <div class="kpi-value loss">
-            {{ "%.2f"|format(portfolio.max_dd_pct) }}%
+            {% if portfolio.max_dd_pct is not none %}{{ "%.2f"|format(portfolio.max_dd_pct) }}%{% else %}—{% endif %}
         </div>
-        <div class="kpi-sub">${{ "%.2f"|format(portfolio.max_dd_dollar) }}</div>
+        <div class="kpi-sub">{% if portfolio.max_dd_dollar is not none %}${{ "%.2f"|format(portfolio.max_dd_dollar) }}{% else %}—{% endif %}</div>
         <div class="kpi-card-shimmer"></div>
     </div>
 
@@ -209,7 +209,7 @@
     </div>
     <div class="stat-item">
         <span class="stat-label">Stagnación</span>
-        <span class="stat-val">{{ portfolio.stagnation_days }}d</span>
+        <span class="stat-val">{% if portfolio.stagnation_days is not none %}{{ portfolio.stagnation_days }}d{% else %}—{% endif %}</span>
     </div>
     <div class="sband-sep"></div>
     <div class="stat-item">
@@ -331,12 +331,12 @@
                         "%.2f"|format(ea.ret_dd) }}{% else %}N/A{% endif %}
                     </td>
                     <td class="mono th-center cell-loss">
-                        {{ "%.2f"|format(ea.max_dd_pct) }}%
+                        {% if ea.max_dd_pct is not none %}{{ "%.2f"|format(ea.max_dd_pct) }}%{% else %}—{% endif %}
                     </td>
                     <td
-                        class="mono th-center {% if ea.stagnation_days > 30 %}cell-loss{% elif ea.stagnation_days == 0 %}cell-profit{% endif %}"
+                        class="mono th-center {% if ea.stagnation_days is not none and ea.stagnation_days > 30 %}cell-loss{% elif ea.stagnation_days == 0 %}cell-profit{% endif %}"
                     >
-                        {{ ea.stagnation_days }}d
+                        {% if ea.stagnation_days is not none %}{{ ea.stagnation_days }}d{% else %}—{% endif %}
                     </td>
                     <td
                         class="mono th-center {% if ea.expectancy >= 0 %}cell-profit{% else %}cell-loss{% endif %}"
@@ -400,11 +400,11 @@
                     </td>
                     <td class="mono th-center">
                         <strong
-                            >{{ "%.2f"|format(portfolio.max_dd_pct) }}%</strong
+                            >{% if portfolio.max_dd_pct is not none %}{{ "%.2f"|format(portfolio.max_dd_pct) }}%{% else %}—{% endif %}</strong
                         >
                     </td>
                     <td class="mono th-center">
-                        <strong>{{ portfolio.stagnation_days }}d</strong>
+                        <strong>{% if portfolio.stagnation_days is not none %}{{ portfolio.stagnation_days }}d{% else %}—{% endif %}</strong>
                     </td>
                     <td class="mono th-center">
                         <strong

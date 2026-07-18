@@ -107,8 +107,8 @@
     <div class="kpi-card kpi-card--loss" style="--i: 5">
         <div class="kpi-card-top-bar"></div>
         <div class="kpi-label">Max Drawdown</div>
-        <div class="kpi-value loss">{{ "%.2f"|format(m.max_dd_pct) }}%</div>
-        <div class="kpi-sub">${{ "%.2f"|format(m.max_dd_dollar) }}</div>
+        <div class="kpi-value loss">{% if m.max_dd_pct is not none %}{{ "%.2f"|format(m.max_dd_pct) }}%{% else %}—{% endif %}</div>
+        <div class="kpi-sub">{% if m.max_dd_dollar is not none %}${{ "%.2f"|format(m.max_dd_dollar) }}{% else %}—{% endif %}</div>
         <div class="kpi-card-shimmer"></div>
     </div>
 
@@ -181,7 +181,7 @@
     </div>
     <div class="stat-item">
         <span class="stat-label">Stagnación</span>
-        <span class="stat-val">{{ m.stagnation_days }}d</span>
+        <span class="stat-val">{% if m.stagnation_days is not none %}{{ m.stagnation_days }}d{% else %}—{% endif %}</span>
     </div>
     <div class="sband-sep"></div>
     <div class="stat-item">

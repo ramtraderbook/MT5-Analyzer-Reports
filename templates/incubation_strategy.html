@@ -255,7 +255,7 @@
         <div class="kpi-card kpi-card--loss" style="--i: 4">
             <div class="kpi-card-top-bar"></div>
             <div class="kpi-label">Max DD%</div>
-            <div class="kpi-value loss">{{ "%.2f"|format(m.max_dd_pct) }}%</div>
+            <div class="kpi-value loss">{% if m.max_dd_pct is not none %}{{ "%.2f"|format(m.max_dd_pct) }}%{% else %}—{% endif %}</div>
             <div class="kpi-card-shimmer"></div>
         </div>
         <div class="kpi-card kpi-card--loss" style="--i: 5">
@@ -282,7 +282,7 @@
         <div class="kpi-card kpi-card--neutral" style="--i: 8">
             <div class="kpi-card-top-bar"></div>
             <div class="kpi-label">Stagnation</div>
-            <div class="kpi-value">{{ m.stagnation_days }}d</div>
+            <div class="kpi-value">{% if m.stagnation_days is not none %}{{ m.stagnation_days }}d{% else %}—{% endif %}</div>
             <div class="kpi-card-shimmer"></div>
         </div>
         <div class="kpi-card kpi-card--{{ 'profit' if m.ret_dd is not none and m.ret_dd >= 0 else 'loss' }}" style="--i: 9">

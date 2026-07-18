@@ -55,10 +55,10 @@
       <div class="val-preview-item"><span class="val-preview-label">Profit Factor</span><span class="val-preview-val">{{ '∞' if live_preview.profit_factor >= 1000000000 else "%.2f"|format(live_preview.profit_factor) }}</span></div>
       <div class="val-preview-item"><span class="val-preview-label">Payout Ratio</span><span class="val-preview-val">{{ '∞' if live_preview.payout_ratio >= 1000000000 else "%.2f"|format(live_preview.payout_ratio) }}</span></div>
       <div class="val-preview-item"><span class="val-preview-label">Expectancy</span><span class="val-preview-val">${{ "%.2f"|format(live_preview.expectancy) }}</span></div>
-      <div class="val-preview-item"><span class="val-preview-label">Max DD%</span><span class="val-preview-val cell-loss">{{ "%.2f"|format(live_preview.max_dd_pct) }}%</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Max DD%</span><span class="val-preview-val cell-loss">{% if live_preview.max_dd_pct is not none %}{{ "%.2f"|format(live_preview.max_dd_pct) }}%{% else %}—{% endif %}</span></div>
       <div class="val-preview-item"><span class="val-preview-label">Avg Bars*</span><span class="val-preview-val">{{ live_preview.avg_bars_live }}</span></div>
       <div class="val-preview-item"><span class="val-preview-label">Max Consec L</span><span class="val-preview-val">{{ live_preview.max_consec_losses }}</span></div>
-      <div class="val-preview-item"><span class="val-preview-label">Stagnation</span><span class="val-preview-val">{{ live_preview.stagnation_days }}d</span></div>
+      <div class="val-preview-item"><span class="val-preview-label">Stagnation</span><span class="val-preview-val">{% if live_preview.stagnation_days is not none %}{{ live_preview.stagnation_days }}d{% else %}—{% endif %}</span></div>
     </div>
     <div class="val-preview-note">* Avg Bars = Avg Duration Hours ÷ Timeframe Hours (calculado automáticamente)</div>
   </div>

@@ -48,10 +48,10 @@
         <td class="mono th-right">{% if row.profit_factor == '∞' %}∞{% else %}{{ "%.2f"|format(row.profit_factor|float) }}{% endif %}</td>
         <td class="mono th-right">{% if row.payout == '∞' %}∞{% else %}{{ "%.2f"|format(row.payout|float) }}{% endif %}</td>
         <td class="mono th-right {% if row.expectancy >= 0 %}cell-profit{% else %}cell-loss{% endif %}">{{ "%.2f"|format(row.expectancy) }}</td>
-        <td class="mono th-right">{{ "%.2f"|format(row.max_dd_pct) }}</td>
+        <td class="mono th-right">{% if row.max_dd_pct is not none %}{{ "%.2f"|format(row.max_dd_pct) }}{% else %}—{% endif %}</td>
         <td class="mono th-right">{{ "%.1f"|format(row.avg_duration) }}</td>
         <td class="mono th-right">{{ row.max_consec_losses }}</td>
-        <td class="mono th-right">{{ row.stagnation_days }}</td>
+        <td class="mono th-right">{% if row.stagnation_days is not none %}{{ row.stagnation_days }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

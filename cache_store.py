@@ -40,18 +40,42 @@ def serialize_parsed_data(data):
     return d
 
 
+def _is_safe_cache_key(cache_key):
+    """A cache key must be a single bare filename component.
+
+    Real keys are UUIDs (see save_cache). Anything carrying a path separator or
+    a parent-directory reference ("..") is rejected at the storage boundary so a
+    tampered/forged key can never make `{prefix}{cache_key}.json` escape the
+    cache directory (path-injection defense-in-depth §11).
+    """
+    if not isinstance(cache_key, str) or not cache_key:
+        return False
+    if "/" in cache_key or "\\" in cache_key or ".." in cache_key:
+        return False
+    if os.sep in cache_key or (os.altsep and os.altsep in cache_key):
+        return False
+    # Must not resolve to anything other than itself as a filename component.
+    return cache_key == os.path.basename(cache_key)
+
+
 def cache_file_path(cache_dir, cache_key, prefix):
+    if not _is_safe_cache_key(cache_key):
+        raise ValueError(f"unsafe cache key: {cache_key!r}")
     return os.path.join(cache_dir, f"{prefix}{cache_key}.json")
 
 
 def legacy_cache_file_path(app_dir, cache_key, prefix):
+    if not _is_safe_cache_key(cache_key):
+        raise ValueError(f"unsafe cache key: {cache_key!r}")
     return os.path.join(app_dir, f"{prefix}{cache_key}.json")
 
 
 def resolve_cache_path(cache_dir, app_dir, cache_key, prefix):
     """Return the canonical cache path, migrating a legacy (app-dir) file into
     the canonical cache dir on the way if that is where the data still lives."""
-    if not cache_key:
+    # An unsafe/forged key resolves to nothing rather than raising into the
+    # request handler — there is no such cached file to serve.
+    if not _is_safe_cache_key(cache_key):
         return None
 
     cache_path = cache_file_path(cache_dir, cache_key, prefix)
@@ -70,7 +94,9 @@ def resolve_cache_path(cache_dir, app_dir, cache_key, prefix):
 
 
 def delete_cache_file(cache_dir, app_dir, cache_key, prefix):
-    if not cache_key:
+    # Reject forged keys at the boundary: nothing safe to delete, and we must
+    # never let a separator/".." key steer os.remove outside the cache dir.
+    if not _is_safe_cache_key(cache_key):
         return
 
     for cache_path in {
@@ -115,6 +141,10 @@ def load_cache(cache_dir, app_dir, cache_key, prefix):
     if not cache_key:
         return None
     cache_path = resolve_cache_path(cache_dir, app_dir, cache_key, prefix)
+    # An unsafe/forged key resolves to None (see resolve_cache_path). Treat it
+    # as a clean cache miss rather than calling os.path.exists(None).
+    if cache_path is None:
+        return None
     if not os.path.exists(cache_path):
         return None
     try:
