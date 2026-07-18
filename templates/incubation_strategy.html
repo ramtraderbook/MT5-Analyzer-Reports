@@ -39,6 +39,16 @@
             {% endif %}
         </div>
 
+        {% if current_verdict_card.trades_to_call %}
+        {# 3B: el win rate va por debajo del backtest pero aún no es concluyente #}
+        <div
+            class="inc-vcard-tocall"
+            title="Al ritmo de win rate actual (por debajo del backtest), el gate binomial recién sería concluyente con más muestra. Es una estimación si el ritmo se mantiene, no una promesa."
+        >
+            ⏳ Faltan ~{{ current_verdict_card.trades_to_call }} trades para una lectura firme del win rate
+        </div>
+        {% endif %}
+
         {# Trade progress bar toward next checkpoint #}
         {% set trade_count = m.total_trades %}
         {% if current_verdict_card.checkpoint == 'PRE_CP1' %}

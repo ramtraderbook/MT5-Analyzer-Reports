@@ -268,6 +268,54 @@ def _binomial_p_value(wins, n, p):
     )
 
 
+def trades_to_winrate_significance(wins, n, bt_wr_pct, alpha=0.03, max_extra=500):
+    """How many MORE trades until the win-rate binomial gate would fire,
+    assuming the current observed win rate continues.
+
+    The gate is the one-sided lower test used in `_hard_gates`: it eliminates
+    when the left-tail p-value P(X <= wins | n, bt_wr) drops below `alpha`,
+    i.e. when the live win rate is significantly below the backtest rate. This
+    projects the CURRENT observed rate forward (future trades win at the same
+    observed proportion) and returns the smallest additional-trade count at
+    which that p-value first crosses `alpha`.
+
+    It never changes a verdict; it is a "wait vs act now" signal for the trader.
+
+    Returns:
+      0        -- already significant at the current sample (the gate fires now)
+      int > 0  -- additional trades needed if the current rate holds
+      None     -- not applicable: no trades yet, a non-positive backtest rate,
+                  an observed rate at or above backtest (a lower-tail kill can
+                  never become significant, so no kill is pending), or a
+                  crossing that is farther out than `max_extra` (not near).
+    """
+    n = int(n)
+    wins = int(wins)
+    if n <= 0 or bt_wr_pct is None:
+        return None
+
+    p0 = bt_wr_pct / 100.0
+    if p0 <= 0.0:
+        return None
+
+    p_hat = wins / n
+    # At or above the backtest rate there is no underperformance to detect, so
+    # the lower-tail test can never reach significance -- no kill is pending.
+    if p_hat >= p0:
+        return None
+
+    if _binomial_p_value(wins, n, p0) < alpha:
+        return 0
+
+    for extra in range(1, max_extra + 1):
+        n_proj = n + extra
+        wins_proj = round(p_hat * n_proj)
+        if _binomial_p_value(wins_proj, n_proj, p0) < alpha:
+            return extra
+
+    return None
+
+
 _BT_PERIOD_RE = re.compile(
     r"(\d{4})[./-](\d{2})[./-](\d{2})\s*-\s*(\d{4})[./-](\d{2})[./-](\d{2})"
 )

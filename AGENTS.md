@@ -217,6 +217,12 @@ python -m pytest                # tests (si existen)
 - Max Consec Losses > MC95 → ELIMINAR
 - Frecuencia fuera de rango → WARNING (no elimina)
 
+**Señal "esperar vs actuar" (3B):** `trades_to_winrate_significance()` proyecta el
+win rate observado hacia adelante y estima cuántos trades MÁS faltan para que el
+gate binomial recién sea concluyente. Se muestra en la verdict card
+(`trades_to_call`) solo como aviso positivo cuando la EA va por debajo del backtest
+pero aún no llegó a un kill firme. No cambia ningún veredicto.
+
 **Scoring CP3 (pesos):**
 - DESVIACIÓN vs BT/MC: 45% (WR, PF, Expectancy, Avg Trade, Payout, Ret/DD)
 - RIESGO OBSERVADO: 30% (Max DD%, Max Consec Losses, Stagnation)

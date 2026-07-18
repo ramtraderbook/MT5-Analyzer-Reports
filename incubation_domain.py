@@ -15,7 +15,11 @@ ea_analyzer.py, which calls into this module with the data it needs.
 from collections import defaultdict
 from datetime import date, datetime
 
-from incubation_validator import _safe_float, get_worst_case_mc
+from incubation_validator import (
+    _safe_float,
+    get_worst_case_mc,
+    trades_to_winrate_significance,
+)
 from trade_matching import trade_matches_ea
 
 INCUBATION_BACKTEST_FIELDS = [
@@ -870,6 +874,20 @@ def build_verdict_card(evaluation):
             )["score_band"] == "below_mc95":
                 failing_metrics.append(key)
 
+    # 3B ("wait vs act now"): if the EA is underperforming its backtest win
+    # rate but has not yet reached a firm kill, how many more trades until the
+    # binomial gate would fire at the current observed rate. Shown only as a
+    # positive advisory -- None when not underperforming, already firing (the
+    # verdict itself covers that), or on an already-ELIMINAR/SIN DATOS card.
+    trades_to_call = None
+    if verdict not in ("ELIMINAR", "SIN DATOS"):
+        wrb = (details.get("gates") or {}).get("win_rate_binomial")
+        if isinstance(wrb, dict):
+            n_more = trades_to_winrate_significance(
+                wrb.get("wins"), wrb.get("n"), wrb.get("bt_wr")
+            )
+            trades_to_call = n_more if (n_more and n_more > 0) else None
+
     verdict_reading = _incubation_verdict_reading(evaluation, hard_gates, failing_metrics)
 
     if verdict == "ELIMINAR":
@@ -938,6 +956,7 @@ def build_verdict_card(evaluation):
             for cat, val in (details.get("category_scores") or {}).items()
         },
         "freq_deadline_info": freq_deadline_info,
+        "trades_to_call": trades_to_call,
     }
 
 
