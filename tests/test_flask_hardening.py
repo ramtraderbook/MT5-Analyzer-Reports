@@ -363,6 +363,56 @@ def test_mapping_save_rejects_non_finite_capital(monkeypatch):
     assert saved_capital == 5000.0
 
 
+def test_incubation_strategy_get_does_not_write_store(monkeypatch):
+    """
+    §11 (WSGI hardening): GET /incubation/strategy/<ea> must NOT mutate
+    persistent state. It used to do `store[ea] = bundle["entry"];
+    save_incubation_store(store)` on a plain GET (an unlocked full-store
+    read-modify-write re-triggerable by any prefetch/reload). The evaluation is
+    now computed and rendered in-memory only; save_incubation_store must never
+    be called on the GET.
+    """
+    import ea_analyzer
+
+    save_calls = []
+    bundle = {
+        "reference_ready": True,  # the exact condition that used to trigger the write
+        "metrics": {
+            "trades": [], "total_trades": 10, "instrument": "EURUSD",
+            "label": "IncEA", "equity_curve": [], "drawdown_curve": [],
+        },
+        "config": {"mappings": {"IncEA": {}}},
+        "entry": {"timeframe": "H1"},
+        "evaluation": {"current_checkpoint": "CP1", "score": 60.0},
+        "trades": [],
+    }
+
+    monkeypatch.setattr(ea_analyzer, "get_incubation_parsed_data", lambda: {"closed_trades": []})
+    monkeypatch.setattr(ea_analyzer, "load_incubation_config", lambda: {"mappings": {"IncEA": {}}})
+    monkeypatch.setattr(ea_analyzer, "load_incubation_store", lambda: {"IncEA": {}})
+    monkeypatch.setattr(ea_analyzer, "save_incubation_store", lambda data: save_calls.append(data))
+    monkeypatch.setattr(ea_analyzer, "evaluate_ea", lambda *a, **k: bundle)
+    # Bypass the (unrelated) rendering pipeline so the test targets persistence.
+    monkeypatch.setattr(ea_analyzer, "days_since_first_trade", lambda *a, **k: 5)
+    monkeypatch.setattr(ea_analyzer, "checkpoint_for_trades", lambda *a, **k: ("cp1", "CP1", "cp"))
+    monkeypatch.setattr(ea_analyzer, "reference_ready", lambda *a, **k: True)
+    monkeypatch.setattr(ea_analyzer, "build_comparison_rows", lambda *a, **k: [])
+    monkeypatch.setattr(ea_analyzer, "build_verdict_card", lambda *a, **k: {})
+    monkeypatch.setattr(ea_analyzer, "build_timeline_from_entry", lambda *a, **k: [])
+    monkeypatch.setattr(ea_analyzer, "build_monthly_performance", lambda *a, **k: [])
+    monkeypatch.setattr(ea_analyzer, "build_distribution_payload", lambda *a, **k: {})
+    monkeypatch.setattr(ea_analyzer, "render_template", lambda *a, **k: "ok")
+
+    client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["analysis_mode"] = "incubation"
+
+    response = client.get("/incubation/strategy/IncEA")
+
+    assert response.status_code == 200
+    assert save_calls == []  # the GET persisted nothing
+
+
 def test_api_equity_curves_rejects_absurd_days_param(monkeypatch):
     """
     O1 regression (orchestrator-proven): request.args.get("days", type=int)
@@ -419,6 +469,77 @@ def test_csrf_rejects_non_ascii_token_with_400_not_500():
 
     assert client.post("/reset", data={"csrf_token": "ñoño"}).status_code == 400
     assert client.post("/reset", data={"csrf_token": "wrong"}).status_code == 400
+
+
+# ── SIN DATOS: None metric fields must not crash render/export routes ────────
+
+
+def _all_untimed_parsed_data():
+    """An EA whose trades are ALL untimed (close_time None). The equity curve
+    is empty, so max_dd_dollar / max_dd_pct and stagnation_days come back None
+    (SIN DATOS) -- the exact shape that used to crash the raw-metric templates
+    with round(None) / format(None) / None-comparison errors."""
+    trades = [
+        {
+            "position_id": i,
+            "comment": "UntimedEA",
+            "symbol": "EURUSD",
+            "direction": "buy" if i % 2 else "sell",
+            "net_pnl": 10.0 if i % 2 else -5.0,
+            "duration_hours": 1.0,
+            "open_time": None,
+            "close_time": None,
+            "volume": 0.1,
+        }
+        for i in range(1, 8)
+    ]
+    return {
+        "closed_trades": trades,
+        "ea_names": ["UntimedEA"],
+        "open_positions": [],
+        "total_closed": len(trades),
+        "unknown_trades": 0,
+        "account": {},
+    }
+
+
+def test_render_and_export_routes_survive_none_metric_fields(monkeypatch):
+    """
+    BLOCKER regression: the SIN DATOS hardening let max_dd_pct / max_dd_dollar
+    / stagnation_days be None, but the dashboard, strategy and export surfaces
+    still fed those raw values into round()/format()/comparisons and 500'd.
+    They must now render a dash and return 200.
+    """
+    import ea_analyzer
+
+    ea_analyzer._metrics_cache.clear()
+
+    parsed_data = _all_untimed_parsed_data()
+    monkeypatch.setattr(ea_analyzer, "get_parsed_data", lambda: parsed_data)
+    monkeypatch.setattr(
+        ea_analyzer,
+        "load_config",
+        lambda: {"mappings": {"UntimedEA": {"active": True, "capital": 5000.0}}},
+    )
+
+    # Sanity: the metric fields really are None on this fixture.
+    with ea_analyzer.app.test_request_context():
+        metrics = ea_analyzer._get_metrics_cached(
+            parsed_data,
+            {"mappings": {"UntimedEA": {"active": True, "capital": 5000.0}}},
+        )
+    m = metrics["by_ea"]["UntimedEA"]
+    assert m["max_dd_pct"] is None
+    assert m["stagnation_days"] is None
+
+    client = ea_analyzer.app.test_client()
+    with client.session_transaction() as sess:
+        sess["analysis_mode"] = "live"
+        sess["cache_key"] = "untimed-key"
+
+    assert client.get("/dashboard").status_code == 200
+    assert client.get("/strategy/UntimedEA").status_code == 200
+    assert client.get("/export").status_code == 200
 
 
 # ── 1A: importing ea_analyzer must have no filesystem side effects ───────────

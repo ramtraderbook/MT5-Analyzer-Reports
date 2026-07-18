@@ -49,6 +49,13 @@ CONFIG = {
     "min_weeks": 8,
 }
 
+# §5: below half a month, the "worst DD in one month" reference and the monthly
+# trade-frequency reference are meaningless — a backtest spanning less than this
+# cannot ground a per-month rate, so scaling a DD limit off it (or a frequency
+# ratio) produces a confident-but-fictional number. Below this floor the
+# reference is declared degenerate (SIN DATOS) instead of scaled.
+BT_MONTHS_SANITY_FLOOR = 0.5
+
 
 def _pts(estado: str) -> int:
     if estado == "OK":
@@ -170,8 +177,14 @@ def calculate_validator_score(
     Returns dict completo con todos los cálculos intermedios y resultado final.
     """
     # ── Extraer live data ──────────────────────────────────────────────────
-    trades_live = float(live.get("total_trades") or 0)
-    weeks_live = float(live.get("weeks_operating") or 0)
+    # B1/B2: total_trades is a COUNT — coerce to a FINITE float or None. Unlike
+    # _safe_float (which maps ±inf to ±1e9 so an ∞ payout still scores), an
+    # infinite/NaN/non-numeric trade count is meaningless and becomes None ->
+    # SIN DATOS (guarded below), so int(trades_live) never sees a non-finite.
+    trades_live = _finite_or_none(live.get("total_trades"))
+    weeks_live = _safe_float(live.get("weeks_operating"))
+    if weeks_live is None:
+        weeks_live = 0.0
     wr_live = _safe_float(live.get("win_rate"))
     pf_live = _safe_float(live.get("profit_factor"))
     payout_live = _safe_float(live.get("payout_ratio"))
@@ -205,7 +218,9 @@ def calculate_validator_score(
     result = {}
 
     # ── Significancia ──────────────────────────────────────────────────────
-    tl = int(trades_live)
+    # trades_live is None only for a missing/non-finite count; tl=0 is a safe
+    # placeholder because the guard right after _nd_result returns SIN DATOS.
+    tl = int(trades_live) if trades_live is not None else 0
     if tl >= 100:
         signif = "Alta"
     elif tl >= 50:
@@ -233,6 +248,14 @@ def calculate_validator_score(
         result["score"] = None
         result["desv_flag"] = "-"
         result["missing"] = missing or []
+        # C5/§6: HARD-set every derived numeric to None (not setdefault). When
+        # the second completeness gate reaches SIN DATOS after some metrics were
+        # already computed, setdefault would leave confident numbers (wr_delta,
+        # payout_var, bars_var, edge_erosion, freq_pct, the raw live/bt echoes,
+        # dd_limit...) sitting next to "N/D" estados — the exact silent,
+        # self-contradicting number the SIN DATOS contract exists to prevent
+        # (docs/design/decision-engine-no-data-contract.md). Blank them all,
+        # exactly like dd_limit used to be blanked on its own.
         for key in (
             "wr_delta", "wr_live", "wr_bt", "wr_estado",
             "pf_live", "pf_bt", "pf_estado",
@@ -246,7 +269,7 @@ def calculate_validator_score(
             "s_riesgo", "s_edge", "s_caracter", "s_desv", "detcount",
             "live_vs_bt_profit_ratio", "live_vs_bt_profit_status",
         ):
-            result.setdefault(key, None)
+            result[key] = None
         for key in (
             "wr_estado", "pf_estado", "payout_estado", "dd_estado",
             "consec_estado", "bars_estado", "freq_estado", "edge_estado",
@@ -254,13 +277,16 @@ def calculate_validator_score(
         ):
             result[key] = "N/D"
         result["live_vs_bt_profit_status"] = "N/D"
-        # dd_limit is numeric, so it cannot join the "N/D" blanking above, but
-        # leaving it set would display a confident threshold next to an N/D
-        # dd_method and an N/D dd_estado -- the exact silent, self-contradicting
-        # number the SIN DATOS contract exists to prevent
-        # (docs/design/decision-engine-no-data-contract.md).
-        result["dd_limit"] = None
         return result
+
+    if trades_live is None:
+        # B1/B2: a missing/non-numeric/non-finite live trade count cannot ground
+        # any verdict — declare it SIN DATOS naming the field.
+        return _nd_result(
+            "SIN DATOS",
+            "Falta el conteo de trades live (live.total_trades ausente o no finito).",
+            missing=["live.total_trades"],
+        )
 
     if tl < min_trades:
         if weeks_live < max_wait_weeks:
@@ -425,14 +451,33 @@ def calculate_validator_score(
             # meaning and the scaling factor is still 1.0 at the reference
             # trading pace (docs/metrics-formulas.md §13).
             bt_freq_mes = bt_trades / bt_months
-            dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / bt_freq_mes)
-            dd_limit_used = round(dd_limit, 2)
-            dd_method = f"sqrt({trades_live:.0f}tr/{bt_freq_mes:.1f}tr-mes) x {bt_worst_dd_1m}%"
-            dd_estado = (
-                "OK"
-                if max_dd_live <= dd_limit
-                else ("ALERTA" if max_dd_live <= dd_limit * 1.5 else "FUERA")
-            )
+            # §5 + B3 site1: the operand guards (bt_months > 0, bt_trades > 0)
+            # do NOT guarantee a usable reference. A backtest below the sanity
+            # floor cannot ground a monthly rate, and a normal-but-extreme
+            # operand pair can make bt_freq_mes (or the scaled dd_limit)
+            # underflow to exactly 0.0 / overflow to inf even though both
+            # operands passed `> 0`. Any of these is a degenerate reference ->
+            # dd_estado N/D, which the completeness gate turns into SIN DATOS
+            # naming the cause, instead of a confident-but-fictional dd_limit.
+            if bt_months < BT_MONTHS_SANITY_FLOOR:
+                dd_estado = "N/D"
+            elif not math.isfinite(bt_freq_mes) or bt_freq_mes <= 0:
+                dd_estado = "N/D"
+            else:
+                dd_limit = bt_worst_dd_1m * math.sqrt(trades_live / bt_freq_mes)
+                if not math.isfinite(dd_limit) or dd_limit <= 0:
+                    dd_estado = "N/D"
+                else:
+                    dd_limit_used = round(dd_limit, 2)
+                    dd_method = (
+                        f"sqrt({trades_live:.0f}tr/{bt_freq_mes:.1f}tr-mes) "
+                        f"x {bt_worst_dd_1m}%"
+                    )
+                    dd_estado = (
+                        "OK"
+                        if max_dd_live <= dd_limit
+                        else ("ALERTA" if max_dd_live <= dd_limit * 1.5 else "FUERA")
+                    )
         elif mc_r_dd is not None and mc_t_dd is not None:
             # Use the more conservative (higher) of the two MC 95% DD values as the
             # ALERTA boundary so the zone is always reachable regardless of which
@@ -503,10 +548,31 @@ def calculate_validator_score(
     result["bars_estado"] = bars_estado
 
     # ── Frecuencia Trades ──────────────────────────────────────────────────
-    if bt_trades and bt_months and bt_months > 0 and weeks_live > 0:
+    freq_pct = None
+    freq_estado = "N/D"
+    if (
+        bt_trades
+        and bt_months
+        and bt_months >= BT_MONTHS_SANITY_FLOOR
+        and weeks_live > 0
+    ):
         bt_freq_per_month = bt_trades / bt_months
-        live_freq_per_month = trades_live / (weeks_live / 4.33)
-        freq_pct = (live_freq_per_month / bt_freq_per_month) * 100
+        live_months = weeks_live / 4.33
+        # B3 site2: the operand guards (> 0) do NOT guarantee usable quotients.
+        # bt_trades/bt_months can underflow to 0.0, and weeks_live/4.33 can
+        # underflow to 0.0 for a subnormal weeks_live even though weeks_live > 0.
+        # Either would divide by zero below — treat a degenerate reference as
+        # N/D (-> SIN DATOS at the gate) instead of crashing.
+        if (
+            math.isfinite(bt_freq_per_month)
+            and bt_freq_per_month > 0
+            and math.isfinite(live_months)
+            and live_months > 0
+        ):
+            live_freq_per_month = trades_live / live_months
+            freq_pct = (live_freq_per_month / bt_freq_per_month) * 100
+
+    if freq_pct is not None:
         # Two-sided, like wr_estado and bars_estado: trading far ABOVE backtest
         # pace is a deviation too. A one-sided check read 413% of BT pace as
         # "OK", so an EA whose character changed (grid/martingale degradation,
@@ -519,9 +585,6 @@ def calculate_validator_score(
         freq_estado = (
             "OK" if freq_dev <= 30 else ("ALERTA" if freq_dev <= 50 else "FUERA")
         )
-    else:
-        freq_pct = None
-        freq_estado = "N/D"
     result["freq_pct"] = round(freq_pct, 1) if freq_pct is not None else None
     result["freq_estado"] = freq_estado
 
@@ -607,15 +670,31 @@ def calculate_validator_score(
                 _add_cause("bt.worst_dd_1m")
             if not bt_trades or bt_trades <= 0:
                 _add_cause("bt.trades_total")
-            if not bt_months or bt_months <= 0:
+            # §5: below the sanity floor (incl. None/0/negative) bt.months is
+            # a degenerate monthly reference.
+            if bt_months is None or bt_months < BT_MONTHS_SANITY_FLOOR:
                 _add_cause("bt.months")
             if trades_live <= 0:
                 _add_cause("live.total_trades")
+            # B3 site1: operands all look present and positive but the derived
+            # rate / scaled DD underflowed or overflowed -> name the reference.
+            if not causes:
+                _add_cause("bt.trades_total")
+                _add_cause("bt.months")
         if "freq_estado" in nd_estados:
             if weeks_live <= 0:
                 _add_cause("live.weeks_operating")
             if not bt_trades:
                 _add_cause("bt.trades_total")
+            if bt_months is None or bt_months < BT_MONTHS_SANITY_FLOOR:
+                _add_cause("bt.months")
+            # B3 site2: operands all look present and positive but the derived
+            # monthly frequency / live_months underflowed (subnormal weeks) ->
+            # name the references so the reason never ships an empty causes list.
+            if not causes:
+                _add_cause("bt.trades_total")
+                _add_cause("bt.months")
+                _add_cause("live.weeks_operating")
         if "payout_estado" in nd_estados and bt_payout == 0:
             _add_cause("bt.payout_ratio")
         if "bars_estado" in nd_estados and bt_avg_bars == 0:
@@ -762,14 +841,17 @@ def calculate_validator_score(
             expect_live * trades_live / live_months if live_months > 0 else 0
         )
         if bt_profit_per_month != 0:
-            live_vs_bt_profit_ratio = round(
-                (live_profit_per_month / bt_profit_per_month) * 100, 1
-            )
-            if live_vs_bt_profit_ratio > 120:
+            raw_ratio = (live_profit_per_month / bt_profit_per_month) * 100
+            live_vs_bt_profit_ratio = round(raw_ratio, 1)
+            # C7 (display-only, no scored estado): band on the UNROUNDED ratio so
+            # a value just over a boundary (e.g. raw 120.05, which rounds to
+            # 120.0) is not silently reclassified from ALERTA to OK. The
+            # published number stays 1dp, consistent with prior fix 4A.
+            if raw_ratio > 120:
                 live_vs_bt_profit_status = "ALERTA"  # mejor que BT, posible sobreajuste del BT
-            elif live_vs_bt_profit_ratio >= 70:
+            elif raw_ratio >= 70:
                 live_vs_bt_profit_status = "OK"
-            elif live_vs_bt_profit_ratio >= 30:
+            elif raw_ratio >= 30:
                 live_vs_bt_profit_status = "ALERTA"
             else:
                 live_vs_bt_profit_status = "FUERA"
@@ -781,6 +863,21 @@ def calculate_validator_score(
     result["missing"] = []
 
     return result
+
+
+def _finite_or_none(value):
+    """Coerce a count to a FINITE float, or None for missing/non-numeric/
+    non-finite input.
+
+    Unlike _safe_float, this does NOT map ±inf to ±1e9: a trade COUNT cannot be
+    infinite the way an ∞ profit_factor can, so NaN/±inf/non-numeric all become
+    None (SIN DATOS) rather than a bogus large finite number (B1/B2).
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _safe_float(val):

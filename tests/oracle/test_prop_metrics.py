@@ -94,7 +94,15 @@ def test_metrics_ranges(trades, capital, frozen_clock):
         v = result[key]
         assert v == "∞" or (isinstance(v, (int, float)) and not math.isnan(v) and v >= 0.0)
 
-    assert result["winning_trades"] + result["losing_trades"] == result["total_trades"]
+    # A2/A3: breakeven and non-finite trades are excluded from both partitions
+    # but surfaced as counts, so the four buckets reconcile with the total.
+    assert (
+        result["winning_trades"]
+        + result["losing_trades"]
+        + result["breakeven_trades"]
+        + result["non_finite_trades"]
+        == result["total_trades"]
+    )
     assert 0 <= result["winning_trades"] <= result["total_trades"]
 
 
@@ -152,17 +160,15 @@ def trade_missing_one_required_key(draw):
 
 @given(data=trade_missing_one_required_key())
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: un trade sin 'direction', 'symbol', 'net_pnl' o 'close_time' "
-    "-> KeyError no capturado dentro de calculate_ea_metrics (t[...] en vez de "
-    "t.get(...): metrics.py:550 net_pnl, :556 close_time, :590-591 direction, "
-    ":629 symbol). Repro mínimo: calculate_ea_metrics("
-    "'EA', [{'net_pnl': 1.0, 'close_time': datetime(2026,1,1), 'symbol': "
-    "'EURUSD'}], {}) (falta 'direction') -> KeyError('direction')."
-))
-def test_missing_required_trade_key_crashes(data, frozen_clock):
+def test_missing_required_trade_key_does_not_crash(data, frozen_clock):
+    """B6 FIX: un trade sin 'direction', 'symbol', 'net_pnl' o 'close_time' ya
+    NO crashea -- calculate_ea_metrics usa t.get(...) y coacciona net_pnl/
+    close_time defensivamente. Devuelve un dict estructurado en vez de un
+    KeyError/TypeError."""
     trade, _missing_key = data
-    metrics.calculate_ea_metrics("EA", [trade], make_config())
+    result = metrics.calculate_ea_metrics("EA", [trade], make_config())
+    assert isinstance(result, dict)
+    assert result["total_trades"] == 1
 
 
 # ── 5. SIN EXCEPCIONES NO MANEJADAS: close_time malformado ───────────────────
@@ -180,33 +186,37 @@ bad_iso_text = st.text(min_size=1, max_size=20).filter(lambda s: not _is_valid_i
 
 @given(bad=bad_iso_text)
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: close_time='<cadena no ISO>' -> ValueError no capturado vía "
-    "datetime.fromisoformat (metrics.py:545 en sort_key, también :111/:132/:517/:700). "
-    "Repro mínimo: calculate_ea_metrics('EA', "
-    "[{'net_pnl': 1.0, 'close_time': 'not-a-date', 'direction': 'buy', "
-    "'symbol': 'EURUSD'}], {}) -> ValueError: Invalid isoformat string."
-))
-def test_malformed_close_time_string_crashes(bad, frozen_clock):
+def test_malformed_close_time_string_does_not_crash(bad, frozen_clock):
+    """B6 FIX: un close_time no-ISO ya NO crashea -- _safe_parse_dt lo trata
+    como fecha ausente (None -> untimed), en vez de propagar el ValueError de
+    datetime.fromisoformat. El trade cuenta como untimed."""
     trade = _raw_trade(1.0, close_time=bad)
-    metrics.calculate_ea_metrics("EA", [trade], make_config())
+    result = metrics.calculate_ea_metrics("EA", [trade], make_config())
+    assert isinstance(result, dict)
+    assert result["untimed_trades"] == 1
 
 
 # ── 6. SIN EXCEPCIONES NO MANEJADAS: net_pnl no numérico ─────────────────────
 
 @given(bad=st.one_of(st.text(min_size=1, max_size=10), st.none()))
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: net_pnl=<string o None> -> TypeError no capturado. "
-    "metrics.py:559-560 compara `p > 0` / `p <= 0` directamente sobre "
-    "net_pnl_list sin convertir a float -- comparar str/None con int lanza "
-    "TypeError. Repro mínimo: calculate_ea_metrics('EA', [{'net_pnl': 'abc', "
-    "'close_time': datetime(2026,1,1), 'direction': 'buy', 'symbol': 'EURUSD'}], "
-    "{}) -> TypeError: '>' not supported between instances of 'str' and 'int'."
-))
-def test_non_numeric_net_pnl_crashes(bad, frozen_clock):
+def test_non_numeric_net_pnl_does_not_crash(bad, frozen_clock):
+    """B6 FIX: un net_pnl no numérico (str/None) ya NO crashea -- _safe_pnl lo
+    coacciona a NaN, que se detecta como no finito (A2) y se cuenta en
+    non_finite_trades en vez de lanzar TypeError en la partición."""
     trade = _raw_trade(bad)
-    metrics.calculate_ea_metrics("EA", [trade], make_config())
+    result = metrics.calculate_ea_metrics("EA", [trade], make_config())
+    assert isinstance(result, dict)
+    assert result["total_trades"] == 1
+    # The single trade lands in exactly one bucket (a numeric-looking string like
+    # '0' parses to a finite breakeven; a truly non-numeric one is non_finite).
+    assert (
+        result["winning_trades"]
+        + result["losing_trades"]
+        + result["breakeven_trades"]
+        + result["non_finite_trades"]
+        == 1
+    )
 
 
 # ── 7. CONSISTENCIA win/loss vs total_trades bajo net_pnl=NaN ────────────────
@@ -222,19 +232,19 @@ def trades_with_one_nan_pnl(draw):
 
 @given(trades=trades_with_one_nan_pnl())
 @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: un trade con net_pnl=float('nan') NO crashea, pero "
-    "desaparece silenciosamente de AMBAS particiones win/loss (metrics.py:559-560 "
-    "`p > 0` / `p <= 0` son ambas False para NaN), así que "
-    "winning_trades + losing_trades < total_trades, y su P&L se esfuma de "
-    "net_profit sin ningún error ni señal de SIN DATOS. Repro mínimo: "
-    "calculate_ea_metrics('EA', [{'net_pnl': float('nan'), ...}, "
-    "{'net_pnl': 100.0, ...}], {}) -> total_trades=2, winning_trades=1, "
-    "losing_trades=0 (1+0 != 2)."
-))
-def test_winning_plus_losing_equals_total_trades_under_nan_pnl(trades, frozen_clock):
+def test_partition_reconciles_with_total_under_nan_pnl(trades, frozen_clock):
+    """A2 FIX: un net_pnl=NaN ya no se esfuma en silencio de las particiones.
+    Se cuenta en non_finite_trades y la reconciliación se mantiene:
+    winning + losing + breakeven + non_finite == total_trades."""
     result = metrics.calculate_ea_metrics("MyEA", trades, make_config())
-    assert result["winning_trades"] + result["losing_trades"] == result["total_trades"]
+    assert result["non_finite_trades"] >= 1
+    assert (
+        result["winning_trades"]
+        + result["losing_trades"]
+        + result["breakeven_trades"]
+        + result["non_finite_trades"]
+        == result["total_trades"]
+    )
 
 
 # ── 8. BOOTSTRAP — metrics.calculate_bootstrap_risk ──────────────────────────

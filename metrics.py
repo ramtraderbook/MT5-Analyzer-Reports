@@ -98,6 +98,35 @@ def _sqn_label(sqn_val):
     return "Pobre"
 
 
+def _safe_pnl(value):
+    """Coerce a trade's net_pnl to a float without crashing on malformed input.
+
+    A non-numeric value (str, None, object) returns NaN rather than raising, so
+    the caller can count it as a non-finite trade (see calculate_ea_metrics'
+    non_finite_trades handling) instead of a KeyError/TypeError propagating out.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _safe_parse_dt(close_time):
+    """Parse a trade close_time into a datetime, or None if absent/unparseable.
+
+    Mirrors the parser contract (unparseable date -> None -> untimed trade).
+    Never raises: a malformed ISO string returns None instead of ValueError.
+    """
+    if close_time is None:
+        return None
+    if isinstance(close_time, str):
+        try:
+            return datetime.fromisoformat(close_time)
+        except ValueError:
+            return None
+    return close_time
+
+
 def _build_equity_curve(trades_sorted):
     """
     Build equity curve showing NET P&L from 0 (not absolute equity).
@@ -109,12 +138,11 @@ def _build_equity_curve(trades_sorted):
         return []
 
     # Find the first trade with a valid close_time for the initial anchor point
-    # Trades with None close_time are sorted to the end — skip them for the anchor
+    # Trades with None/unparseable close_time are sorted to the end — skip them.
     first_dt = None
     for t in trades_sorted:
-        ct = t["close_time"]
-        if ct is not None:
-            first_dt = datetime.fromisoformat(ct) if isinstance(ct, str) else ct
+        first_dt = _safe_parse_dt(t.get("close_time"))
+        if first_dt is not None:
             break
 
     if first_dt is None:
@@ -127,17 +155,15 @@ def _build_equity_curve(trades_sorted):
     curve = [{"date": initial_date, "equity": 0.0}]
 
     for trade in trades_sorted:
-        close_dt = trade["close_time"]
+        close_dt = _safe_parse_dt(trade.get("close_time"))
         if close_dt is None:
             # Trades without close_time are excluded from the equity curve entirely.
             # Including their P&L silently would cause the curve to misrepresent
             # drawdown peaks — the curve would show a lower peak than what actually
             # occurred, making max DD appear artificially small.
             continue
-        if isinstance(close_dt, str):
-            close_dt = datetime.fromisoformat(close_dt)
         date_str = close_dt.date().isoformat()
-        pnl += trade["net_pnl"]
+        pnl += _safe_pnl(trade.get("net_pnl"))
         curve.append({"date": date_str, "equity": round(pnl, 2)})
 
     return curve
@@ -177,6 +203,12 @@ def _calc_max_drawdown(equity_curve, capital):
     if not equity_curve:
         return 0.0, 0.0, None
 
+    # C2: a non-positive capital makes the percentage denominator
+    # (capital + peak_pnl) meaningless while peak_pnl stays at 0 — the DD% would
+    # silently collapse to 0.0 over real losses. Declare it SIN DATOS (None)
+    # rather than emit a confident 0.0; the dollar drawdown stays real.
+    capital_valid = capital is not None and capital > 0
+
     peak_pnl = 0.0  # track P&L peak (starts at 0)
     max_dd_dollar = 0.0
     max_dd_pct = 0.0
@@ -197,12 +229,17 @@ def _calc_max_drawdown(equity_curve, capital):
         # since the peak_abs denominator changes between points and the worst
         # percentage drawdown can occur at a different point than the worst
         # dollar drawdown.
-        peak_abs = capital + peak_pnl
-        dd_pct = (dd_dollar / peak_abs * 100) if peak_abs > 0 else 0.0
-        if dd_pct > max_dd_pct:
-            max_dd_pct = dd_pct
+        if capital_valid:
+            peak_abs = capital + peak_pnl  # > 0 by construction when capital > 0
+            dd_pct = dd_dollar / peak_abs * 100
+            if dd_pct > max_dd_pct:
+                max_dd_pct = dd_pct
 
-    return round(max_dd_dollar, 2), round(max_dd_pct, 4), last_peak_date
+    return (
+        round(max_dd_dollar, 2),
+        round(max_dd_pct, 4) if capital_valid else None,
+        last_peak_date,
+    )
 
 
 def calculate_bootstrap_risk(
@@ -372,14 +409,19 @@ def calculate_bootstrap_risk(
 
 
 def _calc_stagnation(last_peak_date_str):
-    """Days from last equity peak to today. Evaluated at call time, not module load."""
+    """Days from last equity peak to today. Evaluated at call time, not module load.
+
+    Returns None (SIN DATOS) when there is no peak date or it cannot be parsed:
+    C3 — a corrupt/absent peak date must not masquerade as 0 days of stagnation
+    (the best possible value), which would silently reward a parse failure.
+    """
     if not last_peak_date_str:
-        return 0
+        return None
     try:
         last_peak = date.fromisoformat(last_peak_date_str)
-        return max(0, (date.today() - last_peak).days)
     except (ValueError, TypeError):
-        return 0
+        return None
+    return max(0, (date.today() - last_peak).days)
 
 
 def _calc_sharpe(net_pnl_list):
@@ -588,7 +630,17 @@ def _calc_streaks(net_pnl_list):
     loss_streaks = []
 
     for pnl in net_pnl_list:
-        if pnl > 0:
+        # A3: a breakeven (net_pnl == 0) is NEITHER a win nor a loss, and a
+        # non-finite P&L is unusable data (B6). Both interrupt the current run
+        # of consecutive wins/losses and are counted in neither streak.
+        if not (isinstance(pnl, (int, float)) and math.isfinite(pnl)) or pnl == 0:
+            if curr_win > 0:
+                win_streaks.append(curr_win)
+                curr_win = 0
+            if curr_loss > 0:
+                loss_streaks.append(curr_loss)
+                curr_loss = 0
+        elif pnl > 0:
             curr_win += 1
             if curr_loss > 0:
                 loss_streaks.append(curr_loss)
@@ -626,9 +678,20 @@ def _calc_rolling_metrics(trades_sorted: list, window: int) -> list:
     result = []
     for i in range(window - 1, len(trades_sorted)):
         chunk = trades_sorted[i - window + 1 : i + 1]
-        pnl = [t["net_pnl"] for t in chunk]
+        # B6: coerce net_pnl defensively (see _safe_pnl). A non-numeric value
+        # becomes NaN and is dropped as a non-finite trade below rather than
+        # crashing the partition with a KeyError/TypeError.
+        raw_pnl = [_safe_pnl(t.get("net_pnl")) for t in chunk]
+        pnl = [p for p in raw_pnl if math.isfinite(p)]
+        # A window of exclusively non-finite trades has no measurable metric;
+        # skip the point rather than dividing by zero.
+        if not pnl:
+            continue
+        # A3: breakeven (== 0) is excluded from BOTH partitions — a win is
+        # strictly > 0 and a loss strictly < 0. A breakeven contributes nothing
+        # to gross profit/loss, so PF is unchanged; the partition stays honest.
         wins = [p for p in pnl if p > 0]
-        losses = [p for p in pnl if p <= 0]
+        losses = [p for p in pnl if p < 0]
 
         expectancy = round(sum(pnl) / len(pnl), 2)
         win_rate = round(len(wins) / len(pnl) * 100, 1)
@@ -664,13 +727,7 @@ def _weeks_operating(trades_sorted):
     if not trades_sorted:
         return 0.0
 
-    def to_dt(t):
-        ct = t["close_time"]
-        if isinstance(ct, str):
-            return datetime.fromisoformat(ct)
-        return ct
-
-    first = to_dt(trades_sorted[0])
+    first = _safe_parse_dt(trades_sorted[0].get("close_time"))
     if first is None:
         return 0.0
     delta = datetime.combine(date.today(), datetime.min.time()) - first
@@ -691,26 +748,39 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     if not trades:
         return _empty_metrics(ea_name, config)
 
-    # Sort by close_time
+    # Sort by close_time. B6: an unparseable/absent close_time sorts to the end
+    # (datetime.max) instead of raising a ValueError inside sorted().
     def sort_key(t):
-        ct = t["close_time"]
-        if isinstance(ct, str):
-            return datetime.fromisoformat(ct)
-        return ct if ct is not None else datetime.max
+        dt = _safe_parse_dt(t.get("close_time"))
+        return dt if dt is not None else datetime.max
 
     trades_sorted = sorted(trades, key=sort_key)
 
-    net_pnl_list = [t["net_pnl"] for t in trades_sorted]
+    # B6: coerce net_pnl once at ingestion. A non-numeric value becomes NaN
+    # (see _safe_pnl) so it never crashes the partition and is surfaced honestly
+    # below as a non-finite trade rather than a silent KeyError/TypeError.
+    net_pnl_list = [_safe_pnl(t.get("net_pnl")) for t in trades_sorted]
 
-    # Trades with an unparseable close_time (parser.py _parse_date returns None).
-    # Their P&L is still counted in net_profit/SQN/Sharpe/streaks but they are
-    # excluded from the equity curve and therefore from max_dd/ret_dd — see
+    # Trades with an unparseable/absent close_time (parser.py _parse_date returns
+    # None). Their P&L is still counted in net_profit/SQN/Sharpe/streaks but they
+    # are excluded from the equity curve and therefore from max_dd/ret_dd — see
     # docs/metrics-formulas.md section 5.
-    untimed_trades = sum(1 for t in trades_sorted if t["close_time"] is None)
+    untimed_trades = sum(
+        1 for t in trades_sorted if _safe_parse_dt(t.get("close_time")) is None
+    )
 
-    # P&L breakdown
-    wins = [p for p in net_pnl_list if p > 0]
-    losses = [p for p in net_pnl_list if p <= 0]
+    # A2: a non-finite net_pnl (NaN/inf) must NOT silently evaporate from both
+    # partitions. Compute on the finite subset and declare the count of dropped
+    # trades so winning + losing + breakeven + non_finite reconciles with total.
+    finite_pnls = [p for p in net_pnl_list if math.isfinite(p)]
+    non_finite_trades = len(net_pnl_list) - len(finite_pnls)
+
+    # A3 (approved policy): breakeven (net_pnl == 0) is NEITHER a win NOR a loss.
+    # It is excluded from avg_win, avg_loss, payout_ratio, winning_trades and
+    # losing_trades. A win is strictly > 0, a loss strictly < 0.
+    wins = [p for p in finite_pnls if p > 0]
+    losses = [p for p in finite_pnls if p < 0]
+    breakeven_trades = sum(1 for p in finite_pnls if p == 0)
 
     gross_profit = sum(wins)
     gross_loss = sum(losses)
@@ -736,14 +806,14 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     )
     expectancy = net_profit / total_trades if total_trades > 0 else 0.0
 
-    best_trade = max(net_pnl_list) if net_pnl_list else 0.0
-    worst_trade = min(net_pnl_list) if net_pnl_list else 0.0
+    best_trade = max(finite_pnls) if finite_pnls else 0.0
+    worst_trade = min(finite_pnls) if finite_pnls else 0.0
 
-    # Long/short breakdown
-    long_trades = [t for t in trades_sorted if t["direction"] == "buy"]
-    short_trades = [t for t in trades_sorted if t["direction"] == "sell"]
-    long_wins = sum(1 for t in long_trades if t["net_pnl"] > 0)
-    short_wins = sum(1 for t in short_trades if t["net_pnl"] > 0)
+    # Long/short breakdown. B6: direction/net_pnl accessed defensively.
+    long_trades = [t for t in trades_sorted if t.get("direction") == "buy"]
+    short_trades = [t for t in trades_sorted if t.get("direction") == "sell"]
+    long_wins = sum(1 for t in long_trades if _safe_pnl(t.get("net_pnl")) > 0)
+    short_wins = sum(1 for t in short_trades if _safe_pnl(t.get("net_pnl")) > 0)
 
     # Avg duration
     durations = [
@@ -764,23 +834,39 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
     max_dd_dollar, max_dd_pct, last_peak_date = _calc_max_drawdown(
         equity_curve, capital
     )
+
+    # C1: real trades but an empty equity curve (every trade is untimed) cannot
+    # yield a trustworthy drawdown — the worst loss is invisible. Declare the DD
+    # SIN DATOS (None) instead of a confident 0.0. (Reached only with trades,
+    # since the no-trades path returns _empty_metrics above.)
+    if not equity_curve:
+        max_dd_dollar = None
+        max_dd_pct = None
+
     stagnation_days = _calc_stagnation(last_peak_date)
 
     # ret_dd and recovery_factor are the same ratio — calculated once.
     # ret_dd is the canonical key used internally and by the validator.
     # recovery_factor is kept as an alias in the output dict for template compatibility.
-    ret_dd = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
+    ret_dd = (
+        (net_profit / max_dd_dollar)
+        if (max_dd_dollar is not None and max_dd_dollar > 0)
+        else None
+    )
 
-    sqn_val, sqn_note, sqn_label = _calc_sqn(net_pnl_list)
-    sharpe = _calc_sharpe(net_pnl_list)
+    sqn_val, sqn_note, sqn_label = _calc_sqn(finite_pnls)
+    sharpe = _calc_sharpe(finite_pnls)
     max_wins, max_losses, avg_wins_streak, avg_losses_streak = _calc_streaks(
         net_pnl_list
     )
     weeks = _weeks_operating(trades_sorted)
 
-    # Instrument from trades
-    symbols = list(set(t["symbol"] for t in trades_sorted))
-    instrument = symbols[0] if len(symbols) == 1 else ", ".join(sorted(symbols))
+    # Instrument from trades. B6: symbol accessed defensively; None/missing
+    # symbols are dropped rather than crashing the set/sort.
+    symbols = sorted(
+        {t.get("symbol") for t in trades_sorted if t.get("symbol") is not None}
+    )
+    instrument = symbols[0] if len(symbols) == 1 else ", ".join(symbols)
     magic = mapping.get("magic")
     alias = mapping.get("alias", "") or ea_name  # alias if set, else original name
     mapped_instrument = mapping.get("instrument", instrument)
@@ -816,7 +902,7 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
         "payout_ratio": fmt_pf(payout_ratio),
         "expectancy": round(expectancy, 2),
         "max_dd_dollar": max_dd_dollar,
-        "max_dd_pct": round(max_dd_pct, 2),
+        "max_dd_pct": round(max_dd_pct, 2) if max_dd_pct is not None else None,
         "ret_dd": round(ret_dd, 2) if ret_dd is not None else None,
         "recovery_factor": round(ret_dd, 2) if ret_dd is not None else None,
         "sqn": sqn_val,
@@ -831,6 +917,8 @@ def calculate_ea_metrics(ea_name: str, trades: list, config: dict) -> dict:
         "avg_consec_wins": avg_wins_streak,
         "avg_consec_losses": avg_losses_streak,
         "untimed_trades": untimed_trades,
+        "non_finite_trades": non_finite_trades,
+        "breakeven_trades": breakeven_trades,
         "equity_curve": equity_curve,
         "drawdown_curve": dd_curve,
         "trades": trades_sorted,
@@ -848,19 +936,24 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         return _empty_metrics("PORTFOLIO", {})
 
     def sort_key(t):
-        ct = t["close_time"]
-        if isinstance(ct, str):
-            return datetime.fromisoformat(ct)
-        return ct if ct is not None else datetime.max
+        dt = _safe_parse_dt(t.get("close_time"))
+        return dt if dt is not None else datetime.max
 
     trades_sorted = sorted(all_trades, key=sort_key)
-    net_pnl_list = [t["net_pnl"] for t in trades_sorted]
+    net_pnl_list = [_safe_pnl(t.get("net_pnl")) for t in trades_sorted]
 
     # See calculate_ea_metrics() for the SIN DATOS rationale of this counter.
-    untimed_trades = sum(1 for t in trades_sorted if t["close_time"] is None)
+    untimed_trades = sum(
+        1 for t in trades_sorted if _safe_parse_dt(t.get("close_time")) is None
+    )
 
-    wins = [p for p in net_pnl_list if p > 0]
-    losses = [p for p in net_pnl_list if p <= 0]
+    # A2/A3: mirror calculate_ea_metrics — drop non-finite from the partition
+    # (surfaced as a count) and exclude breakeven from BOTH wins and losses.
+    finite_pnls = [p for p in net_pnl_list if math.isfinite(p)]
+    non_finite_trades = len(net_pnl_list) - len(finite_pnls)
+    wins = [p for p in finite_pnls if p > 0]
+    losses = [p for p in finite_pnls if p < 0]
+    breakeven_trades = sum(1 for p in finite_pnls if p == 0)
 
     gross_profit = sum(wins)
     gross_loss = sum(losses)
@@ -886,13 +979,13 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
     )
     expectancy = net_profit / total_trades if total_trades > 0 else 0.0
 
-    best_trade = max(net_pnl_list) if net_pnl_list else 0.0
-    worst_trade = min(net_pnl_list) if net_pnl_list else 0.0
+    best_trade = max(finite_pnls) if finite_pnls else 0.0
+    worst_trade = min(finite_pnls) if finite_pnls else 0.0
 
-    long_trades = [t for t in trades_sorted if t["direction"] == "buy"]
-    short_trades = [t for t in trades_sorted if t["direction"] == "sell"]
-    long_wins = sum(1 for t in long_trades if t["net_pnl"] > 0)
-    short_wins = sum(1 for t in short_trades if t["net_pnl"] > 0)
+    long_trades = [t for t in trades_sorted if t.get("direction") == "buy"]
+    short_trades = [t for t in trades_sorted if t.get("direction") == "sell"]
+    long_wins = sum(1 for t in long_trades if _safe_pnl(t.get("net_pnl")) > 0)
+    short_wins = sum(1 for t in short_trades if _safe_pnl(t.get("net_pnl")) > 0)
 
     durations = [
         t["duration_hours"]
@@ -923,12 +1016,22 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
     max_dd_dollar, max_dd_pct, last_peak_date = _calc_max_drawdown(
         equity_curve, portfolio_capital
     )
+
+    # C1: real trades but an empty equity curve (all untimed) -> SIN DATOS DD.
+    if not equity_curve:
+        max_dd_dollar = None
+        max_dd_pct = None
+
     stagnation_days = _calc_stagnation(last_peak_date)
 
-    ret_dd = (net_profit / max_dd_dollar) if max_dd_dollar > 0 else None
+    ret_dd = (
+        (net_profit / max_dd_dollar)
+        if (max_dd_dollar is not None and max_dd_dollar > 0)
+        else None
+    )
 
-    sqn_val, sqn_note, sqn_label = _calc_sqn(net_pnl_list)
-    sharpe = _calc_sharpe(net_pnl_list)
+    sqn_val, sqn_note, sqn_label = _calc_sqn(finite_pnls)
+    sharpe = _calc_sharpe(finite_pnls)
     max_wins, max_losses, avg_wins_streak, avg_losses_streak = _calc_streaks(
         net_pnl_list
     )
@@ -963,7 +1066,7 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         "payout_ratio": fmt_pf(payout_ratio),
         "expectancy": round(expectancy, 2),
         "max_dd_dollar": max_dd_dollar,
-        "max_dd_pct": round(max_dd_pct, 2),
+        "max_dd_pct": round(max_dd_pct, 2) if max_dd_pct is not None else None,
         "ret_dd": round(ret_dd, 2) if ret_dd is not None else None,
         "recovery_factor": round(ret_dd, 2) if ret_dd is not None else None,
         "sqn": sqn_val,
@@ -978,6 +1081,8 @@ def calculate_portfolio_metrics(all_trades: list, config: dict = None) -> dict:
         "avg_consec_wins": avg_wins_streak,
         "avg_consec_losses": avg_losses_streak,
         "untimed_trades": untimed_trades,
+        "non_finite_trades": non_finite_trades,
+        "breakeven_trades": breakeven_trades,
         "equity_curve": equity_curve,
         "drawdown_curve": dd_curve,
         "trades": trades_sorted,
@@ -1069,6 +1174,8 @@ def _empty_metrics(name, config):
         "avg_consec_wins": 0.0,
         "avg_consec_losses": 0.0,
         "untimed_trades": 0,
+        "non_finite_trades": 0,
+        "breakeven_trades": 0,
         "equity_curve": [],
         "drawdown_curve": [],
         "trades": [],

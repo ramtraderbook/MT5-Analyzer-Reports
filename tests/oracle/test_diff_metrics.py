@@ -521,16 +521,18 @@ def test_payout_ratio_matches_textbook_oracle(shape_name):
         assert abs(m["payout_ratio"] - oracle) <= TOL_PAYOUT
 
 
-def test_zero_pnl_trade_counts_as_loss_not_win():
-    """Caracterizacion puntual del criterio <= 0 (metrics.py:560): de los 6
-    trades en zero_pnl_trades, 2 valen exactamente 0.0 y deben contarse como
-    perdedores, no ganadores -- verificado contra el conteo manual."""
+def test_zero_pnl_trade_is_breakeven_neither_win_nor_loss():
+    """A3: de los 6 trades en zero_pnl_trades, 2 valen exactamente 0.0 y NO se
+    cuentan ni como ganadores ni como perdedores -- particion estricta
+    (win > 0 / loss < 0), verificada contra el conteo manual."""
     pnls = _pnls_for("zero_pnl_trades")
     m = _ea_metrics_for("zero_pnl_trades")
     manual_wins = sum(1 for p in pnls if p > 0)
-    manual_losses = sum(1 for p in pnls if p <= 0)
+    manual_losses = sum(1 for p in pnls if p < 0)
+    manual_breakeven = sum(1 for p in pnls if p == 0)
     assert m["winning_trades"] == manual_wins
     assert m["losing_trades"] == manual_losses
+    assert m["breakeven_trades"] == manual_breakeven
     assert 0.0 in pnls  # confirma que la forma realmente ejercita el caso limite
 
 

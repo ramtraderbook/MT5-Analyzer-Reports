@@ -409,10 +409,13 @@ def cleanup_old_caches(keep_live_key=None, keep_incubation_key=None):
     after the previous one.
     """
     protected_paths = set()
-    if keep_live_key:
+    # A forged/unsafe keep-key (cache_file_path now raises ValueError on it)
+    # must not blow up the whole upload flow. Skip an unsafe key: it simply
+    # won't be protected -- there is no real cached file behind it anyway.
+    if keep_live_key and cache_store._is_safe_cache_key(keep_live_key):
         protected_paths.add(_cache_file_path(keep_live_key, LIVE_CACHE_PREFIX))
         protected_paths.add(_legacy_cache_file_path(keep_live_key, LIVE_CACHE_PREFIX))
-    if keep_incubation_key:
+    if keep_incubation_key and cache_store._is_safe_cache_key(keep_incubation_key):
         protected_paths.add(_cache_file_path(keep_incubation_key, INCUBATION_CACHE_PREFIX))
         protected_paths.add(_legacy_cache_file_path(keep_incubation_key, INCUBATION_CACHE_PREFIX))
 
@@ -870,15 +873,24 @@ def upload():
             show_sidebar=False,
         )
 
-    # Save uploaded file — use secure_filename to sanitize client-supplied names
+    # Save uploaded file — use secure_filename to sanitize client-supplied names.
     from werkzeug.utils import secure_filename
     safe_name = secure_filename(file.filename) or "upload.xlsx"
     _ensure_dir(UPLOAD_FOLDER)
-    filepath = os.path.join(UPLOAD_FOLDER, safe_name)
-    file.save(filepath)
+    # Per-request isolation: write into a unique subdirectory so two concurrent
+    # uploads that sanitize to the same filename cannot overwrite each other's
+    # file mid-parse (WSGI defense-in-depth §11). The display name (safe_name)
+    # is preserved for the session/loaded-files list. Directory creation and
+    # file.save run INSIDE the try below so the finally always removes the
+    # per-request dir, even if _ensure_dir/save/parse raises mid-way.
+    req_dir = os.path.join(UPLOAD_FOLDER, "req_" + secrets.token_hex(8))
+    filepath = os.path.join(req_dir, safe_name)
 
     # Parse new file
     try:
+        _ensure_dir(req_dir)
+        file.save(filepath)
+
         from parser import parse_mt5_report, merge_trades
 
         new_data = parse_mt5_report(filepath)
@@ -890,6 +902,16 @@ def upload():
             error=f"Error inesperado al parsear el archivo: {e}",
             show_sidebar=False,
         )
+    finally:
+        # Clean up the uploaded file and its per-request directory regardless of
+        # success or failure — the parsed data lives in new_data / the cache now.
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            if os.path.isdir(req_dir):
+                os.rmdir(req_dir)
+        except OSError:
+            pass
 
     if analysis_mode == "incubation":
         # Merge incubation trades (append mode, same as live)
@@ -1129,6 +1151,7 @@ def incubation_mapping():
         account=parsed_data.get("account", {}),
         filename=session.get("incubation_filename", ""),
         unknown_trades=parsed_data.get("unknown_trades", 0),
+        malformed_cells=parsed_data.get("malformed_cells", 0),
         show_sidebar=False,
         active_page="incubation_mapping",
     )
@@ -1153,6 +1176,7 @@ def mapping():
         account=parsed_data.get("account", {}),
         filename=session.get("filename", ""),
         unknown_trades=parsed_data.get("unknown_trades", 0),
+        malformed_cells=parsed_data.get("malformed_cells", 0),
         show_sidebar=False,
     )
 
@@ -1483,10 +1507,12 @@ def incubation_strategy(ea_name):
         flash("No hay trades de incubación para esa estrategia.", "warn")
         return redirect(url_for("incubation_dashboard"))
 
-    if bundle["reference_ready"]:
-        store[ea_name] = bundle["entry"]
-        save_incubation_store(store)
-
+    # §11 (WSGI hardening): a GET must NOT mutate persistent state. This route
+    # previously did `store[ea_name] = bundle["entry"]; save_incubation_store()`
+    # on a plain GET, an unlocked full-store read-modify-write re-triggerable by
+    # any prefetch/reload. The evaluation is computed in-memory (bundle["entry"]/
+    # bundle["evaluation"]) and rendered below unchanged; persistence is owned by
+    # the explicit POST actions (force_evaluate) and the dashboard sync.
     metrics = bundle["metrics"]
     config = bundle["config"]
     entry = bundle["entry"]
@@ -1884,7 +1910,14 @@ def export():
                 if isinstance(m["payout_ratio"], str)
                 else round(float(m["payout_ratio"]), 2),
                 "expectancy": round(m["expectancy"], 2),
-                "max_dd_pct": round(m["max_dd_pct"], 2),
+                # SIN DATOS: max_dd_pct is None when capital is unknown / the
+                # equity curve is empty (all-untimed trades). Pass None through
+                # so the template renders a dash, never round(None, ...).
+                "max_dd_pct": (
+                    None
+                    if m["max_dd_pct"] is None
+                    else round(m["max_dd_pct"], 2)
+                ),
                 "avg_duration": round(m["avg_duration_hours"], 1),
                 "max_consec_losses": m["max_consec_losses"],
                 "stagnation_days": m["stagnation_days"],

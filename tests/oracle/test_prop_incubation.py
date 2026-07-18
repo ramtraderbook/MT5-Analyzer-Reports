@@ -360,23 +360,15 @@ def test_no_crash_on_malformed_but_typed_live_metrics(live, frozen_clock):
 
 @given(total_trades=st.integers(min_value=0, max_value=100))
 @settings(max_examples=20, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: live_metrics sin 'winning_trades' y con win_rate=float('nan') "
-    "-> ValueError no capturado. _wins_from_metrics (incubation_validator.py:118-125) "
-    "sólo deriva wins desde win_rate cuando 'winning_trades' está ausente: "
-    "`wr = _safe_float(live_metrics.get('win_rate'), 0.0) or 0.0` deja pasar NaN "
-    "intacto (_safe_float no filtra NaN -- verificado directamente contra "
-    "incubation_validator._safe_float), y "
-    "`int(round(total * wr / 100.0))` explota con NaN. Repro mínimo: "
-    "live = make_live_metrics(total_trades=5, win_rate=float('nan')); "
-    "del live['winning_trades']; evaluate_incubation('EA', live, make_reference()) "
-    "-> ValueError: cannot convert float NaN to integer."
-))
-def test_missing_winning_trades_with_nan_win_rate_crashes(total_trades, frozen_clock):
+def test_missing_winning_trades_with_nan_win_rate_does_not_crash(total_trades, frozen_clock):
+    """B5 FIX: sin 'winning_trades' y con win_rate=NaN, _wins_from_metrics ya no
+    intenta `int(round(total*NaN/100))` (ValueError). Rechaza el win_rate no
+    finito y cae a 0 wins, devolviendo un dict estructurado sin crashear."""
     ref = make_reference()
     live = make_live_metrics(total_trades=total_trades, win_rate=float("nan"))
     del live["winning_trades"]
-    iv.evaluate_incubation("EA", live, ref)
+    result = iv.evaluate_incubation("EA", live, ref)
+    assert isinstance(result, dict)
 
 
 @given(
@@ -398,41 +390,24 @@ def test_no_crash_on_malformed_reference_dates(bad_date, bad_period, frozen_cloc
     assert isinstance(result, dict)
 
 
-# DETERMINISTIC, not @given: the previous version declared
-# @given(total_trades=st.integers(...)) but the body never used the drawn
-# value -- it always called make_live_metrics(total_trades=float("inf")).
-# Hypothesis was drawing 30 examples and re-running the exact same crash 30
-# times under a different name each time; the strategy was dead weight that
-# implied a property search without ever performing one. The counterexample
-# IS a single fixed value (float('inf')), so this is a plain regression
-# test under xfail(strict=True), consistent with the rest of this file's
-# convention for documenting a confirmed defect without touching production.
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: live_metrics['total_trades']=float('inf') -> OverflowError "
-    "no capturado. incubation_validator._safe_int (:49-55) hace "
-    "`int(round(float(str(value).replace(',', '.'))))`; para value=float('inf'), "
-    "round(inf) lanza OverflowError, y el `except (TypeError, ValueError)` no lo "
-    "cubre. total_trades y max_consec_losses son ambos _INT_PARSED_KEYS y "
-    "comparten el mismo defecto -- reproducible en PRE_CP1/CP1/CP2/CP3 por igual. "
-    "Repro mínimo: evaluate_incubation('EA', make_live_metrics(total_trades=float('inf')), "
-    "make_reference()) -> OverflowError: cannot convert float infinity to integer."
-))
-def test_total_trades_infinity_crashes(frozen_clock):
+# DETERMINISTIC, not @given: the counterexample IS a single fixed value
+# (float('inf')), so this is a plain regression test.
+def test_total_trades_infinity_does_not_crash(frozen_clock):
+    """B4 FIX: total_trades=inf ya no revienta _safe_int -- `int(round(inf))`
+    lanza OverflowError, ahora capturado (se añadió OverflowError al except), y
+    cae al default. evaluate_incubation devuelve un dict sin crashear."""
     ref = make_reference()
     live = make_live_metrics(total_trades=float("inf"))
-    iv.evaluate_incubation("EA", live, ref)
+    result = iv.evaluate_incubation("EA", live, ref)
+    assert isinstance(result, dict)
 
 
 @given(mcl=st.sampled_from([float("inf"), float("-inf")]))
 @settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-@pytest.mark.xfail(strict=True, reason=(
-    "COUNTEREXAMPLE: live_metrics['max_consec_losses']=float('inf') -> OverflowError "
-    "no capturado, mismo mecanismo que total_trades (incubation_validator.py:49-55, "
-    "_safe_int no captura OverflowError). Repro mínimo: evaluate_incubation('EA', "
-    "make_live_metrics(total_trades=50, max_consec_losses=float('inf')), "
-    "make_reference())."
-))
-def test_max_consec_losses_infinity_crashes(mcl, frozen_clock):
+def test_max_consec_losses_infinity_does_not_crash(mcl, frozen_clock):
+    """B4 FIX: max_consec_losses=±inf comparte el mecanismo de _safe_int; ahora
+    OverflowError se captura y cae al default en vez de crashear."""
     ref = make_reference()
     live = make_live_metrics(total_trades=50, max_consec_losses=mcl)
-    iv.evaluate_incubation("EA", live, ref)
+    result = iv.evaluate_incubation("EA", live, ref)
+    assert isinstance(result, dict)

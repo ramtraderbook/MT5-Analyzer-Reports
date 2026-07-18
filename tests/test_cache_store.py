@@ -174,3 +174,58 @@ def test_delete_cache_file_is_a_noop_for_empty_key(cache_dirs):
     # must not raise
     ea_analyzer._delete_cache_file("", ea_analyzer.LIVE_CACHE_PREFIX)
     ea_analyzer._delete_cache_file(None, ea_analyzer.LIVE_CACHE_PREFIX)
+
+
+# ── path-injection defense (§11) ──────────────────────────────────────────────
+
+
+import cache_store
+
+
+@pytest.mark.parametrize("bad_key", [
+    "../evil", r"..\evil", "a/b", r"a\b", "..", "foo/../bar", "/abs", "sub/key",
+])
+def test_cache_file_path_rejects_keys_with_separators_or_dotdot(bad_key):
+    """cache_file_path / legacy_cache_file_path must reject any key carrying a
+    path separator or '..' so `{prefix}{key}.json` can never escape the cache
+    dir (path-injection defense-in-depth §11)."""
+    with pytest.raises(ValueError):
+        cache_store.cache_file_path("/cache", bad_key, "live_")
+    with pytest.raises(ValueError):
+        cache_store.legacy_cache_file_path("/app", bad_key, "live_")
+
+
+def test_cache_file_path_accepts_normal_uuid_like_key():
+    key = "1b964ec0-0adb-4005-b9ad-986ac5a80705"
+    path = cache_store.cache_file_path("/cache", key, "live_")
+    assert path.endswith(f"live_{key}.json")
+
+
+@pytest.mark.parametrize("bad_key", ["../evil", "a/b", "..", "foo/../bar"])
+def test_resolve_and_delete_treat_forged_keys_as_noop(cache_dirs, bad_key):
+    """resolve_cache_path returns None and delete_cache_file is a no-op for a
+    forged key -- neither raises into the request handler nor touches disk
+    outside the cache dir."""
+    cache_dir, app_dir = cache_dirs
+    assert cache_store.resolve_cache_path(str(cache_dir), str(app_dir), bad_key, "live_") is None
+    # must not raise, must not remove anything outside
+    cache_store.delete_cache_file(str(cache_dir), str(app_dir), bad_key, "live_")
+
+
+@pytest.mark.parametrize("bad_key", ["../evil", "a/b", r"..\x", "..", "foo/../bar"])
+def test_load_cache_treats_forged_key_as_a_clean_miss(cache_dirs, bad_key):
+    """load_cache must return a miss (None) for a forged key, never crash with
+    os.path.exists(None) -- resolve_cache_path returns None for an unsafe key
+    and load_cache must guard that rather than pass it to os.path.exists."""
+    cache_dir, app_dir = cache_dirs
+    assert cache_store.load_cache(str(cache_dir), str(app_dir), bad_key, "live_") is None
+
+
+@pytest.mark.parametrize("bad_key", ["../evil", r"..\x", "a/b"])
+def test_cleanup_old_caches_tolerates_a_forged_keep_key(cache_dirs, bad_key):
+    """cleanup_old_caches() (ea_analyzer) is called from upload() with keep-keys
+    sourced from the session. A forged keep-key must be skipped gracefully, not
+    raise ValueError from cache_file_path() and 500 the whole upload."""
+    # Must not raise, regardless of which keep-key is forged.
+    ea_analyzer.cleanup_old_caches(keep_live_key=bad_key)
+    ea_analyzer.cleanup_old_caches(keep_incubation_key=bad_key)

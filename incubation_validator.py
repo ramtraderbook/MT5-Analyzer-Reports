@@ -50,8 +50,11 @@ def _safe_int(value, default=None):
     if value is None or value == "":
         return default
     try:
+        # B4: int(round(inf)) raises OverflowError (and round(nan) -> ValueError);
+        # a non-finite count is not an integer, so fall back to the default
+        # rather than letting the exception escape.
         return int(round(float(str(value).replace(",", "."))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -122,6 +125,11 @@ def _wins_from_metrics(live_metrics):
 
     total = _safe_int(live_metrics.get("total_trades"), 0) or 0
     wr = _safe_float(live_metrics.get("win_rate"), 0.0) or 0.0
+    # B5: a non-finite win_rate (NaN/inf) would make int(round(total*wr/100))
+    # raise ValueError/OverflowError. Without a wins count to fall back on, the
+    # only honest derivation is unavailable -> 0 wins, not a crash.
+    if not math.isfinite(wr):
+        return 0
     return int(round(total * wr / 100.0))
 
 
@@ -406,10 +414,13 @@ def _hard_gates(live_metrics, reference_data):
     # Frequency is a WARNING, not a gate: an unparseable/absent BT period
     # surfaces as an explicit SIN DATOS status, never a silent "OK" or a
     # crash on a None comparison.
+    # C4: a literal 0.0 expected_monthly is as unusable as None (it makes the
+    # ratio undefined / infinite), so it must also declare SIN DATOS rather than
+    # silently leaving the frequency warning at "OK".
     freq_warning = "OK"
-    if expected_monthly is None:
+    if expected_monthly is None or expected_monthly <= 0:
         freq_warning = "SIN DATOS"
-    elif expected_monthly > 0:
+    else:
         ratio = actual_monthly / expected_monthly
         if ratio < 0.25 or ratio > 3.0:
             freq_warning = "WARNING"
@@ -1308,6 +1319,9 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
                     "actual_monthly": actual_monthly,
                 },
                 "hard_gate_failures": ["freq_deadline"],
+                # C8: carry mc_source so every PRE_CP1 branch is shape-compatible
+                # with the SIN DATOS branch (which already emits "mc_source": {}).
+                "mc_source": {},
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -1328,6 +1342,8 @@ def evaluate_incubation(ea_name, live_metrics, reference_data, previous_cp2_resu
                 "actual_monthly": actual_monthly,
             },
             "hard_gate_failures": [],
+            # C8: shape-compatible with the other PRE_CP1 branches.
+            "mc_source": {},
             "timestamp": datetime.now().isoformat(),
         }
 

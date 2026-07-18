@@ -134,7 +134,7 @@ del 3% leyera FUERA, reintroduciendo la ejecución del recién nacido.
 
 ---
 
-## 5. `bt_months` degenerado pasa la guarda
+## 5. `bt_months` degenerado pasa la guarda — ✅ RESUELTO
 
 `bt_months = 0.0001` supera el chequeo `> 0` y produce
 `dd_limit = 0.02%` → `FUERA` → `ELIMINAR`. Es un valor degenerado-pero-presente,
@@ -143,9 +143,18 @@ de completitud (que solo chequea `None`) ni la guarda `> 0` lo cazan.
 
 Input implausible, pero no hay cota de sanidad.
 
+**✅ RESUELTO**: `validator.py` ahora impone una cota de sanidad
+`BT_MONTHS_SANITY_FLOOR = 0.5` (`validator.py:57`); un `bt_months` por debajo del
+piso ya no produce un `dd_limit` degenerado sino un `SIN DATOS` que nombra
+`bt.months` (`validator.py:462`, `:675`, `:689`), según el contrato de
+`docs/design/decision-engine-no-data-contract.md` — ausencia declarada en vez de
+un número confiado y equivocado. También se cerró el gemelo B3 de underflow del
+cociente (`bt_trades/bt_months` que hace underflow a `0.0` aun con operandos
+normales, `validator.py:457-467`, `:562-563`). Pinneado por un test de regresión.
+
 ---
 
-## 6. `_nd_result` solo blanquea `dd_limit`
+## 6. `_nd_result` solo blanquea `dd_limit` — ✅ RESUELTO
 
 En una fila `SIN DATOS`, `wr_delta`, `payout_var`, `bars_var` y `edge_erosion`
 sobreviven con valores confiados al lado de estados `N/D` — el mismo patrón de
@@ -153,6 +162,14 @@ número silencioso y auto-contradictorio que se corrigió para `dd_limit`.
 
 Pre-existente. `dd_limit` se corrigió porque el cambio del reloj de trades lo
 volvió alcanzable en un caso nuevo.
+
+**✅ RESUELTO**: `_nd_result` (`validator.py:244`) ahora pone en `None` **todos**
+los numéricos derivados de la fila —`wr_delta`, `payout_var`, `bars_var`,
+`edge_erosion`, `freq_pct` y los echoes crudos de live/bt—, no solo `dd_limit`,
+de modo que una fila `SIN DATOS` no arrastra ningún número confiado al lado de
+sus estados `N/D`, según el contrato de
+`docs/design/decision-engine-no-data-contract.md`. Pinneado por un test de
+regresión. (Es el mismo hallazgo que §14-C5 — ver referencia cruzada.)
 
 ---
 
@@ -276,16 +293,23 @@ volvió alcanzable en un caso nuevo.
   (`_safe_float` en `validator.py` e `incubation_validator.py`, `isinstance` en
   el export, `!= '∞'` en Jinja). El único que se degrada es el ordenamiento de
   tablas en `static/charts.js`, que lo ordena como texto.
-- **`capital <= 0`** hace `peak_abs <= 0` y el DD% cae silenciosamente a 0.0,
-  enmascarando el drawdown real. La config no valida capital no positivo.
+- **`capital <= 0` — ✅ RESUELTO** (§14-C2). Antes hacía `peak_abs <= 0` y el DD%
+  caía silenciosamente a 0.0, enmascarando el drawdown real. Ahora
+  `capital <= 0` da `max_dd_pct = None` (SIN DATOS, ausencia declarada),
+  siguiendo el precedente del bootstrap en vez del 0.0 silencioso
+  (`metrics.py:285-286`, `:324`).
 - **Trades con el mismo timestamp**: el orden estable del sort conserva el orden
   del archivo, así que `max_dd_pct` puede dar 9.09 o 10.0 para la misma
   historia según cómo vino el export.
 - **`untimed_trades`** se expone en el dict pero ninguna plantilla ni ruta lo
   muestra: el contrato SIN DATOS se cumple a nivel API, no en la UI.
-- **Trades con P&L exactamente 0 cuentan como pérdidas** (`net_pnl <= 0`),
-  inflando `losing_trades` y las rachas perdedoras. El doc §10 lo documenta así,
-  o sea que código y doc coinciden.
+- **Trades con P&L exactamente 0 — ✅ RESUELTO / OBSOLETO**. Antes los breakeven
+  (`net_pnl <= 0`) contaban como pérdidas, inflando `losing_trades` y las rachas
+  perdedoras. Ahora el breakeven (P&L == 0) se excluye de **ambas** particiones
+  —ni gana ni pierde— y se expone aparte como `breakeven_trades`: una ganancia es
+  estrictamente `p > 0` y una pérdida estrictamente `p < 0`
+  (`metrics.py:781-783`). `docs/metrics-formulas.md` §10 se actualizó para
+  reflejar la nueva conducta, o sea que código y doc siguen coincidiendo.
 - **SQN sobre P&L crudo, no sobre R-multiples**: la propia definición del
   Tharp Institute (recuperada vía la reproducción atribuida de TradingView de
   la página con 403) dice: *"SQN measures the relationship between the mean
@@ -346,7 +370,7 @@ re-exportar incluyendo la fecha de apertura. Es un cambio de UI, no de parser.
 
 ---
 
-## 9. Una celda de dinero ilegible sigue devolviendo 0.0 en silencio
+## 9. Una celda de dinero ilegible sigue devolviendo 0.0 en silencio — ✅ RESUELTO
 
 Ésta es la queja original de la auditoría —el silencio— y quedó **cerrada solo
 a medias**. `_to_float()` ahora entiende todos los formatos plausibles
@@ -360,16 +384,17 @@ se registra como breakeven y entra a las métricas como un trade real.
 `unknown_trades` **no** cubre esto: solo cuenta fallos del JOIN con ORDERS, no
 fallos de parseo numérico.
 
-**Por qué se dejó**: cerrarlo no es un fix, es un cambio de contrato —hace
-falta un contador nuevo en el dict que devuelve `parse_mt5_report()`
-(`malformed_cells` o similar), que la UI lo muestre, y decidir si un archivo
-con celdas ilegibles se rechaza o se carga con aviso. Eso es diseño, y se
-sale del alcance de una auditoría de integridad.
+**✅ RESUELTO** con la política "cargar con aviso": `_money_float` en `parser.py`
+cuenta un nuevo `malformed_cells` en `parse_mt5_report()` —mismo patrón que
+`unknown_trades`— y `templates/mapping.html` muestra el contador con un aviso de
+re-exportar. Un número silencioso y confiado se reemplaza así por una ausencia
+declarada, en línea con el contrato SIN DATOS de
+`docs/design/decision-engine-no-data-contract.md`.
 
-**Para destrabar**: definir la política primero (¿rechazar o avisar?), después
-implementar. El patrón a seguir es el contrato SIN DATOS de
-`docs/design/decision-engine-no-data-contract.md`: un número silencioso y
-confiado es peor que una ausencia declarada.
+**Follow-up pendiente (NO resuelto)**: el contador solo se muestra en la página
+de mapping. No persiste al dashboard, a strategy ni al export, así que la señal
+de calidad **desaparece al avanzar** más allá del mapping. Falta propagar
+`malformed_cells` aguas abajo para que el aviso sobreviva a la navegación.
 
 ---
 
@@ -414,25 +439,29 @@ quedaron registrados en vez de aplicados. No son especulativos: el código hace 
 que se describe. Lo que falta es la corroboración independiente que justifique
 tocarlos.
 
-- **`GET /incubation/strategy/<ea_name>` escribe en disco**. Cuando la referencia
-  está completa, la ruta persiste el resultado de la evaluación
-  (`store[ea_name] = bundle["entry"]; save_incubation_store(store)`) durante un
-  simple GET. Un GET que muta estado es re-disparable por prefetchers del
-  navegador y por cualquier recarga. Además es un read-modify-write del store
-  entero sin lock: bajo WSGI, dos vistas concurrentes se pisan las escrituras
-  —incluidas las de **otros** EAs que viven en el mismo archivo—. Verificado a
-  nivel de código; retenido por falta de segundo juez.
-- **Carrera de nombres en `uploads/` (solo WSGI)**. Todas las subidas caen en una
-  carpeta compartida con el nombre que devuelve `secure_filename`. Los exports de
-  MT5 suelen traer el mismo nombre por default, así que dos usuarios concurrentes
-  compiten entre `file.save()` y `parse_mt5_report()`: uno puede parsear el
-  archivo del otro. En el uso local monousuario no aplica. Los archivos subidos,
-  además, no se limpian nunca.
-- **`cache_key` se interpola en rutas de archivo sin validar**. `_cache_file_path`
-  y sus pares construyen `f"{prefix}{cache_key}.json"` sin filtrar separadores.
-  Hoy la clave siempre es un UUID generado por el servidor y explotarlo exige
-  falsificar la cookie de sesión, o sea que es defensa en profundidad, no un
-  agujero abierto. Vale como cinturón si el `.secret_key` alguna vez se filtra.
+- **`GET /incubation/strategy/<ea_name>` escribe en disco — ✅ RESUELTO**. Antes,
+  cuando la referencia estaba completa, la ruta persistía el resultado de la
+  evaluación (`store[ea_name] = bundle["entry"]; save_incubation_store(store)`)
+  durante un simple GET —re-disparable por prefetchers del navegador y por
+  cualquier recarga, y un read-modify-write del store entero sin lock que bajo
+  WSGI pisaba escrituras de **otros** EAs—. Ahora el GET es **compute-and-return**:
+  la evaluación se calcula en memoria y no persiste nada
+  (`ea_analyzer.py:1494-1513`).
+- **Carrera de nombres en `uploads/` (solo WSGI) — ✅ RESUELTO**. Antes todas las
+  subidas caían en una carpeta compartida con el nombre que devuelve
+  `secure_filename`; como los exports de MT5 suelen traer el mismo nombre por
+  default, dos usuarios concurrentes competían entre `file.save()` y
+  `parse_mt5_report()` y uno podía parsear el archivo del otro; además los
+  archivos nunca se limpiaban. Ahora cada request aísla su subida en un subdir
+  único `req_<token>` (`secrets.token_hex`) y lo borra en un `finally`
+  (`ea_analyzer.py:886-912`), así que ni colisionan ni quedan huérfanos.
+- **`cache_key` se interpola en rutas de archivo sin validar — ✅ RESUELTO**. Antes
+  `_cache_file_path` y sus pares construían `f"{prefix}{cache_key}.json"` sin
+  filtrar separadores; era defensa en profundidad (la clave siempre es un UUID
+  del servidor) pero valía como cinturón si el `.secret_key` alguna vez se
+  filtraba. Ahora la clave se valida en la frontera de `cache_store` con
+  `_is_safe_cache_key` (`cache_store.py:43`), que rechaza separadores y `..`
+  antes de tocar el disco.
 - **Carrera del `.secret_key` al importar (solo WSGI multi-worker). ✅ RESUELTO
   (fix 1A)**. Antes el bootstrap era un check-then-write en tiempo de import: dos
   workers podían generar y escribir claves distintas, o uno leer el archivo a
@@ -664,9 +693,10 @@ duros. Lo que sigue quedó registrado y no tocado.
 Arnés en `tests/oracle/` (8 archivos, ~3.500 líneas): caracterización +
 propiedades (Hypothesis) + diferencial contra oráculo independiente
 (`empyrical` para Sharpe, `scipy.stats.binom.cdf` para el binomial, oráculos
-derivados a mano para el resto). **Cero ediciones de producción**: el arnés
-observa, no arregla. Suite: 266 → 519 tests, 17 `xfail(strict=True)`, uno por
-cada hallazgo abierto que queda visible sin romper el verde.
+derivados a mano para el resto). El arnés nació observando sin arreglar, pero la
+mayoría de los defectos que reveló ya se cerraron en este batch. Suite: **667
+passed, 1 xfailed** — el único `xfail(strict=True)` que queda es la divergencia
+deliberada del cap de SQN (A4, decisión de política), no un bug abierto.
 
 Nota de alcance: la premisa de partida ("validator.py, incubation_validator.py
 y la API pública de metrics.py tienen cero cobertura") era **falsa** —
@@ -689,17 +719,22 @@ propiedades y la de oráculo diferencial.
   un corrimiento de borde de hasta 0.005 aceptado explícitamente por el usuario.
   Tests: `test_cp3_score_display_matches_verdict_at_65_boundary`,
   `test_cp3_rounded_vs_raw_score_split_at_65_is_closed`.
-- **A2 — un `net_pnl` NaN desaparece de la contabilidad.** `metrics.py:559-560`
-  parte con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que el trade no
-  cae en ninguna partición: `winning_trades + losing_trades < total_trades` y su
-  P&L se evapora de `net_profit` sin error ni SIN DATOS. Repro ejecutado: 3
-  trades (100, NaN, -50) → total=3, wins=1, losses=1 (suma 2), net_profit=50.0.
-  Toda métrica y todo veredicto aguas abajo se calculan sobre una base corrupta.
-- **A3 — `payout_ratio` inflado ~2x por trades de P&L cero.** La misma partición
-  `p <= 0` cuenta los ceros como pérdidas: `avg_loss = gross_loss/losing_trades`
-  se achica y el payout sube. Verificado: `avg_loss` -80/4 = -20 frente al -80/2
-  = -40 de la definición estándar → payout 5.0 en vez de 2.5. `payout_ratio`
-  pesa 20% dentro de EDGE en el validador y 0.15 en la desviación de CP3.
+- **A2 — un `net_pnl` NaN desaparece de la contabilidad. ✅ RESUELTO.** Antes
+  `metrics.py` partía con `p > 0` / `p <= 0`; ambas son `False` para NaN, así que
+  el trade no caía en ninguna partición: `winning_trades + losing_trades <
+  total_trades` y su P&L se evaporaba de `net_profit` sin error ni SIN DATOS.
+  Ahora `calculate_ea_metrics` detecta los `net_pnl` no finitos de entrada,
+  calcula sobre el subconjunto finito y expone un contador `non_finite_trades`,
+  de modo que la reconciliación cierra: `winning + losing + breakeven +
+  non_finite == total` (`metrics.py:772-776`, `:920-921`).
+- **A3 — `payout_ratio` inflado ~2x por trades de P&L cero. ✅ RESUELTO** vía el
+  cambio de política de exclusión del breakeven (ref. cruzada §7). Antes la
+  partición `p <= 0` contaba los ceros como pérdidas y achicaba `avg_loss`,
+  inflando el payout (-80/4 = -20 en vez de -80/2 = -40 → payout 5.0 en vez de
+  2.5). Ahora el breakeven se excluye de ambas particiones (`metrics.py:781-783`).
+  **Ojo**: esto **cambió veredictos** sobre EAs con trades breakeven —decisión de
+  política aprobada— y `docs/metrics-formulas.md` §10 se actualizó para
+  reflejarlo.
 - **A4 — SQN sin el cap de Van Tharp.** El repo usa `sqrt(n)*mean/std`; el
   estándar es `sqrt(min(n,100))*mean/std`. Con n=150: 1.769 vs 1.444 — cruza la
   frontera de `SQN_LABELS` en 1.6, o sea "Debajo promedio" contra "Pobre". El
@@ -709,52 +744,60 @@ propiedades y la de oráculo diferencial.
 
 ### B. Crashes (fallan fuerte, no mienten)
 
-- **B1** — `validator.py:99-100`: `float(live.get("total_trades") or 0)` lanza
-  `ValueError` no capturado con un string no numérico. Es el único campo de
-  `live` que no pasa por `_safe_float` (los otros 9 sí).
-- **B2** — `validator.py:134`: `int(trades_live)` → `ValueError` con NaN,
-  `OverflowError` con ±inf.
-- **B3** — `validator.py:434` y `:353-354`: **`ZeroDivisionError` por underflow**
-  (hallazgo nuevo, encontrado por Hypothesis, no previsto por la auditoría
-  previa). Dos variantes, la segunda más grave:
-  - *Entrada subnormal*: un `weeks_operating` o `bt.trades_total` subnormal
-    (5e-324, 1e-323) pasa la guarda `> 0`, pero la división intermedia
-    (`/4.33`, `/months`) **hace underflow a 0.0 exacto** y la siguiente
-    división explota.
-  - *Cociente que hace underflow* (más amplio): **no hacen falta subnormales**.
-    `bt.trades_total = 2.49e-238` y `bt.months = 4.61e+204` son floats
-    perfectamente normales y ambos `> 0`, pero su **cociente** cae por debajo
-    del subnormal mínimo y da `0.0` exacto (`:353`), y `:354` explota. La
-    lección general: **la guarda `x > 0 and y > 0` no garantiza `x / y > 0`**.
-    Ninguna validación de rango sobre los operandos por separado lo evita.
-- **B4** — `incubation_validator._safe_int(float("inf"))` → `OverflowError` no
-  capturado: el `except (TypeError, ValueError)` (`:49-55`) no lo cubre.
-  Alcanzable vía `total_trades` y `max_consec_losses` en cualquier checkpoint.
-- **B5** — `_wins_from_metrics` (`:118-125`): sin `winning_trades` y con
-  `win_rate=NaN` → `ValueError` (`_safe_float` deja pasar el NaN intacto).
-- **B6** — `metrics.py`: `KeyError` si falta `net_pnl`/`close_time`/`direction`/
-  `symbol`; `ValueError` en `fromisoformat` con un `close_time` malformado;
-  `TypeError` con un `net_pnl` no numérico.
+- **B1 — ✅ RESUELTO.** `total_trades` ahora pasa por `_finite_or_none` como el
+  resto de los campos `live`, así que un string no numérico ya no lanza
+  `ValueError`: coacciona a float finito o `None` (`validator.py:180-184`).
+- **B2 — ✅ RESUELTO.** `trades_live` se normaliza a finito-o-`None` antes de
+  cualquier `int()`, de modo que `int(trades_live)` nunca ve un NaN/±inf
+  (`validator.py:183`, `:223`).
+- **B3 — ✅ RESUELTO.** El **`ZeroDivisionError` por underflow** (hallazgo nuevo de
+  Hypothesis) ahora está guardado: se chequea que el cociente
+  `bt_trades/bt_months` (y `weeks_live/4.33`) sea finito y `> 0` **después** de
+  dividir, no solo los operandos por separado, y si hace underflow a `0.0` se
+  devuelve `SIN DATOS` nombrando la referencia en vez de explotar
+  (`validator.py:457-467`, `:562-563`). La lección —**`x > 0 and y > 0` no
+  garantiza `x / y > 0`**— quedó codificada en la guarda del cociente.
+- **B4 — ✅ RESUELTO.** `incubation_validator._safe_int` ahora captura
+  `OverflowError` junto a `TypeError`/`ValueError`, así que
+  `_safe_int(float("inf"))` cae al default en vez de propagar
+  (`incubation_validator.py:49-57`).
+- **B5 — ✅ RESUELTO.** `_wins_from_metrics` detecta el `win_rate` no finito antes
+  de `int(round(...))`, evitando el `ValueError`/`OverflowError` cuando falta
+  `winning_trades` (`incubation_validator.py:121-129`).
+- **B6 — ✅ RESUELTO.** Acceso defensivo al dict de trade en `metrics.py`: un
+  `net_pnl`/`close_time` faltante o un `net_pnl` no numérico ya no propaga
+  `KeyError`/`TypeError`; el trade se cuenta como no finito y se descarta de la
+  partición en vez de reventar (`metrics.py:105-106`, `:634-636`, `:685`).
 
 ### C. Datos silenciosamente equivocados
 
-- **C1** — Todos los trades sin fecha → curva de equity vacía → drawdown **0.0**
-  reportado sobre pérdidas reales (`metrics.py:114-116, 171-172`).
-- **C2** — `capital <= 0` → `dd_pct` **0.0** en silencio (`:158`, `:195`).
-- **C3** — Fecha de pico malformada → `_calc_stagnation` devuelve **0** días, o
-  sea el mejor valor posible salido de un fallo de parseo (`:368-376`).
-- **C4** — `_hard_gates`: `expected_monthly == 0` (no `None`) no satisface ni la
-  rama `is None` ni la `> 0`, y la frecuencia queda en **"OK"** (`:361-368`).
-- **C5** — `_nd_result` usa `setdefault`: al llegar por `validator.py:555`, los
-  números reales (`wr_live`, `payout_var`, `freq_pct`, `edge_erosion`…)
-  sobreviven al lado de las etiquetas `"N/D"`. Ya listado en §6.
+- **C1 — ✅ RESUELTO.** Todos los trades sin fecha daban curva de equity vacía →
+  drawdown **0.0** reportado sobre pérdidas reales. Ahora una curva vacía con
+  trades reales (todos untimed) da `max_dd_pct = None` (SIN DATOS) en vez del
+  0.0 silencioso (`metrics.py:838-842`).
+- **C2 — ✅ RESUELTO.** `capital <= 0` daba `dd_pct` **0.0** en silencio; ahora da
+  `max_dd_pct = None` (SIN DATOS), siguiendo el precedente del bootstrap
+  (`metrics.py:285-286`, `:324`). Mismo hallazgo que el bullet de §7.
+- **C3 — ✅ RESUELTO.** Una fecha de pico malformada devolvía **0** días de
+  `_calc_stagnation` —el mejor valor posible salido de un fallo de parseo—; ahora
+  el fallo de parseo se declara como ausencia en vez de un 0 confiado
+  (`metrics.py:411`).
+- **C4 — ✅ RESUELTO.** En `_hard_gates`, un `expected_monthly == 0` (no `None`) no
+  satisfacía ni la rama `is None` ni la `> 0` y la frecuencia quedaba en **"OK"**;
+  ahora el `0.0` literal se trata como inusable igual que `None`
+  (`incubation_validator.py:417-421`).
+- **C5 — ✅ RESUELTO.** Es el mismo hallazgo que §6: `_nd_result` ahora blanquea
+  **todos** los numéricos derivados de la fila, no solo `dd_limit`. Ver §6.
 - **C6** — Zona ALERTA vacía cuando `mc_retest.max_dd == mc_trades.max_dd`
   (§4, quirk conocido y deliberado).
-- **C7** — `live_vs_bt_profit_ratio` (antes `wfe`) redondea **antes** de bandear
-  (`validator.py:681-684`): 120.04 → 120.0 → `OK` en vez de `ALERTA`.
-- **C8** — Contratos de forma incompatibles: `evaluate_cp1` devuelve 6 claves en
-  éxito y 13 en SIN DATOS; las formas PRE_CP1 ELIMINAR/PENDING **omiten**
-  `mc_source`, que la forma SIN DATOS sí trae como `{}`.
+- **C7 — ✅ RESUELTO.** `live_vs_bt_profit_ratio` (antes `wfe`) redondeaba **antes**
+  de bandear (120.04 → 120.0 → `OK` en vez de `ALERTA`); ahora se bandea sobre el
+  valor crudo y recién después se redondea para mostrar
+  (`validator.py:826-845`).
+- **C8 — ✅ RESUELTO.** Contratos de forma incompatibles: las formas PRE_CP1
+  ELIMINAR/PENDING **omitían** `mc_source`, que la forma SIN DATOS sí traía como
+  `{}`; ahora `mc_source` está presente en todas las formas de `evaluate_cp1`
+  (`incubation_validator.py:629`, `:651`).
 
 ### D. Documentación que contradice al código
 
@@ -771,10 +814,6 @@ propiedades y la de oráculo diferencial.
 - **D4** — `decision-logic.md:331` dice "cuatro referencias" y enumera tres.
 - **D5** — `decision-logic.md:128` documenta solo las bandas OK del payout;
   las de ALERTA y el corto-circuito `payout >= 1e9 → OK` no están.
-- **D6** — `docs/design/decision-engine-no-data-contract.md` está citado desde
-  `validator.py:187,211,501` e `incubation_validator.py:476,498` — y **no
-  existe**. El contrato SIN DATOS que ambos motores dicen implementar no tiene
-  especificación legible en el repo.
 
 ### E. Hipótesis refutada por el arnés
 

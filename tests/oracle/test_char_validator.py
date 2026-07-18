@@ -478,25 +478,21 @@ def test_live_vs_bt_profit_ratio_bands(ratio_target_pct, estado):
     assert r["live_vs_bt_profit_status"] == estado
 
 
-def test_live_vs_bt_profit_ratio_round_before_band_defect_is_pinned():
+def test_live_vs_bt_profit_ratio_bands_on_unrounded_value():
     """
-    DEFECT-PIN: live_vs_bt_profit_ratio se compara DESPUES de redondearlo a
-    1dp (validator.py: `live_vs_bt_profit_ratio = round(..., 1)` y LUEGO
-    `if live_vs_bt_profit_ratio > 120`). Un ratio crudo de ~120.05%
-    (verificado por busqueda binaria contra la funcion real:
-    raw==120.04999999999998) redondea a 120.0 y por lo tanto queda del lado
-    OK, NO del lado ALERTA que un umbral evaluado sobre el valor crudo
-    hubiera dado. Pinneado porque es el comportamiento actual, NO porque sea
-    correcto -- un EA que superó el BT en +20.05% escapa silenciosamente de
-    la señal de posible sobreajuste del backtest.
+    C7 FIX: live_vs_bt_profit_ratio se BANDEA sobre el valor CRUDO, no sobre el
+    redondeado a 1dp. Un ratio crudo de ~120.05% (raw==120.04999999999998)
+    ahora clasifica ALERTA (posible sobreajuste del BT), aunque el numero
+    publicado siga siendo 120.0 (1dp). Antes redondeaba primero y se escapaba
+    a OK.
     """
     r = v.calculate_validator_score(
         make_bt(expectancy=10.0, trades_total=120, months=12.0),
         make_mc(12.0), make_mc(14.0), make_spp(),
         make_live(expectancy=11.090069284064665, total_trades=100, weeks_operating=40.0),
     )
-    assert r["live_vs_bt_profit_ratio"] == 120.0
-    assert r["live_vs_bt_profit_status"] == "OK"  # NO "ALERTA", pese a que el crudo era >120
+    assert r["live_vs_bt_profit_ratio"] == 120.0  # publicado a 1dp
+    assert r["live_vs_bt_profit_status"] == "ALERTA"  # bandeado sobre el crudo >120
 
 
 # ── §3.1: Veredicto 70/45, incl. el split redondeado-vs-crudo ──────────────
@@ -609,19 +605,14 @@ def test_veredicto_score_exactly_70_is_continuar_no_rounding_split_found():
 
 # ── §1.1 ⚠ / §6: fuga de setdefault en _nd_result (DEFECT-PIN) ─────────────
 
-def test_nd_result_setdefault_leak_at_gate_2_is_pinned():
+def test_nd_result_gate_2_blanks_every_derived_number():
     """
-    DEFECT-PIN: cuando el gate #2 (validator.py:500-555) dispara SIN DATOS
-    porque UN SOLO estado escalonado quedo N/D (aqui: dd_estado, porque
-    bt.worst_dd_1m<=0 y no hay fallback MC), _nd_result() fuerza TODOS los
-    9 estados escalonados a "N/D" -- incluso los que ya se habian calculado
-    correctamente como OK/ALERTA/FUERA -- pero el setdefault() que sigue NO
-    puede tocar las claves numericas ya asignadas (wr_live, wr_delta,
-    pf_live, payout_var, bars_var, freq_pct, edge_erosion, dd_live,
-    stagn_live...). El resultado: numeros reales y confiados conviviendo
-    con "N/D" en sus estados companeros. Pinneado porque es el
-    comportamiento actual (validator.py:163-189, known-issues.md §6), NO
-    porque sea correcto.
+    C5/§6 FIX: cuando el gate #2 dispara SIN DATOS porque UN SOLO estado
+    escalonado quedo N/D (aqui: dd_estado, porque bt.worst_dd_1m<=0 y no hay
+    fallback MC), _nd_result() ahora fuerza a None TODOS los numeros derivados
+    -- no solo dd_limit -- ademas de poner los estados en "N/D". Ya no quedan
+    numeros confiados (wr_live, wr_delta, payout_var, bars_var, freq_pct,
+    edge_erosion, dd_live, stagn_live...) conviviendo con estados "N/D".
     """
     r = v.calculate_validator_score(
         make_bt(worst_dd_1m=0.0), make_mc(None), make_mc(None), make_spp(),
@@ -637,22 +628,11 @@ def test_nd_result_setdefault_leak_at_gate_2_is_pinned():
                 "stagn_estado", "stagn_label", "dd_method", "consec_ratio"):
         assert r[key] == "N/D"
 
-    # ...pero los NUMEROS crudos detras de esos estados sobreviven intactos,
-    # como si el sistema todavia tuviera confianza en ellos.
-    assert r["wr_live"] == 55.0
-    assert r["wr_delta"] == 0.0
-    assert r["pf_live"] == 1.5
-    assert r["payout_var"] == 0.0
-    assert r["bars_var"] == 0.0
-    assert r["freq_pct"] == 108.2
-    assert r["edge_erosion"] == 0.0
-    assert r["dd_live"] == 5.0
-    assert r["stagn_live"] == 10.0
-
-    # dd_limit SI se re-blanquea explicitamente a None (:188) -- aqui ya
-    # era None porque ninguna rama de DD se disparo (bt_worst_dd_1m<=0 y
-    # ambos MC ausentes), asi que no hay numero confiado que mostrar.
-    assert r["dd_limit"] is None
+    # ...y TODOS los numeros crudos detras de esos estados quedan blanqueados a
+    # None -- el sistema ya no muestra confianza en numeros de una fila SIN DATOS.
+    for key in ("wr_live", "wr_delta", "pf_live", "payout_var", "bars_var",
+                "freq_pct", "edge_erosion", "dd_live", "stagn_live", "dd_limit"):
+        assert r[key] is None
 
     # Las categorias/score/live_vs_bt_profit_ratio SI quedan correctamente en
     # None -- todavia no se habian calculado en este punto del flujo.
