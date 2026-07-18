@@ -24,6 +24,7 @@ Para no repetir información, los detalles técnicos están en `docs/`:
 | `parser.py` | Parsea .xlsx MT5, JOIN POSITIONS + ORDERS |
 | `metrics.py` | Calcula métricas, equity curves, drawdown |
 | `validator.py` | Motor de scoring EA Validator |
+| `cache_store.py` | Capa de storage en disco (serialize, save/load, migración legacy, cleanup) — pura de Flask/session; `ea_analyzer` la envuelve atando `CACHE_DIR`/`APP_DIR`/prefijos |
 | `config.json` | Mapeos: magic, alias, capital, active |
 | `validator_store.json` | Datos de backtest por magic number |
 | `cache_{uuid}.json` | Cache de trades por sesión |

@@ -6,7 +6,6 @@ Usage: python ea_analyzer.py
 Opens http://localhost:5000 in the default browser.
 """
 
-import glob
 import hashlib
 import hmac
 import json
@@ -16,7 +15,6 @@ import os
 import secrets
 import threading
 import time
-import uuid
 import webbrowser
 from datetime import date, datetime, timedelta
 from urllib.parse import quote, unquote
@@ -44,6 +42,7 @@ from validator import (
 )
 from local_json import load_local_json, save_local_json
 from trade_matching import trade_matches_ea
+import cache_store
 from incubation_domain import (
     build_comparison_rows,
     build_distribution_payload,
@@ -349,146 +348,59 @@ migrate_incubation_store()
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _serialize_parsed_data(data):
-    """Convert datetime objects to ISO strings for JSON serialization."""
-    import copy
+# The disk storage layer lives in cache_store.py (pure of Flask/session). These
+# thin wrappers bind it to this module's runtime config (CACHE_DIR / APP_DIR and
+# the live/incubation prefixes), read at call time so tests can monkeypatch them.
 
-    d = copy.deepcopy(data)
-    for trade in d.get("closed_trades", []):
-        for k in ("open_time", "close_time"):
-            val = trade.get(k)
-            if isinstance(val, datetime):
-                trade[k] = val.isoformat()
-    for pos in d.get("open_positions", []):
-        val = pos.get("open_time")
-        if isinstance(val, datetime):
-            pos["open_time"] = val.isoformat()
-    return d
+
+def _serialize_parsed_data(data):
+    return cache_store.serialize_parsed_data(data)
 
 
 def _cache_file_path(cache_key, prefix):
-    return os.path.join(CACHE_DIR, f"{prefix}{cache_key}.json")
+    return cache_store.cache_file_path(CACHE_DIR, cache_key, prefix)
 
 
 def _legacy_cache_file_path(cache_key, prefix):
-    return os.path.join(APP_DIR, f"{prefix}{cache_key}.json")
+    return cache_store.legacy_cache_file_path(APP_DIR, cache_key, prefix)
 
 
 def _resolve_cache_path(cache_key, prefix):
-    if not cache_key:
-        return None
-
-    cache_path = _cache_file_path(cache_key, prefix)
-    if os.path.exists(cache_path):
-        return cache_path
-
-    legacy_path = _legacy_cache_file_path(cache_key, prefix)
-    if not os.path.exists(legacy_path):
-        return cache_path
-
-    try:
-        os.replace(legacy_path, cache_path)
-        return cache_path
-    except OSError:
-        return legacy_path
+    return cache_store.resolve_cache_path(CACHE_DIR, APP_DIR, cache_key, prefix)
 
 
 def _delete_cache_file(cache_key, prefix):
-    if not cache_key:
-        return
-
-    for cache_path in {
-        _cache_file_path(cache_key, prefix),
-        _legacy_cache_file_path(cache_key, prefix),
-    }:
-        try:
-            if os.path.exists(cache_path):
-                os.remove(cache_path)
-        except OSError:
-            pass
+    return cache_store.delete_cache_file(CACHE_DIR, APP_DIR, cache_key, prefix)
 
 
 def _atomic_write_json(path, data):
-    """Write JSON to `path` without ever leaving a truncated file on disk."""
-    _ensure_dir(os.path.dirname(path))
-    tmp_path = f"{path}.tmp"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, default=str)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
+    return cache_store.atomic_write_json(path, data)
 
 
 def save_cache(data):
-    """Save parsed data to a cache file. Returns the cache key."""
-    cache_key = str(uuid.uuid4())
-    cache_path = _cache_file_path(cache_key, LIVE_CACHE_PREFIX)
-    serialized = _serialize_parsed_data(data)
-    _atomic_write_json(cache_path, serialized)
-    return cache_key
+    """Save parsed live data to a cache file. Returns the cache key."""
+    return cache_store.save_cache(CACHE_DIR, data, LIVE_CACHE_PREFIX)
 
 
 def load_cache(cache_key):
-    """Load cached parsed data. Returns dict or None."""
-    if not cache_key:
-        return None
-    cache_path = _resolve_cache_path(cache_key, LIVE_CACHE_PREFIX)
-    if not os.path.exists(cache_path):
-        return None
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("load_cache: %s is corrupt (%s)", cache_path, exc)
-        return None
-    # Mark this file as actively used so cleanup_old_caches() never reaps a
-    # dataset that is still being read, regardless of when it was written.
-    try:
-        os.utime(cache_path, None)
-    except OSError:
-        pass
-    return data
+    """Load cached live parsed data. Returns dict or None."""
+    return cache_store.load_cache(CACHE_DIR, APP_DIR, cache_key, LIVE_CACHE_PREFIX)
 
 
 def save_incubation_cache(data):
     """Save incubation parsed data to a separate cache file."""
-    cache_key = str(uuid.uuid4())
-    cache_path = _cache_file_path(cache_key, INCUBATION_CACHE_PREFIX)
-    serialized = _serialize_parsed_data(data)
-    _atomic_write_json(cache_path, serialized)
-    return cache_key
+    return cache_store.save_cache(CACHE_DIR, data, INCUBATION_CACHE_PREFIX)
 
 
 def load_incubation_cache(cache_key):
     """Load incubation cached parsed data. Returns dict or None."""
-    if not cache_key:
-        return None
-    cache_path = _resolve_cache_path(cache_key, INCUBATION_CACHE_PREFIX)
-    if not os.path.exists(cache_path):
-        return None
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("load_incubation_cache: %s is corrupt (%s)", cache_path, exc)
-        return None
-    try:
-        os.utime(cache_path, None)
-    except OSError:
-        pass
-    return data
+    return cache_store.load_cache(CACHE_DIR, APP_DIR, cache_key, INCUBATION_CACHE_PREFIX)
 
 
 def cleanup_old_caches(keep_live_key=None, keep_incubation_key=None):
     """
-    Delete cache files older than 2 hours.
+    Delete cache files older than 2 hours across the live and incubation
+    prefixes (canonical and legacy dirs).
 
     Cache files backing the CURRENT session (`keep_live_key` /
     `keep_incubation_key`) are never deleted here, no matter their mtime --
@@ -503,21 +415,12 @@ def cleanup_old_caches(keep_live_key=None, keep_incubation_key=None):
         protected_paths.add(_cache_file_path(keep_incubation_key, INCUBATION_CACHE_PREFIX))
         protected_paths.add(_legacy_cache_file_path(keep_incubation_key, INCUBATION_CACHE_PREFIX))
 
-    patterns = [
-        os.path.join(CACHE_DIR, f"{LIVE_CACHE_PREFIX}*.json"),
-        os.path.join(CACHE_DIR, f"{INCUBATION_CACHE_PREFIX}*.json"),
-        os.path.join(APP_DIR, f"{LIVE_CACHE_PREFIX}*.json"),
-        os.path.join(APP_DIR, f"{INCUBATION_CACHE_PREFIX}*.json"),
-    ]
-    for pattern in patterns:
-        for f in glob.glob(pattern):
-            if f in protected_paths:
-                continue
-            try:
-                if time.time() - os.path.getmtime(f) > 7200:
-                    os.remove(f)
-            except OSError:
-                pass
+    cache_store.cleanup_old_caches(
+        CACHE_DIR,
+        APP_DIR,
+        [LIVE_CACHE_PREFIX, INCUBATION_CACHE_PREFIX],
+        protected_paths,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
